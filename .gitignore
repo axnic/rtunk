@@ -1,0 +1,7 @@
+!go.mod
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# rtunk binary built by `go build ./cmd/rtunk`
+/rtunk
