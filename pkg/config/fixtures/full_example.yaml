@@ -1,0 +1,75 @@
+version: 0.1
+
+cli:
+  version: 1.0.0
+  options:
+    - commands: [ALL]
+      args: []
+    - commands: [check, fmt]
+      args: ["-y"]
+
+cache:
+  dir: ""
+
+repo:
+  trunk_branch: main
+  remote_hint: ""
+  use_branch_upstream: false
+
+runtimes:
+  enabled:
+    - node@20.11.0
+    - python@3.11.4
+
+plugins:
+  sources:
+    - id: rtunk-core
+      uri: https://github.com/example/rtunk-plugins
+      ref: v1.0.0
+
+lint:
+  definitions:
+    - name: my-internal-linter
+      files: [ALL]
+      commands:
+        - name: lint
+          run: ${workspace}/scripts/my-linter.sh ${target}
+          output: regex
+          parse_regex: '(?P<path>.*):(?P<line>\d+): (?P<message>.*)'
+          success_codes: [0, 1]
+          read_output_from: stdout
+  enabled:
+    - eslint@8.57.0
+    - ruff@0.4.2
+  disabled:
+    - rufo
+  ignore:
+    - linters: [ALL]
+      paths:
+        - "**/generated/**"
+        - "!**/generated/**/*.keep"
+    - linters: [eslint]
+      paths:
+        - "legacy/**"
+  triggers:
+    - linters: [ansible-lint]
+      paths: [ansible/]
+      targets: [ansible/]
+
+tools:
+  enabled:
+    - bazel@6.0.0
+  definitions:
+    - name: gh
+      download: gh
+      known_good_version: 2.45.0
+      shims: [gh]
+
+actions:
+  enabled:
+    - rtunk-fmt-pre-commit
+    - rtunk-check-pre-push
+  disabled:
+    - rtunk-upgrade-available
+
+telemetry: false
