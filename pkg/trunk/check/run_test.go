@@ -267,6 +267,59 @@ func TestRun(t *testing.T) {
 	assert.False(t, formatterOnlySeen, "a linter with only Formatter commands must emit no event at all")
 }
 
+// TestRun_RelativePathArgument covers `rtunk check .`: paths passed to Run can be relative (a
+// bare "." is the default CLI argument for "check the whole repo"), while repoRoot is always
+// absolute. Every match Files() returns is later relativized against repoRoot via filepath.Rel,
+// which errors outright ("Rel: can't make X relative to Y") if one side is absolute and the
+// other relative -- a walk rooted at a relative path used to produce exactly that crash.
+func TestRun_RelativePathArgument(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "ok.txt"), []byte("fine\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakesarif": {
+						Name: "fakesarif", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool sarif ${target}", Output: "sarif", Batch: true}},
+					},
+				},
+			},
+		},
+	}
+
+	t.Chdir(repoRoot)
+	events, err := Run(cfg, cacheDir, repoRoot, []string{"."})
+	require.NoError(t, err)
+
+	var done *Event
+	for ev := range events {
+		if ev.Phase == Done {
+			e := ev
+			done = &e
+		}
+	}
+	require.NotNil(t, done, "expected a Done event, not a crash relativizing a relative path argument")
+	require.Len(t, done.Findings, 1)
+	assert.Equal(t, "ok.txt", done.Findings[0].File)
+}
+
 // TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent covers a linter with an empty Tools list (6
 // real catalog linters have this shape): pathEnv is then "", and naively prefixing it plus a
 // separator onto PATH used to produce a leading empty PATH component, which POSIX shells treat as

@@ -62,8 +62,26 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string) (<-chan E
 	if err != nil {
 		return nil, err
 	}
+
+	// Every match Files() returns is later relativized against repoRoot (here, for gitignore
+	// lookups; in runCommand, for the paths a linter's own command sees) via filepath.Rel, which
+	// errors outright if one side is absolute and the other relative -- e.g. `rtunk check .`
+	// passes paths=["."], a relative walk root, while repoRoot is always absolute. Absolutizing
+	// both up front means every path Files() walks and returns is comparable to repoRoot.
+	repoRoot, err = filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, err
+	}
 	if len(paths) == 0 {
 		paths = []string{repoRoot}
+	} else {
+		for i, p := range paths {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				return nil, err
+			}
+			paths[i] = abs
+		}
 	}
 
 	events := make(chan Event)
