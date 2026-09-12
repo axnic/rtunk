@@ -74,3 +74,62 @@ func TestApplyIssueURL_EmptyFormat(t *testing.T) {
 	ApplyIssueURL(findings, "")
 	assert.Equal(t, "", findings[0].URL)
 }
+
+func TestParseActionlint(t *testing.T) {
+	const sample = `[{"message":"shellcheck reported issue","filepath":".github/workflows/ci.yml","line":12,"column":3,"kind":"shellcheck"}]`
+	got, err := ParseActionlint([]byte(sample), "actionlint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "actionlint", File: ".github/workflows/ci.yml", Line: 12, Column: 3, Severity: "error", RuleID: "shellcheck", Message: "shellcheck reported issue"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseBandit(t *testing.T) {
+	const sample = `{"results":[
+		{"filename":"app.py","line_number":42,"col_offset":4,"issue_severity":"HIGH","test_id":"B101","issue_text":"Use of assert detected. "},
+		{"filename":"app.py","line_number":10,"col_offset":0,"issue_severity":"LOW","test_id":"B404","issue_text":"Consider possible security implications."}
+	]}`
+	got, err := ParseBandit([]byte(sample), "bandit")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "bandit", File: "app.py", Line: 42, Column: 4, Severity: "error", RuleID: "B101", Message: "Use of assert detected."},
+		{Linter: "bandit", File: "app.py", Line: 10, Column: 0, Severity: "info", RuleID: "B404", Message: "Consider possible security implications."},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseCfnLint(t *testing.T) {
+	const sample = `[{"Filename":"template.yml","Level":"Warning","Location":{"Start":{"LineNumber":115,"ColumnNumber":3}},"Message":"S3 bucket should have logging","Rule":{"Id":"W3011"}}]`
+	got, err := ParseCfnLint([]byte(sample), "cfn-lint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "cfn-lint", File: "template.yml", Line: 115, Column: 3, Severity: "warning", RuleID: "W3011", Message: "S3 bucket should have logging"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseHadolint(t *testing.T) {
+	const sample = `[{"line":1,"code":"DL3006","message":"Always tag the version of an image explicitly","column":1,"file":"Dockerfile","level":"warning"}]`
+	got, err := ParseHadolint([]byte(sample), "hadolint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "hadolint", File: "Dockerfile", Line: 1, Column: 1, Severity: "warning", RuleID: "DL3006", Message: "Always tag the version of an image explicitly"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParsePylint(t *testing.T) {
+	const sample = `[{"type":"convention","line":3,"column":0,"path":"app.py","message":"Missing module docstring","message-id":"C0111"}]`
+	got, err := ParsePylint([]byte(sample), "pylint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "pylint", File: "app.py", Line: 3, Column: 0, Severity: "info", RuleID: "C0111", Message: "Missing module docstring"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseActionlint_InvalidJSON(t *testing.T) {
+	_, err := ParseActionlint([]byte("not json"), "actionlint")
+	require.Error(t, err)
+}
