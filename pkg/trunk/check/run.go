@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/download"
@@ -53,21 +55,51 @@ var supportedOutputFormats = map[string]bool{
 	"pylint": true, "rubocop": true, "stylelint": true, "taplo": true, "regex": true,
 }
 
+// job is one command invocation queued for a worker: one batch (all matched files, for a Batch
+// command; one file otherwise) of one linter's one command, with that linter's tool shims already
+// resolved onto pathEnv. Resolving shims (which may download a tool) happens once per linter
+// before any worker starts -- never inside a worker -- so two jobs never race downloading the
+// same tool.
+type job struct {
+	linterName string
+	linter     config.Linter
+	cmd        config.Command
+	batch      []string
+	pathEnv    string
+}
+
+// linterState accumulates one linter's concurrently-completing jobs into the single terminal
+// event (Done or Failed) a sequential run would send once its last command finished. Jobs for the
+// same linter can now finish on different workers in any order, so "is this linter done"
+// is tracked by a remaining-jobs counter guarded by mu, not by loop position.
+type linterState struct {
+	mu           sync.Mutex
+	remaining    int
+	findings     []Finding
+	terminalSent bool
+	failed       bool // once true, workers skip any not-yet-started job for this linter
+}
+
 // Run executes every enabled linter's non-formatter commands against the files matched under
 // paths (repoRoot is the default walk root when paths is empty, and every command's working
 // directory), downloading any missing tool shim first, and streams one Event per linter that had
 // something to report. cfg is expected already enabled+used-trimmed (config.Resolve's output).
-func Run(cfg config.Config, cacheDir, repoRoot string, paths []string) (<-chan Event, error) {
+//
+// concurrency workers (at least 1) run the queued command invocations in parallel; the queue
+// itself is built sequentially and in a fixed order -- linters sorted by name, each linter's own
+// batches sorted by file -- so which job a worker happens to pick up next is the only source of
+// nondeterminism, never the queue's own order.
+func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurrency int) (<-chan Event, error) {
 	root, err := download.Root(cacheDir)
 	if err != nil {
 		return nil, err
 	}
 
 	// Every match Files() returns is later relativized against repoRoot (here, for gitignore
-	// lookups; in runCommand, for the paths a linter's own command sees) via filepath.Rel, which
-	// errors outright if one side is absolute and the other relative -- e.g. `rtunk check .`
-	// passes paths=["."], a relative walk root, while repoRoot is always absolute. Absolutizing
-	// both up front means every path Files() walks and returns is comparable to repoRoot.
+	// lookups; below, for the paths a linter's own command sees) via filepath.Rel, which errors
+	// outright if one side is absolute and the other relative -- e.g. `rtunk check .` passes
+	// paths=["."], a relative walk root, while repoRoot is always absolute. Absolutizing both up
+	// front means every path Files() walks and returns is comparable to repoRoot.
 	repoRoot, err = filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -84,28 +116,87 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string) (<-chan E
 		}
 	}
 
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
 	events := make(chan Event)
 	go func() {
 		defer close(events)
-		for name, linter := range cfg.Lint.Definitions {
-			runLinter(cfg, root, cacheDir, repoRoot, name, linter, paths, events)
+
+		names := make([]string, 0, len(cfg.Lint.Definitions))
+		for name := range cfg.Lint.Definitions {
+			names = append(names, name)
 		}
+		sort.Strings(names)
+
+		states := make(map[string]*linterState, len(names))
+		var jobs []job
+		for _, name := range names {
+			linterJobs := buildJobs(cfg, root, cacheDir, repoRoot, name, cfg.Lint.Definitions[name], paths, events)
+			if len(linterJobs) == 0 {
+				continue
+			}
+			states[name] = &linterState{remaining: len(linterJobs)}
+			jobs = append(jobs, linterJobs...)
+		}
+
+		jobCh := make(chan job, len(jobs))
+		for _, j := range jobs {
+			jobCh <- j
+		}
+		close(jobCh)
+
+		var wg sync.WaitGroup
+		for i := 0; i < concurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobCh {
+					runJob(j, states[j.linterName], repoRoot, events)
+				}
+			}()
+		}
+		wg.Wait()
 	}()
 	return events, nil
 }
 
-func runLinter(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, events chan<- Event) {
+// buildJobs resolves name's matched files and queues one job per runnable command invocation,
+// emitting a Skipped event immediately for every command an unsupported feature rules out (same
+// checks, same order, as the single-threaded engine this replaces) and a Failed event (returning
+// no jobs) if matching files or resolving tools errors outright. Shim resolution -- which may
+// download a tool -- runs at most once per linter, lazily, on the first command that needs it.
+func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, events chan<- Event) []job {
 	files, err := Files(cfg, linter, repoRoot, paths)
 	if err != nil {
 		events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
-		return
+		return nil
 	}
 	if len(files) == 0 {
-		return
+		return nil
 	}
 
-	var findings []Finding
-	ran := false
+	// files are relativized against repoRoot (every command's Dir) so both pass_fail's
+	// Finding.File and sarif's echoed-back ${target} URI come out repo-relative, matching the
+	// design spec's report format -- not absolute paths from the walk root. Sorting makes the
+	// queue's (and so the live Running events') file order deterministic regardless of how many
+	// paths were walked or in what order.
+	relFiles := make([]string, len(files))
+	for i, f := range files {
+		rel, err := filepath.Rel(repoRoot, f)
+		if err != nil {
+			events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
+			return nil
+		}
+		relFiles[i] = rel
+	}
+	sort.Strings(relFiles)
+
+	var jobs []job
+	var pathEnv string
+	pathEnvResolved := false
+
 	for _, cmd := range linter.Commands {
 		if cmd.Formatter {
 			continue
@@ -131,17 +222,65 @@ func runLinter(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			continue
 		}
 
-		cmdFindings, err := runCommand(cfg, root, cacheDir, repoRoot, name, linter, cmd, files, events)
-		if err != nil {
-			events <- Event{Linter: name, Phase: Failed, Note: cmd.Name, Err: err}
-			return
+		if !pathEnvResolved {
+			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools)
+			if err != nil {
+				events <- Event{Linter: name, Phase: Failed, Note: "resolving tools", Err: err}
+				return nil
+			}
+			pathEnv = strings.Join(shimDirs, string(os.PathListSeparator))
+			pathEnvResolved = true
 		}
-		ran = true
-		findings = append(findings, cmdFindings...)
+
+		var batches [][]string
+		if cmd.Batch {
+			batches = [][]string{relFiles}
+		} else {
+			for _, f := range relFiles {
+				batches = append(batches, []string{f})
+			}
+		}
+		for _, batch := range batches {
+			jobs = append(jobs, job{linterName: name, linter: linter, cmd: cmd, batch: batch, pathEnv: pathEnv})
+		}
+	}
+	return jobs
+}
+
+// runJob executes one queued job: sends a Running event, runs the invocation, then folds the
+// result into state -- findings accumulate across every job of the same linter, the first failure
+// marks the linter failed (any of its not-yet-started jobs are then skipped, best-effort: a job
+// already picked up by a worker still runs to completion), and the linter's single terminal event
+// fires exactly once, the moment its last job finishes.
+func runJob(j job, state *linterState, repoRoot string, events chan<- Event) {
+	state.mu.Lock()
+	if state.failed {
+		state.mu.Unlock()
+		return
+	}
+	state.mu.Unlock()
+
+	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
+	findings, err := runBatch(j.linterName, j.linter, j.cmd, j.batch, repoRoot, j.pathEnv)
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.remaining--
+	if state.terminalSent {
+		return
 	}
 
-	if ran {
-		events <- Event{Linter: name, Phase: Done, Findings: findings}
+	if err != nil {
+		state.failed = true
+		state.terminalSent = true
+		events <- Event{Linter: j.linterName, Phase: Failed, Note: j.cmd.Name, Err: err}
+		return
+	}
+
+	state.findings = append(state.findings, findings...)
+	if state.remaining == 0 {
+		state.terminalSent = true
+		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings}
 	}
 }
 
@@ -158,125 +297,92 @@ func findUnsupportedVar(run string) (string, bool) {
 	return "", false
 }
 
-// runCommand resolves every tool cmd's linter needs onto PATH, then runs cmd once (Batch) or once
-// per matched file, parsing each invocation's output per cmd.Output. Emits one Running event on
-// events per invocation, before running it, so a caller can show live progress.
-func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, linter config.Linter, cmd config.Command, files []string, events chan<- Event) ([]Finding, error) {
-	shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools)
+// runBatch runs one job's invocation (cmd against batch, pathEnv already resolved for linter's
+// tools) and parses its output per cmd.Output -- the per-invocation body a sequential run used to
+// loop over inline, now one job's whole unit of work so a worker can run it independently of
+// every other job in flight.
+func runBatch(linterName string, linter config.Linter, cmd config.Command, batch []string, repoRoot, pathEnv string) ([]Finding, error) {
+	out, stderr, exitCode, err := runOneInvocation(cmd, repoRoot, pathEnv, batch)
 	if err != nil {
 		return nil, err
 	}
-	pathEnv := strings.Join(shimDirs, string(os.PathListSeparator))
-
-	// files are relativized against repoRoot (every command's Dir) so both pass_fail's
-	// Finding.File and sarif's echoed-back ${target} URI come out repo-relative, matching the
-	// design spec's report format -- not absolute paths from the walk root.
-	relFiles := make([]string, len(files))
-	for i, f := range files {
-		rel, err := filepath.Rel(repoRoot, f)
-		if err != nil {
-			return nil, err
+	if containsInt(cmd.ErrorCodes, exitCode) {
+		msg := strings.TrimSpace(out)
+		if errText := strings.TrimSpace(stderr); errText != "" {
+			if msg == "" {
+				msg = errText
+			} else {
+				msg += "\n" + errText
+			}
 		}
-		relFiles[i] = rel
+		return nil, fmt.Errorf("check: %s: %s exited %d: %s", linterName, cmd.Name, exitCode, msg)
 	}
 
-	var batches [][]string
-	if cmd.Batch {
-		batches = [][]string{relFiles}
-	} else {
-		for _, f := range relFiles {
-			batches = append(batches, []string{f})
-		}
-	}
-
+	// Real plugin data confirms SuccessCodes already enumerates every "ran fine, here's the
+	// verdict" code, "found issues" included (e.g. ansible-lint sarif: [0,2,5]) -- there is no
+	// third bucket. Every exit code not in ErrorCodes parses normally.
 	var findings []Finding
-	for _, batch := range batches {
-		events <- Event{Linter: linterName, Phase: Running, File: strings.Join(batch, ", ")}
 
-		out, stderr, exitCode, err := runOneInvocation(cmd, repoRoot, pathEnv, batch)
-		if err != nil {
-			return nil, err
-		}
-		if containsInt(cmd.ErrorCodes, exitCode) {
-			msg := strings.TrimSpace(out)
-			if errText := strings.TrimSpace(stderr); errText != "" {
-				if msg == "" {
-					msg = errText
-				} else {
-					msg += "\n" + errText
-				}
-			}
-			return nil, fmt.Errorf("check: %s: %s exited %d: %s", linterName, cmd.Name, exitCode, msg)
-		}
-
-		// Real plugin data confirms SuccessCodes already enumerates every "ran fine, here's the
-		// verdict" code, "found issues" included (e.g. ansible-lint sarif: [0,2,5]) -- there is
-		// no third bucket. Every exit code not in ErrorCodes parses normally.
-		var batchFindings []Finding
-
-		// Every JSON-shaped Output format's parser fails to unmarshal empty/whitespace-only input
-		// ("unexpected end of JSON input"), which would otherwise abort this whole Run for every
-		// linter, not just this one. A real linter can produce genuinely empty output on a clean
-		// run (e.g. markdownlint), or when an OS/version-gated command variant of the same linter
-		// silently produces nothing on this platform (a known, separate architectural gap -- out
-		// of scope here) -- either way, empty output means zero findings, not a parse failure.
-		// "pass_fail" never parses JSON (exit-code only) and "regex"'s parsers (ParsePerlCritic/
-		// ParseGenericRegex) already tolerate empty input by iterating an empty line list, so both
-		// are excluded from this guard.
-		isJSONFormat := cmd.Output != "pass_fail" && cmd.Output != "regex"
-		if isJSONFormat && strings.TrimSpace(out) == "" {
-			ApplyIssueURL(batchFindings, linter.IssueURLFormat)
-			findings = append(findings, batchFindings...)
-			continue
-		}
-
-		switch cmd.Output {
-		case "sarif", "sarif_uri":
-			// sarif_uri (checkov): ReadOutputFrom "tmp_file" already resolved the real SARIF
-			// bytes written to ${tmpfile} into out -- no separate parser needed.
-			batchFindings, err = ParseSARIF([]byte(out), linterName)
-		case "pass_fail":
-			if exitCode != 0 {
-				batchFindings = ParsePassFail(linterName, batch)
-			}
-		case "actionlint":
-			batchFindings, err = ParseActionlint([]byte(out), linterName)
-		case "bandit":
-			batchFindings, err = ParseBandit([]byte(out), linterName)
-		case "buildifier":
-			batchFindings, err = ParseBuildifier([]byte(out), linterName)
-		case "cfnlint":
-			batchFindings, err = ParseCfnLint([]byte(out), linterName)
-		case "eslint":
-			batchFindings, err = ParseESLint([]byte(out), linterName)
-		case "hadolint":
-			batchFindings, err = ParseHadolint([]byte(out), linterName)
-		case "haml_lint":
-			batchFindings, err = ParseHamlLint([]byte(out), linterName)
-		case "markdownlint":
-			batchFindings, err = ParseMarkdownlint([]byte(out), linterName)
-		case "pylint":
-			batchFindings, err = ParsePylint([]byte(out), linterName)
-		case "rubocop":
-			batchFindings, err = ParseRubocop([]byte(out), linterName)
-		case "stylelint":
-			batchFindings, err = ParseStylelint([]byte(out), linterName)
-		case "taplo":
-			batchFindings, err = ParseTaplo([]byte(out), linterName)
-		case "regex":
-			switch linterName {
-			case "perlcritic":
-				batchFindings, err = ParsePerlCritic([]byte(out), linterName)
-			default:
-				batchFindings = ParseGenericRegex([]byte(out), linterName)
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-		ApplyIssueURL(batchFindings, linter.IssueURLFormat)
-		findings = append(findings, batchFindings...)
+	// Every JSON-shaped Output format's parser fails to unmarshal empty/whitespace-only input
+	// ("unexpected end of JSON input"), which would otherwise abort this whole Run for every
+	// linter, not just this one. A real linter can produce genuinely empty output on a clean run
+	// (e.g. markdownlint), or when an OS/version-gated command variant of the same linter
+	// silently produces nothing on this platform (a known, separate architectural gap -- out of
+	// scope here) -- either way, empty output means zero findings, not a parse failure. "pass_fail"
+	// never parses JSON (exit-code only) and "regex"'s parsers (ParsePerlCritic/ParseGenericRegex)
+	// already tolerate empty input by iterating an empty line list, so both are excluded from this
+	// guard.
+	isJSONFormat := cmd.Output != "pass_fail" && cmd.Output != "regex"
+	if isJSONFormat && strings.TrimSpace(out) == "" {
+		ApplyIssueURL(findings, linter.IssueURLFormat)
+		return findings, nil
 	}
+
+	switch cmd.Output {
+	case "sarif", "sarif_uri":
+		// sarif_uri (checkov): ReadOutputFrom "tmp_file" already resolved the real SARIF bytes
+		// written to ${tmpfile} into out -- no separate parser needed.
+		findings, err = ParseSARIF([]byte(out), linterName)
+	case "pass_fail":
+		if exitCode != 0 {
+			findings = ParsePassFail(linterName, batch)
+		}
+	case "actionlint":
+		findings, err = ParseActionlint([]byte(out), linterName)
+	case "bandit":
+		findings, err = ParseBandit([]byte(out), linterName)
+	case "buildifier":
+		findings, err = ParseBuildifier([]byte(out), linterName)
+	case "cfnlint":
+		findings, err = ParseCfnLint([]byte(out), linterName)
+	case "eslint":
+		findings, err = ParseESLint([]byte(out), linterName)
+	case "hadolint":
+		findings, err = ParseHadolint([]byte(out), linterName)
+	case "haml_lint":
+		findings, err = ParseHamlLint([]byte(out), linterName)
+	case "markdownlint":
+		findings, err = ParseMarkdownlint([]byte(out), linterName)
+	case "pylint":
+		findings, err = ParsePylint([]byte(out), linterName)
+	case "rubocop":
+		findings, err = ParseRubocop([]byte(out), linterName)
+	case "stylelint":
+		findings, err = ParseStylelint([]byte(out), linterName)
+	case "taplo":
+		findings, err = ParseTaplo([]byte(out), linterName)
+	case "regex":
+		switch linterName {
+		case "perlcritic":
+			findings, err = ParsePerlCritic([]byte(out), linterName)
+		default:
+			findings = ParseGenericRegex([]byte(out), linterName)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	ApplyIssueURL(findings, linter.IssueURLFormat)
 	return findings, nil
 }
 

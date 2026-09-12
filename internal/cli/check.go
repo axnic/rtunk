@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -27,6 +28,7 @@ type checkCmd struct {
 // checkRunCmd is `rtunk check [paths...]`: given paths, or the whole repository if none.
 type checkRunCmd struct {
 	Paths []string `arg:"" optional:"" help:"Paths to check (default: whole repository)."`
+	Jobs  int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
 }
 
 func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
@@ -46,7 +48,12 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	// repoRoot is two directories up.
 	repoRoot := filepath.Dir(filepath.Dir(configPath))
 
-	events, err := check.Run(cfg, cli.CacheDir, repoRoot, c.Paths)
+	jobs := c.Jobs
+	if jobs <= 0 {
+		jobs = runtime.NumCPU()
+	}
+
+	events, err := check.Run(cfg, cli.CacheDir, repoRoot, c.Paths, jobs)
 	if err != nil {
 		return err
 	}

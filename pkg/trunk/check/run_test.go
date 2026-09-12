@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -67,6 +69,10 @@ func main() {
 	case "emptyjson":
 		// Prints nothing: stands in for a clean run (or an OS-gated command variant) that
 		// produces genuinely empty stdout on a JSON-shaped Output format.
+	case "sleep":
+		time.Sleep(250 * time.Millisecond)
+	case "alwaysfail":
+		os.Exit(1)
 	}
 }
 `
@@ -171,7 +177,7 @@ func TestRun(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil)
+	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
 	require.NoError(t, err)
 
 	byLinter := map[string]Event{}
@@ -305,7 +311,7 @@ func TestRun_RelativePathArgument(t *testing.T) {
 	}
 
 	t.Chdir(repoRoot)
-	events, err := Run(cfg, cacheDir, repoRoot, []string{"."})
+	events, err := Run(cfg, cacheDir, repoRoot, []string{"."}, 1)
 	require.NoError(t, err)
 
 	var done *Event
@@ -318,6 +324,119 @@ func TestRun_RelativePathArgument(t *testing.T) {
 	require.NotNil(t, done, "expected a Done event, not a crash relativizing a relative path argument")
 	require.Len(t, done.Findings, 1)
 	assert.Equal(t, "ok.txt", done.Findings[0].File)
+}
+
+// TestRun_ParallelWorkersRunConcurrently covers the actual point of concurrency workers: two
+// linters that each take ~250ms must finish in well under 2x that when concurrency lets both run
+// at once, proving jobs for different linters really execute in parallel rather than queued
+// behind each other one at a time.
+func TestRun_ParallelWorkersRunConcurrently(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("a\n"), 0o644))
+
+	newCfg := func() config.Config {
+		return config.Config{
+			Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+			Lint: config.LintConfig{
+				Files: map[string]config.FileType{},
+				CategoryConfig: config.CategoryConfig[config.Linter]{
+					Definitions: map[string]config.Linter{
+						"slow1": {
+							Name: "slow1", Files: []string{"ALL"}, Tools: []string{"faketool"},
+							Commands: []config.Command{{Name: "lint", Run: "faketool sleep ${target}", Output: "pass_fail", Batch: true}},
+						},
+						"slow2": {
+							Name: "slow2", Files: []string{"ALL"}, Tools: []string{"faketool"},
+							Commands: []config.Command{{Name: "lint", Run: "faketool sleep ${target}", Output: "pass_fail", Batch: true}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	drain := func(concurrency int) time.Duration {
+		start := time.Now()
+		events, err := Run(newCfg(), cacheDir, repoRoot, nil, concurrency)
+		require.NoError(t, err)
+		for range events {
+		}
+		return time.Since(start)
+	}
+
+	sequential := drain(1)
+	parallel := drain(2)
+
+	assert.Greater(t, sequential, 400*time.Millisecond, "two 250ms jobs one worker at a time must take close to 500ms")
+	assert.Less(t, parallel, 400*time.Millisecond, "two 250ms jobs on two workers must take close to 250ms, not ~500ms")
+}
+
+// TestRun_FailedLinterSkipsRemainingJobs covers the best-effort abort: once a linter's command
+// fails on one file, its other, not-yet-started per-file jobs must be skipped rather than run.
+// concurrency: 1 makes "not yet started" deterministic (jobs run strictly in queue order), so
+// exactly one Running event (the file that failed) and one Failed event must appear -- never a
+// second Running/Done for either of the other two files.
+func TestRun_FailedLinterSkipsRemainingJobs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"alwaysfail": {
+						Name: "alwaysfail", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool alwaysfail ${target}", Output: "pass_fail", ErrorCodes: []int{1},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	require.NoError(t, err)
+
+	var running, failed int
+	for ev := range events {
+		switch ev.Phase {
+		case Running:
+			running++
+		case Failed:
+			failed++
+		}
+	}
+	assert.Equal(t, 1, running, "only the first of 3 files' jobs must have started running")
+	assert.Equal(t, 1, failed, "exactly one Failed event, not one per file")
 }
 
 // TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent covers a linter with an empty Tools list (6
@@ -402,7 +521,7 @@ func TestRun_NewOutputFormatDispatch(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil)
+	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
 	require.NoError(t, err)
 
 	byLinter := map[string]Event{}
