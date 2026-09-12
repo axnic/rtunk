@@ -45,6 +45,27 @@ func TestStageSandbox_ExpandedCopiesWholeDirectoryNonRecursive(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "expanded must not recurse into subdirectories")
 }
 
+func TestStageSandbox_ExpandedAlsoStagesNestedTarget(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("u"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "a.go"), []byte("a"), 0o644))
+
+	// dir's own top-level entries don't include "sub/a.go" -- a RunFrom that resolved to an
+	// ancestor of the actual target (e.g. "${parent}"/"${root_or_parent_with*}") would otherwise
+	// silently drop the one file the invocation is meant to check.
+	sandboxDir, cleanup, err := stageSandbox("expanded", dir, []string{"sub/a.go"})
+	require.NoError(t, err)
+	defer cleanup()
+
+	data, err := os.ReadFile(filepath.Join(sandboxDir, "sub", "a.go"))
+	require.NoError(t, err, "the nested target must be staged even though it's not one of dir's own top-level entries")
+	assert.Equal(t, "a", string(data))
+
+	_, err = os.Stat(filepath.Join(sandboxDir, "unrelated.txt"))
+	assert.NoError(t, err, "unrelated.txt is a real top-level entry and must still be staged")
+}
+
 func TestStageSandbox_CleanupRemovesTempDir(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "target.txt"), []byte("t"), 0o644))

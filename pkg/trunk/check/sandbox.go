@@ -31,9 +31,20 @@ func stageSandbox(sandboxType, dir string, targets []string) (sandboxDir string,
 		if err != nil {
 			return sandboxDir, cleanup, err
 		}
+		seen := map[string]bool{}
 		for _, e := range entries {
 			if e.Type().IsRegular() {
 				relFiles = append(relFiles, e.Name())
+				seen[e.Name()] = true
+			}
+		}
+		// dir's own top-level entries don't cover a target that lives in a nested directory
+		// relative to dir (e.g. a RunFrom of "${parent}"/"${root_or_parent_with*}" resolving to
+		// an ancestor of the actual file) -- without this, "expanded" would silently stage
+		// everything except the one file the invocation is actually meant to check.
+		for _, t := range targets {
+			if !seen[t] {
+				relFiles = append(relFiles, t)
 			}
 		}
 	case "copy_targets":

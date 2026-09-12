@@ -99,6 +99,20 @@ func main() {
 			results = append(results, "{\"ruleId\":\"pwd-check\",\"level\":\"error\",\"message\":{\"text\":\""+msg+"\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+f+"\"},\"region\":{\"startLine\":1}}}]}")
 		}
 		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
+	case "abspath":
+		// Emits a SARIF result whose artifactLocation.uri is an absolute path (built from its
+		// own cwd, so it always points wherever the process actually ran -- the real sandbox
+		// directory when sandboxed), unlike "sarif" which echoes back the relative path given on
+		// the command line. Stands in for a real linter that reports its findings by absolute
+		// path rather than relative to cwd -- proving the sandbox's own temp directory doesn't
+		// leak into the final report.
+		wd, _ := os.Getwd()
+		var results []string
+		for _, f := range args[1:] {
+			abs := filepath.Join(wd, f)
+			results = append(results, "{\"ruleId\":\"fake-rule\",\"level\":\"error\",\"message\":{\"text\":\"fake finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+abs+"\"},\"region\":{\"startLine\":1}}}]}")
+		}
+		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
 	}
 }
 `
@@ -771,4 +785,64 @@ func TestRun_RunFromAndSandbox(t *testing.T) {
 	gotFiles := map[string]bool{batchEv.Findings[0].File: true, batchEv.Findings[1].File: true}
 	assert.True(t, gotFiles[filepath.Join("batch1", "one.bs")] && gotFiles[filepath.Join("batch2", "two.bs")],
 		"want repoRoot-relative batch1/one.bs and batch2/two.bs, got %v", gotFiles)
+}
+
+// TestRun_SandboxAbsolutePathFindingIsRemapped covers a final-review finding: a sandboxed tool
+// that echoes an absolute path (into the throwaway sandbox directory) for artifactLocation.uri,
+// instead of the relative path substituted into ${target}, must not leak that temp directory
+// into the report -- the finding's File must still come back as a clean repoRoot-relative path.
+func TestRun_SandboxAbsolutePathFindingIsRemapped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	ctDir := filepath.Join(repoRoot, "ct")
+	require.NoError(t, os.MkdirAll(ctDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ctDir, "target.abs"), []byte("x\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{
+				"abs": {Name: "abs", Extensions: []string{"abs"}},
+			},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"abspath-linter": {
+						Name: "abspath-linter", Files: []string{"abs"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool abspath ${target}", Output: "sarif",
+							SandboxType: "copy_targets",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	require.NoError(t, err)
+
+	var done *Event
+	for ev := range events {
+		if ev.Phase == Done {
+			e := ev
+			done = &e
+		}
+	}
+	require.NotNil(t, done, "expected a Done event for abspath-linter")
+	require.Len(t, done.Findings, 1)
+	assert.Equal(t, filepath.Join("ct", "target.abs"), done.Findings[0].File,
+		"an absolute artifactLocation.uri pointing into the sandbox must be remapped back to a "+
+			"clean repoRoot-relative path, not leak the sandbox's temp directory")
+	assert.NotContains(t, done.Findings[0].File, os.TempDir())
 }

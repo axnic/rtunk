@@ -438,6 +438,30 @@ func runBatch(j job, repoRoot string) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	if workDir != j.resolvedDir {
+		// workDir is a sandbox mirroring j.resolvedDir's structure. Most tools echo back the
+		// relative path we substituted into ${target}, which is already correct as-is -- but a
+		// tool that echoes an absolute path instead would otherwise leak the throwaway sandbox
+		// directory into the final report. Rewrite only the absolute case; a relative one needs
+		// no help, it's already resolvedDir-relative by construction.
+		//
+		// A tool that builds its own absolute path (e.g. via getcwd()) reports the OS's physical
+		// path, which can differ from workDir's own literal string when a symlink sits somewhere
+		// in the tempdir prefix (macOS: /tmp -> /private/tmp, /var -> /private/var, both live
+		// under os.MkdirTemp's default root) -- resolve workDir the same way before comparing, so
+		// this doesn't just work by coincidence on platforms with no such symlink.
+		base := workDir
+		if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+			base = resolved
+		}
+		for i, f := range findings {
+			if filepath.IsAbs(f.File) {
+				if rel, err := filepath.Rel(base, f.File); err == nil {
+					findings[i].File = rel
+				}
+			}
+		}
+	}
 	remapFindings(findings, j.resolvedDir, repoRoot)
 	ApplyIssueURL(findings, j.linter.IssueURLFormat)
 	return findings, nil
