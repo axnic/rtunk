@@ -96,11 +96,15 @@ reverse-engineered native format like `ParseSARIF`/`ParseESLint` genuinely are.
 `ParseGenericRegex` with one function:
 
 ```go
-// ParseFromRegex parses data using pattern's named capture groups -- path, line, col, code,
-// message, severity -- straight from the real trunk-io catalog's own Command.ParseRegex field,
-// the same mechanism trunk's own closed-source engine uses for every "regex"-output linter. A
-// group trunk's own schema doesn't require (severity, col) simply leaves that Finding field
-// zero-valued when absent, the same convention every other parser in this project already uses.
+// ParseFromRegex parses data using pattern's named capture groups, straight from the real
+// trunk-io catalog's own Command.ParseRegex field -- the same mechanism trunk's own closed-source
+// engine uses for every "regex"-output linter. A fixed name->Finding-field table does the mapping
+// (path->File, line->Line, col->Column, code->RuleID, message->Message, severity->Severity) --
+// nothing else, no linter-specific logic anywhere in this function. A name the table has no entry
+// for is simply not looked up: it isn't mapped to anything, on principle, not detected and
+// aliased to its closest match. A table entry whose group is absent from a given pattern (e.g. no
+// severity, no col) leaves that Finding field zero-valued, the same convention every other parser
+// in this project already uses.
 func ParseFromRegex(pattern string, data []byte, linter string) ([]Finding, error)
 ```
 
@@ -110,9 +114,13 @@ test-compiling every one of them directly against Go's `regexp` package during t
 research (all 14 compile cleanly). Several (`biome`, `rome`) embed a literal `\n` inside the
 pattern to span the multi-line "code frame" shape those tools print -- this works directly with
 Go's `regexp.FindAllStringSubmatch` without any special-casing, closing v0.3.1's documented false
-negatives for those tools as a side effect, not a separate fix. One real inconsistency the catalog
-itself has: `ty`'s pattern names its column group `column`, while every other pattern names the
-same concept `col` -- `ParseFromRegex` must check for both names, not assume `col` universally.
+negatives for those tools as a side effect, not a separate fix. One thing this deliberately does
+NOT special-case: `ty`'s pattern names its column group `column`, not `col` like every other
+pattern -- `column` has no entry in the mapping table, so it stays unmapped and `ty`'s findings
+have no `Column`. This is not treated as a bug to fix with a `col`-or-`column` alias: guessing that
+`column` "must mean" the same thing as `col` is exactly the kind of per-linter judgment call this
+parser exists to avoid making. If `ty`'s own `parse_regex` doesn't match this project's table,
+that's a fact about `ty`'s catalog entry, not something this parser corrects for.
 
 `taplo` keeps its own bespoke parser: its real `Output` value is `"taplo"`, not `"regex"`, and it
 carries no `parse_regex` field at all in the real catalog -- it is a genuine one-off, unlike
