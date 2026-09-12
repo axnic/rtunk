@@ -37,15 +37,16 @@ type Event struct {
 var templateVarRE = regexp.MustCompile(`\$\{[^}]*\}`)
 
 // supportedOutputFormats is every Command.Output value this package knows how to parse -- anything
-// else is Skipped. "regex" covers every free-text linter dispatched by name in runCommand's
-// switch: perlcritic/taplo get their own parser (see docs/superpowers/specs/
+// else is Skipped. "taplo" gets its own top-level dispatch (its real Command.Output value, not a
+// "regex" special case). "regex" covers every other free-text linter dispatched by name in
+// runCommand's switch: perlcritic gets its own parser (see docs/superpowers/specs/
 // 2026-09-12-check-v0.3.1-output-formats-design.md), everything else falls through to the
 // best-effort ParseGenericRegex.
 var supportedOutputFormats = map[string]bool{
 	"sarif": true, "sarif_uri": true, "pass_fail": true,
 	"actionlint": true, "bandit": true, "buildifier": true, "cfnlint": true,
 	"eslint": true, "hadolint": true, "haml_lint": true, "markdownlint": true,
-	"pylint": true, "rubocop": true, "stylelint": true, "regex": true,
+	"pylint": true, "rubocop": true, "stylelint": true, "taplo": true, "regex": true,
 }
 
 // Run executes every enabled linter's non-formatter commands against the files matched under
@@ -187,6 +188,23 @@ func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, 
 		// verdict" code, "found issues" included (e.g. ansible-lint sarif: [0,2,5]) -- there is
 		// no third bucket. Every exit code not in ErrorCodes parses normally.
 		var batchFindings []Finding
+
+		// Every JSON-shaped Output format's parser fails to unmarshal empty/whitespace-only input
+		// ("unexpected end of JSON input"), which would otherwise abort this whole Run for every
+		// linter, not just this one. A real linter can produce genuinely empty output on a clean
+		// run (e.g. markdownlint), or when an OS/version-gated command variant of the same linter
+		// silently produces nothing on this platform (a known, separate architectural gap -- out
+		// of scope here) -- either way, empty output means zero findings, not a parse failure.
+		// "pass_fail" never parses JSON (exit-code only) and "regex"'s parsers (ParsePerlCritic/
+		// ParseGenericRegex) already tolerate empty input by iterating an empty line list, so both
+		// are excluded from this guard.
+		isJSONFormat := cmd.Output != "pass_fail" && cmd.Output != "regex"
+		if isJSONFormat && strings.TrimSpace(out) == "" {
+			ApplyIssueURL(batchFindings, linter.IssueURLFormat)
+			findings = append(findings, batchFindings...)
+			continue
+		}
+
 		switch cmd.Output {
 		case "sarif", "sarif_uri":
 			// sarif_uri (checkov): ReadOutputFrom "tmp_file" already resolved the real SARIF
@@ -218,12 +236,12 @@ func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, 
 			batchFindings, err = ParseRubocop([]byte(out), linterName)
 		case "stylelint":
 			batchFindings, err = ParseStylelint([]byte(out), linterName)
+		case "taplo":
+			batchFindings, err = ParseTaplo([]byte(out), linterName)
 		case "regex":
 			switch linterName {
 			case "perlcritic":
 				batchFindings, err = ParsePerlCritic([]byte(out), linterName)
-			case "taplo":
-				batchFindings, err = ParseTaplo([]byte(out), linterName)
 			default:
 				batchFindings = ParseGenericRegex([]byte(out), linterName)
 			}

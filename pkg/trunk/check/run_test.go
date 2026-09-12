@@ -60,6 +60,13 @@ func main() {
 		fmt.Print("path=" + args[1] + ",line=1,col=1,code=SomePolicy,message=a violation\n")
 	case "genericregex":
 		fmt.Print(args[1] + ":1:1: [warning] a generic finding\n")
+	case "taplofake":
+		// A real taplo codespan_reporting diagnostic block (shape captured in parse_test.go's
+		// TestParseTaplo), referencing the actual target file this invocation was given.
+		fmt.Print("error: invalid TOML\n  ┌─ " + args[1] + ":2:8\n  │\n2 │ name = \"test\n  │        ^ unexpected token\n")
+	case "emptyjson":
+		// Prints nothing: stands in for a clean run (or an OS-gated command variant) that
+		// produces genuinely empty stdout on a JSON-shaped Output format.
 	}
 }
 `
@@ -302,6 +309,18 @@ func TestRun_NewOutputFormatDispatch(t *testing.T) {
 						Name: "genericregex-e2e", Files: []string{"ALL"}, Tools: []string{"faketool"},
 						Commands: []config.Command{{Name: "lint", Run: "faketool genericregex ${target}", Output: "regex"}},
 					},
+					"taplo-e2e": {
+						// Output: "taplo" (taplo's real Command.Output value) must dispatch
+						// through the new top-level "taplo" case, not the nested "regex" switch.
+						Name: "taplo-e2e", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool taplofake ${target}", Output: "taplo"}},
+					},
+					"emptyjson-e2e": {
+						// A JSON-shaped Output format (hadolint) whose invocation produces empty
+						// stdout must not fail the whole Run -- zero findings, not a parse error.
+						Name: "emptyjson-e2e", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool emptyjson ${target}", Output: "hadolint"}},
+					},
 				},
 			},
 		},
@@ -338,4 +357,18 @@ func TestRun_NewOutputFormatDispatch(t *testing.T) {
 	assert.Equal(t, Done, genericEv.Phase)
 	require.Len(t, genericEv.Findings, 1)
 	assert.Equal(t, "warning", genericEv.Findings[0].Severity, "a \"regex\" output for any other linter name must fall through to ParseGenericRegex")
+
+	taploEv, ok := byLinter["taplo-e2e"]
+	require.True(t, ok, "expected an event for taplo-e2e")
+	assert.Equal(t, Done, taploEv.Phase, `Output: "taplo" must be dispatched, not Skipped as an unsupported output format`)
+	require.Len(t, taploEv.Findings, 1)
+	assert.Equal(t, Finding{
+		Linter: "taplo-e2e", File: "target.txt", Line: 2, Column: 8,
+		Severity: "error", Message: "invalid TOML",
+	}, taploEv.Findings[0], "the finding's fields must come from ParseTaplo, proving the \"taplo\" case actually ran")
+
+	emptyJSONEv, ok := byLinter["emptyjson-e2e"]
+	require.True(t, ok, "expected an event for emptyjson-e2e")
+	assert.Equal(t, Done, emptyJSONEv.Phase, "empty output on a JSON-shaped format must not Fail the whole run")
+	assert.Empty(t, emptyJSONEv.Findings)
 }

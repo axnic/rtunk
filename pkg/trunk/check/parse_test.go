@@ -173,13 +173,28 @@ func TestParseHamlLint(t *testing.T) {
 }
 
 func TestParseMarkdownlint(t *testing.T) {
-	const sample = `{"README.md":[
-		{"lineNumber":3,"ruleNames":["MD010","no-hard-tabs"],"ruleDescription":"Hard tabs","errorRange":[17,1]}
-	]}`
+	// A flat JSON array (real `npx markdownlint-cli bad.md --json` capture, trimmed of the
+	// ruleInformation/errorContext/fixInfo fields this parser doesn't consume) -- NOT an object
+	// keyed by filename, which was this function's incorrect original assumption.
+	const sample = `[
+		{"fileName":"bad.md","lineNumber":3,"ruleNames":["MD010","no-hard-tabs"],"ruleDescription":"Hard tabs","errorRange":[1,1],"severity":"error"}
+	]`
 	got, err := ParseMarkdownlint([]byte(sample), "markdownlint")
 	require.NoError(t, err)
 	want := []Finding{
-		{Linter: "markdownlint", File: "README.md", Line: 3, Column: 17, Severity: "error", RuleID: "MD010", Message: "Hard tabs"},
+		{Linter: "markdownlint", File: "bad.md", Line: 3, Column: 1, Severity: "error", RuleID: "MD010", Message: "Hard tabs"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseMarkdownlint_MissingSeverityDefaultsToError(t *testing.T) {
+	const sample = `[
+		{"fileName":"bad.md","lineNumber":5,"ruleNames":["MD047"],"ruleDescription":"Files should end with a single newline","errorRange":null}
+	]`
+	got, err := ParseMarkdownlint([]byte(sample), "markdownlint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "markdownlint", File: "bad.md", Line: 5, Column: 0, Severity: "error", RuleID: "MD047", Message: "Files should end with a single newline"},
 	}
 	assert.Equal(t, want, got)
 }
@@ -295,6 +310,36 @@ func TestParseGenericRegex_MarkdownlintCli2_RealCapture(t *testing.T) {
 		{Linter: "markdownlint-cli2", File: "bad.md", Line: 3, Column: 1, Severity: "error", Message: "MD010/no-hard-tabs Hard tabs [Column: 1]"},
 	}
 	assert.Equal(t, want, got, "rule id embedded in the message is a known best-effort limitation, not extracted separately")
+}
+
+func TestParseGenericRegex_NoteMapsToInfo(t *testing.T) {
+	const sample = "file.txt:1:2: note: something\n"
+	got := ParseGenericRegex([]byte(sample), "sometool")
+	want := []Finding{
+		{Linter: "sometool", File: "file.txt", Line: 1, Column: 2, Severity: "info", Message: "something"},
+	}
+	assert.Equal(t, want, got, "Finding.Severity's vocabulary is error/warning/info -- \"note\" must be mapped, not passed through")
+}
+
+func TestParseGenericRegex_SeverityWordPrefixNotMisparsed(t *testing.T) {
+	// "warnings" must not match the severity peel as "warning" + "s are enabled" -- the peel
+	// regex requires a word boundary after the alternation, so this whole line simply doesn't
+	// match the severity peel and the message is left untouched.
+	const sample = "file.txt:1:2: warnings are enabled\n"
+	got := ParseGenericRegex([]byte(sample), "sometool")
+	want := []Finding{
+		{Linter: "sometool", File: "file.txt", Line: 1, Column: 2, Severity: "error", Message: "warnings are enabled"},
+	}
+	assert.Equal(t, want, got, "message must not be corrupted into \"s are enabled\"")
+}
+
+func TestParseGenericRegex_CapitalizedSeverityWord(t *testing.T) {
+	const sample = "file.txt:5:1: Warning: something\n"
+	got := ParseGenericRegex([]byte(sample), "sometool")
+	want := []Finding{
+		{Linter: "sometool", File: "file.txt", Line: 5, Column: 1, Severity: "warning", Message: "something"},
+	}
+	assert.Equal(t, want, got, "capitalized severity words must be peeled too, not only lowercase")
 }
 
 func TestParseGenericRegex_SkipsNonMatchingLines(t *testing.T) {

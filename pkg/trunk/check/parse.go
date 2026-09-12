@@ -400,38 +400,43 @@ func ParseHamlLint(data []byte, linter string) ([]Finding, error) {
 }
 
 type markdownlintViolation struct {
+	FileName        string   `json:"fileName"`
 	LineNumber      int      `json:"lineNumber"`
 	RuleNames       []string `json:"ruleNames"`
 	RuleDescription string   `json:"ruleDescription"`
 	ErrorRange      []int    `json:"errorRange"`
+	Severity        string   `json:"severity"`
 }
 
-// ParseMarkdownlint decodes markdownlint's `--json` output: an object keyed by filename, each
-// value an array of violations (DavidAnson/markdownlint's documented schema). RuleNames[0] is the
-// short code (e.g. "MD010"); ErrorRange[0], when present, is the 1-based column. Every violation
-// is reported as "error" -- markdownlint's base --json output does not reliably include its own
-// severity field (only cli2-formatter output was confirmed to have one).
+// ParseMarkdownlint decodes markdownlint-cli's `--json` output: a flat JSON array (confirmed by
+// running `npx markdownlint-cli <file> --json` locally against a real broken markdown fixture --
+// NOT an object keyed by filename, which was this function's incorrect original assumption).
+// RuleNames[0] is the short code (e.g. "MD010"); ErrorRange[0], when present, is the 1-based
+// column. Severity is read directly from the real tool's own field (confirmed present in a real
+// capture, "error" in the sample observed).
 func ParseMarkdownlint(data []byte, linter string) ([]Finding, error) {
-	var doc map[string][]markdownlintViolation
-	if err := json.Unmarshal(data, &doc); err != nil {
+	var raw []markdownlintViolation
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("check: parse markdownlint for %s: %w", linter, err)
 	}
-	var findings []Finding
-	for file, violations := range doc {
-		for _, v := range violations {
-			col := 0
-			if len(v.ErrorRange) > 0 {
-				col = v.ErrorRange[0]
-			}
-			rule := ""
-			if len(v.RuleNames) > 0 {
-				rule = v.RuleNames[0]
-			}
-			findings = append(findings, Finding{
-				Linter: linter, File: file, Line: v.LineNumber, Column: col,
-				Severity: "error", RuleID: rule, Message: v.RuleDescription,
-			})
+	findings := make([]Finding, 0, len(raw))
+	for _, v := range raw {
+		col := 0
+		if len(v.ErrorRange) > 0 {
+			col = v.ErrorRange[0]
 		}
+		rule := ""
+		if len(v.RuleNames) > 0 {
+			rule = v.RuleNames[0]
+		}
+		severity := v.Severity
+		if severity == "" {
+			severity = "error"
+		}
+		findings = append(findings, Finding{
+			Linter: linter, File: v.FileName, Line: v.LineNumber, Column: col,
+			Severity: severity, RuleID: rule, Message: v.RuleDescription,
+		})
 	}
 	return findings, nil
 }
@@ -598,8 +603,11 @@ func ParseTaplo(data []byte, linter string) ([]Finding, error) {
 var genericRegexLineRE = regexp.MustCompile(`^([^:\s][^:]*):(\d+)(?::(\d+))?[:\s]+(.*)$`)
 
 // genericRegexSeverityRE peels an optional leading severity word (bracketed or not, with an
-// optional trailing colon) off a message, e.g. "[warning] foo" or "error: foo".
-var genericRegexSeverityRE = regexp.MustCompile(`^\[?(error|warning|warn|info|note)\]?:?\s*(.*)$`)
+// optional trailing colon) off a message, e.g. "[warning] foo" or "error: foo" or "Warning: foo".
+// The trailing \b word boundary keeps this from matching a PREFIX of a longer word (e.g.
+// "warnings are enabled" must NOT match as severity "warning" + message "s are enabled"). The
+// whole match is case-insensitive so capitalized forms ("Warning:") are peeled too.
+var genericRegexSeverityRE = regexp.MustCompile(`(?i)^\[?(error|warning|warn|info|note)\b\]?:?\s*(.*)$`)
 
 // ParseGenericRegex is a best-effort, lossy parser for the many CLI linters whose Output is
 // "regex" but whose exact per-tool format trunk's closed-source binary parses via an internal,
@@ -638,8 +646,11 @@ func ParseGenericRegex(data []byte, linter string) []Finding {
 		message := strings.TrimSpace(m[4])
 		if sm := genericRegexSeverityRE.FindStringSubmatch(message); sm != nil {
 			severity = strings.ToLower(sm[1])
-			if severity == "warn" {
+			switch severity {
+			case "warn":
 				severity = "warning"
+			case "note":
+				severity = "info"
 			}
 			message = strings.TrimSpace(sm[2])
 		}
