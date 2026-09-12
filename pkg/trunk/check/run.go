@@ -73,7 +73,7 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string) (<-chan E
 }
 
 func runLinter(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, events chan<- Event) {
-	files, err := Files(cfg, linter, paths)
+	files, err := Files(cfg, linter, repoRoot, paths)
 	if err != nil {
 		events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
 		return

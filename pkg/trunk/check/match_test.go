@@ -2,6 +2,7 @@ package check
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -9,6 +10,17 @@ import (
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 )
+
+// runGit runs a git subcommand in dir, failing the test on error -- used to build a real git
+// repository fixture so filterGitignored's tests exercise the real `git check-ignore` binary
+// rather than a hand-rolled stand-in for git's own ignore semantics.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
+}
 
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
@@ -24,7 +36,7 @@ func TestFiles_Extension(t *testing.T) {
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
 		"go": {Name: "go", Extensions: []string{"go"}},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{goFile}, got)
 }
@@ -38,7 +50,7 @@ func TestFiles_Filename(t *testing.T) {
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
 		"docker": {Name: "docker", Filenames: []string{"Dockerfile"}},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"docker"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"docker"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{dockerfile}, got)
 }
@@ -52,7 +64,7 @@ func TestFiles_Regex(t *testing.T) {
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
 		"prod-config": {Name: "prod-config", Regexes: []string{`config\.prod\.yaml$`}},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"prod-config"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"prod-config"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{match}, got)
 }
@@ -66,7 +78,7 @@ func TestFiles_ShebangOnlyForExtensionlessFiles(t *testing.T) {
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
 		"shell": {Name: "shell", Shebangs: []string{"bash", "sh"}},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"shell"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"shell"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{script}, got)
 }
@@ -80,7 +92,7 @@ func TestFiles_Inherit(t *testing.T) {
 		"yaml":           {Name: "yaml", Extensions: []string{"yaml", "yml"}},
 		"cloudformation": {Name: "cloudformation", Inherit: []string{"yaml"}},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"cloudformation"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"cloudformation"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{f}, got)
 }
@@ -98,7 +110,7 @@ func TestFiles_RequiredYAMLKeysNarrows(t *testing.T) {
 			RequiredYAMLKeys: []string{"AWSTemplateFormatVersion"},
 		},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"cloudformation"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"cloudformation"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{cfnFile}, got, "plain.yaml lacks the required key and must not match")
 }
@@ -111,7 +123,7 @@ func TestFiles_InheritCycleDoesNotHang(t *testing.T) {
 		"a": {Name: "a", Inherit: []string{"b"}},
 		"b": {Name: "b", Inherit: []string{"a"}},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"a"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"a"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Empty(t, got, "a's own Inherit cycle has no structural criteria of its own to match")
 }
@@ -121,7 +133,7 @@ func TestFiles_All(t *testing.T) {
 	f := filepath.Join(dir, "anything.xyz")
 	mustWrite(t, f, "content\n")
 
-	got, err := Files(config.Config{}, config.Linter{Files: []string{"ALL"}}, []string{dir})
+	got, err := Files(config.Config{}, config.Linter{Files: []string{"ALL"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{f}, got)
 }
@@ -136,7 +148,44 @@ func TestFiles_SkipsDotGit(t *testing.T) {
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
 		"go": {Name: "go", Extensions: []string{"go"}},
 	}}}
-	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, []string{dir})
+	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
+	require.NoError(t, err)
+	require.Equal(t, []string{real}, got)
+}
+
+// TestFiles_RespectsGitignore covers files ignored by a real .gitignore: git-ignored files must
+// never reach a linter, matching trunk's own behavior of only checking tracked-or-trackable
+// source. "generated.go" (gitignored) must not appear alongside "main.go" (not ignored).
+func TestFiles_RespectsGitignore(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+
+	mustWrite(t, filepath.Join(dir, ".gitignore"), "generated.go\n")
+	real := filepath.Join(dir, "main.go")
+	mustWrite(t, real, "package main\n")
+	mustWrite(t, filepath.Join(dir, "generated.go"), "package main\n")
+
+	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
+		"go": {Name: "go", Extensions: []string{"go"}},
+	}}}
+	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
+	require.NoError(t, err)
+	require.Equal(t, []string{real}, got, "generated.go is gitignored and must be excluded")
+}
+
+// TestFiles_GitignoreNoOpOutsideGitRepo covers a directory with no .git anywhere above it (e.g.
+// checking a plain, non-version-controlled tree): `git check-ignore` errors "not a git
+// repository", and Files must still return every structurally matched file rather than treating
+// that error as "everything is ignored" or failing the whole call.
+func TestFiles_GitignoreNoOpOutsideGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "main.go")
+	mustWrite(t, real, "package main\n")
+
+	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
+		"go": {Name: "go", Extensions: []string{"go"}},
+	}}}
+	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{real}, got)
 }

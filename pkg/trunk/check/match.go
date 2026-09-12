@@ -5,8 +5,10 @@ package check
 
 import (
 	"bufio"
+	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,13 +18,15 @@ import (
 )
 
 // Files resolves which files under paths match linter's Files (ids into cfg.Lint.Files),
-// walking directories recursively (skipping .git). A directory entry that is itself a file (not
-// a directory) is taken as-is, matched or not, without a walk.
+// walking directories recursively (skipping .git), then drops any match git considers ignored
+// (see filterGitignored). repoRoot anchors the gitignore lookup -- it need not equal paths, e.g.
+// paths can be a subset of repoRoot passed explicitly on the command line. A directory entry
+// that is itself a file (not a directory) is taken as-is, matched or not, without a walk.
 //
 // ponytail: walks the filesystem once per linter call rather than combining every enabled
 // linter's file set into one shared walk -- simpler, correct, and fine at v0.3's scale; combine
 // them if `rtunk check` on a large repo with many enabled linters gets slow.
-func Files(cfg config.Config, linter config.Linter, paths []string) ([]string, error) {
+func Files(cfg config.Config, linter config.Linter, repoRoot string, paths []string) ([]string, error) {
 	if len(linter.Files) == 0 {
 		return nil, nil
 	}
@@ -65,7 +69,62 @@ func Files(cfg config.Config, linter config.Linter, paths []string) ([]string, e
 			return nil, err
 		}
 	}
-	return out, nil
+	return filterGitignored(repoRoot, out), nil
+}
+
+// filterGitignored drops any path in files that git considers ignored, deferring to the real
+// `git check-ignore` rather than a hand-rolled gitignore parser: it is the same matcher git
+// itself uses, so nested .gitignore files, .git/info/exclude, and core.excludesFile all just
+// work without reimplementing their precedence rules. Returns files unchanged (never an error)
+// when repoRoot isn't inside a git repository or git isn't on PATH -- gitignore support is a
+// courtesy, not a requirement for `rtunk check` to run.
+func filterGitignored(repoRoot string, files []string) []string {
+	if len(files) == 0 {
+		return files
+	}
+
+	rel := make([]string, len(files))
+	for i, f := range files {
+		r, err := filepath.Rel(repoRoot, f)
+		if err != nil {
+			return files
+		}
+		rel[i] = r
+	}
+
+	cmd := exec.Command("git", "check-ignore", "--no-index", "-z", "--stdin")
+	cmd.Dir = repoRoot
+	cmd.Stdin = strings.NewReader(strings.Join(rel, "\x00") + "\x00")
+	var out strings.Builder
+	cmd.Stdout = &out
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		// exit 1 means "nothing ignored", not an error -- fall through and parse the (empty)
+		// output normally. Anything else (128: not a git repo; a launch failure: git missing)
+		// means we can't ask, so every file passes through unfiltered.
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return files
+		}
+	}
+
+	ignored := map[string]bool{}
+	for _, p := range strings.Split(strings.TrimSuffix(out.String(), "\x00"), "\x00") {
+		if p != "" {
+			ignored[p] = true
+		}
+	}
+	if len(ignored) == 0 {
+		return files
+	}
+
+	kept := make([]string, 0, len(files))
+	for i, f := range files {
+		if !ignored[rel[i]] {
+			kept = append(kept, f)
+		}
+	}
+	return kept
 }
 
 // matchesAny reports whether path matches any of the FileType ids (looked up in registry, each
