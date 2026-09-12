@@ -51,6 +51,15 @@ func main() {
 	case "crashstderr":
 		fmt.Fprintln(os.Stderr, "boom: disk on fire")
 		os.Exit(43)
+	case "hadolint":
+		fmt.Print("[{\"line\":1,\"code\":\"DL3006\",\"message\":\"pin a version\",\"column\":1,\"file\":\"" + args[1] + "\",\"level\":\"warning\"}]")
+	case "sarifuri":
+		// args[1] is the ${tmpfile} path checkov's real recipe writes SARIF to.
+		os.WriteFile(args[1], []byte("{\"runs\":[{\"results\":[{\"ruleId\":\"CKV_1\",\"level\":\"error\",\"message\":{\"text\":\"finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+args[2]+"\"},\"region\":{\"startLine\":1}}}]}]}]}"), 0o644)
+	case "perlcritic":
+		fmt.Print("path=" + args[1] + ",line=1,col=1,code=SomePolicy,message=a violation\n")
+	case "genericregex":
+		fmt.Print(args[1] + ":1:1: [warning] a generic finding\n")
 	}
 }
 `
@@ -112,7 +121,7 @@ func TestRun(t *testing.T) {
 					},
 					"fakeskipformat": {
 						Name: "fakeskipformat", Files: []string{"ALL"}, Tools: []string{"faketool"},
-						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "regex"}},
+						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "xml"}},
 					},
 					"fakeskipvar": {
 						Name: "fakeskipvar", Files: []string{"ALL"}, Tools: []string{"faketool"},
@@ -192,7 +201,7 @@ func TestRun(t *testing.T) {
 	skipFormatEv, ok := byLinter["fakeskipformat"]
 	require.True(t, ok)
 	assert.Equal(t, Skipped, skipFormatEv.Phase)
-	assert.Contains(t, skipFormatEv.Note, "regex")
+	assert.Contains(t, skipFormatEv.Note, "xml")
 
 	skipVarEv, ok := byLinter["fakeskipvar"]
 	require.True(t, ok)
@@ -249,4 +258,84 @@ func TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent(t *testing.T) {
 	assert.Equal(t, os.Getenv("PATH"), gotPath, "empty pathEnv must leave PATH untouched")
 	assert.False(t, strings.HasPrefix(gotPath, ":"), "PATH must not start with an empty (cwd) component: %q", gotPath)
 	assert.False(t, strings.Contains(gotPath, "::"), "PATH must not contain an empty component: %q", gotPath)
+}
+
+func TestRun_NewOutputFormatDispatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("content\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"hadolint-e2e": {
+						Name: "hadolint-e2e", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool hadolint ${target}", Output: "hadolint"}},
+					},
+					"sarifuri-e2e": {
+						Name: "sarifuri-e2e", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool sarifuri ${tmpfile} ${target}", Output: "sarif_uri", ReadOutputFrom: "tmp_file"}},
+					},
+					"perlcritic": {
+						Name: "perlcritic", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool perlcritic ${target}", Output: "regex"}},
+					},
+					"genericregex-e2e": {
+						Name: "genericregex-e2e", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool genericregex ${target}", Output: "regex"}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(cfg, cacheDir, repoRoot, nil)
+	require.NoError(t, err)
+
+	byLinter := map[string]Event{}
+	for ev := range events {
+		byLinter[ev.Linter] = ev
+	}
+
+	hadolintEv, ok := byLinter["hadolint-e2e"]
+	require.True(t, ok)
+	assert.Equal(t, Done, hadolintEv.Phase)
+	require.Len(t, hadolintEv.Findings, 1)
+	assert.Equal(t, "DL3006", hadolintEv.Findings[0].RuleID)
+
+	sarifURIEv, ok := byLinter["sarifuri-e2e"]
+	require.True(t, ok)
+	assert.Equal(t, Done, sarifURIEv.Phase)
+	require.Len(t, sarifURIEv.Findings, 1, "sarif_uri must dispatch through ParseSARIF via the tmp_file it names")
+	assert.Equal(t, "CKV_1", sarifURIEv.Findings[0].RuleID)
+
+	perlcriticEv, ok := byLinter["perlcritic"]
+	require.True(t, ok)
+	assert.Equal(t, Done, perlcriticEv.Phase)
+	require.Len(t, perlcriticEv.Findings, 1)
+	assert.Equal(t, "SomePolicy", perlcriticEv.Findings[0].RuleID, "the \"regex\" output for linter name \"perlcritic\" must dispatch to ParsePerlCritic, not the generic parser")
+
+	genericEv, ok := byLinter["genericregex-e2e"]
+	require.True(t, ok)
+	assert.Equal(t, Done, genericEv.Phase)
+	require.Len(t, genericEv.Findings, 1)
+	assert.Equal(t, "warning", genericEv.Findings[0].Severity, "a \"regex\" output for any other linter name must fall through to ParseGenericRegex")
 }

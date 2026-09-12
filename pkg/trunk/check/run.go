@@ -36,6 +36,18 @@ type Event struct {
 // templateVarRE matches every ${...} placeholder in a Command.Run string.
 var templateVarRE = regexp.MustCompile(`\$\{[^}]*\}`)
 
+// supportedOutputFormats is every Command.Output value this package knows how to parse -- anything
+// else is Skipped. "regex" covers every free-text linter dispatched by name in runCommand's
+// switch: perlcritic/taplo get their own parser (see docs/superpowers/specs/
+// 2026-09-12-check-v0.3.1-output-formats-design.md), everything else falls through to the
+// best-effort ParseGenericRegex.
+var supportedOutputFormats = map[string]bool{
+	"sarif": true, "sarif_uri": true, "pass_fail": true,
+	"actionlint": true, "bandit": true, "buildifier": true, "cfnlint": true,
+	"eslint": true, "hadolint": true, "haml_lint": true, "markdownlint": true,
+	"pylint": true, "rubocop": true, "stylelint": true, "regex": true,
+}
+
 // Run executes every enabled linter's non-formatter commands against the files matched under
 // paths (repoRoot is the default walk root when paths is empty, and every command's working
 // directory), downloading any missing tool shim first, and streams one Event per linter that had
@@ -87,7 +99,7 @@ func runLinter(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q", v)}
 			continue
 		}
-		if cmd.Output != "sarif" && cmd.Output != "pass_fail" {
+		if !supportedOutputFormats[cmd.Output] {
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported output format %q", cmd.Output)}
 			continue
 		}
@@ -176,15 +188,48 @@ func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, 
 		// no third bucket. Every exit code not in ErrorCodes parses normally.
 		var batchFindings []Finding
 		switch cmd.Output {
-		case "sarif":
+		case "sarif", "sarif_uri":
+			// sarif_uri (checkov): ReadOutputFrom "tmp_file" already resolved the real SARIF
+			// bytes written to ${tmpfile} into out -- no separate parser needed.
 			batchFindings, err = ParseSARIF([]byte(out), linterName)
-			if err != nil {
-				return nil, err
-			}
 		case "pass_fail":
 			if exitCode != 0 {
 				batchFindings = ParsePassFail(linterName, batch)
 			}
+		case "actionlint":
+			batchFindings, err = ParseActionlint([]byte(out), linterName)
+		case "bandit":
+			batchFindings, err = ParseBandit([]byte(out), linterName)
+		case "buildifier":
+			batchFindings, err = ParseBuildifier([]byte(out), linterName)
+		case "cfnlint":
+			batchFindings, err = ParseCfnLint([]byte(out), linterName)
+		case "eslint":
+			batchFindings, err = ParseESLint([]byte(out), linterName)
+		case "hadolint":
+			batchFindings, err = ParseHadolint([]byte(out), linterName)
+		case "haml_lint":
+			batchFindings, err = ParseHamlLint([]byte(out), linterName)
+		case "markdownlint":
+			batchFindings, err = ParseMarkdownlint([]byte(out), linterName)
+		case "pylint":
+			batchFindings, err = ParsePylint([]byte(out), linterName)
+		case "rubocop":
+			batchFindings, err = ParseRubocop([]byte(out), linterName)
+		case "stylelint":
+			batchFindings, err = ParseStylelint([]byte(out), linterName)
+		case "regex":
+			switch linterName {
+			case "perlcritic":
+				batchFindings, err = ParsePerlCritic([]byte(out), linterName)
+			case "taplo":
+				batchFindings, err = ParseTaplo([]byte(out), linterName)
+			default:
+				batchFindings = ParseGenericRegex([]byte(out), linterName)
+			}
+		}
+		if err != nil {
+			return nil, err
 		}
 		ApplyIssueURL(batchFindings, linter.IssueURLFormat)
 		findings = append(findings, batchFindings...)

@@ -60,20 +60,33 @@ func TestFormatLintList(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-// TestCheckRunCmd_SkipsUnsupportedFormats drives the real CLI end to end against the existing
-// trunk-with-plugins.yaml fixture (already used by exec_test.go/cli_test.go): actionlint's
-// Output is "actionlint" (a bespoke format this plan doesn't implement) and prettier's only
-// command is Formatter: true -- both must be handled without ever attempting a network fetch.
+// TestCheckRunCmd_SkipsUnsupportedFormats: an unsupported Output format and a formatter-only
+// command must both be handled without ever attempting a network fetch or a real tool
+// invocation -- neither linter here references any Tools, so there is nothing to download.
 func TestCheckRunCmd_SkipsUnsupportedFormats(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".github", "workflows", "ci.yml"), []byte("on: push\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)\n"), 0o644))
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"unsupported-fmt", "formatter-only"}, `    - name: unsupported-fmt
+      description: Uses a made-up Output value this project will never implement
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+    - name: formatter-only
+      description: Only has a Formatter command, never run by check at all
+      files: [ALL]
+      commands:
+        - name: fmt
+          run: echo unused
+          output: rewrite
+          formatter: true
+          in_place: true
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "app.txt"), []byte("content\n"), 0o644))
 
 	cacheDir := t.TempDir()
-	stdout, stderr, err := run2(t, "--config", trunkYAML, "--cache-dir", cacheDir, "check", dir)
+	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check")
 	require.NoError(t, err, "stderr: %s", stderr)
-	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: actionlint [unsupported output format \"actionlint\"])\n"
+	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: unsupported-fmt [unsupported output format \"xml\"])\n"
 	assert.Equal(t, want, stdout)
 }
 
