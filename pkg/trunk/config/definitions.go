@@ -109,6 +109,7 @@ type Command struct {
 	ReadOutputFrom string  `yaml:"read_output_from,omitempty"`
 	SandboxType    string  `yaml:"sandbox_type,omitempty"`
 	RunFrom        string  `yaml:"run_from,omitempty"`
+	ParseRegex     string  `yaml:"parse_regex,omitempty"`
 	Version        string  `yaml:"version,omitempty"`
 	InPlace        bool    `yaml:"in_place,omitempty"`
 	Formatter      bool    `yaml:"formatter,omitempty"`
