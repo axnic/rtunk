@@ -133,3 +133,77 @@ func TestParseActionlint_InvalidJSON(t *testing.T) {
 	_, err := ParseActionlint([]byte("not json"), "actionlint")
 	require.Error(t, err)
 }
+
+func TestParseESLint(t *testing.T) {
+	const sample = `[{"filePath":"src/app.js","messages":[
+		{"ruleId":"no-eval","severity":2,"message":"eval is evil","line":12,"column":4},
+		{"ruleId":"prefer-const","severity":1,"message":"Use const","line":3,"column":1}
+	]}]`
+	got, err := ParseESLint([]byte(sample), "eslint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "eslint", File: "src/app.js", Line: 12, Column: 4, Severity: "error", RuleID: "no-eval", Message: "eval is evil"},
+		{Linter: "eslint", File: "src/app.js", Line: 3, Column: 1, Severity: "warning", RuleID: "prefer-const", Message: "Use const"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseBuildifier(t *testing.T) {
+	const sample = `{"success":false,"files":[{"filename":"BUILD","warnings":[
+		{"start":{"line":3,"column":1},"category":"module-docstring","message":"The file has no module docstring."}
+	]}]}`
+	got, err := ParseBuildifier([]byte(sample), "buildifier")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "buildifier", File: "BUILD", Line: 3, Column: 1, Severity: "warning", RuleID: "module-docstring", Message: "The file has no module docstring."},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseHamlLint(t *testing.T) {
+	const sample = `{"files":[{"path":"app.haml","offenses":[
+		{"severity":"warning","message":"Line is too long.","linter_name":"LineLength","location":{"line":15}}
+	]}]}`
+	got, err := ParseHamlLint([]byte(sample), "haml-lint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "haml-lint", File: "app.haml", Line: 15, Severity: "warning", RuleID: "LineLength", Message: "Line is too long."},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseMarkdownlint(t *testing.T) {
+	const sample = `{"README.md":[
+		{"lineNumber":3,"ruleNames":["MD010","no-hard-tabs"],"ruleDescription":"Hard tabs","errorRange":[17,1]}
+	]}`
+	got, err := ParseMarkdownlint([]byte(sample), "markdownlint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "markdownlint", File: "README.md", Line: 3, Column: 17, Severity: "error", RuleID: "MD010", Message: "Hard tabs"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseRubocop(t *testing.T) {
+	const sample = `{"files":[{"path":"app.rb","offenses":[
+		{"severity":"warning","message":"Line is too long.","cop_name":"Layout/LineLength","location":{"line":15,"column":9}}
+	]}]}`
+	got, err := ParseRubocop([]byte(sample), "standardrb")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "standardrb", File: "app.rb", Line: 15, Column: 9, Severity: "warning", RuleID: "Layout/LineLength", Message: "Line is too long."},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseStylelint(t *testing.T) {
+	const sample = `[{"source":"a.css","warnings":[
+		{"line":1,"column":2,"rule":"block-no-empty","severity":"warning","text":"Unexpected empty block (block-no-empty)"}
+	]}]`
+	got, err := ParseStylelint([]byte(sample), "stylelint")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "stylelint", File: "a.css", Line: 1, Column: 2, Severity: "warning", RuleID: "block-no-empty", Message: "Unexpected empty block (block-no-empty)"},
+	}
+	assert.Equal(t, want, got)
+}

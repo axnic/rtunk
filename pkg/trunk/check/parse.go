@@ -290,3 +290,222 @@ func pylintSeverity(t string) string {
 		return "info"
 	}
 }
+
+type eslintFileResult struct {
+	FilePath string `json:"filePath"`
+	Messages []struct {
+		RuleID   string `json:"ruleId"`
+		Severity int    `json:"severity"`
+		Message  string `json:"message"`
+		Line     int    `json:"line"`
+		Column   int    `json:"column"`
+	} `json:"messages"`
+}
+
+// ParseESLint decodes eslint's `--format json` output (ESLint's documented formatter schema: a
+// top-level array of per-file results, each with a nested messages[] array). Severity is 1
+// (warning) or 2 (error), per ESLint's own docs.
+func ParseESLint(data []byte, linter string) ([]Finding, error) {
+	var raw []eslintFileResult
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("check: parse eslint for %s: %w", linter, err)
+	}
+	var findings []Finding
+	for _, file := range raw {
+		for _, m := range file.Messages {
+			findings = append(findings, Finding{
+				Linter: linter, File: file.FilePath, Line: m.Line, Column: m.Column,
+				Severity: eslintSeverity(m.Severity), RuleID: m.RuleID, Message: m.Message,
+			})
+		}
+	}
+	return findings, nil
+}
+
+func eslintSeverity(s int) string {
+	if s == 2 {
+		return "error"
+	}
+	return "warning"
+}
+
+type buildifierDocument struct {
+	Files []struct {
+		Filename string `json:"filename"`
+		Warnings []struct {
+			Start struct {
+				Line   int `json:"line"`
+				Column int `json:"column"`
+			} `json:"start"`
+			Category string `json:"category"`
+			Message  string `json:"message"`
+		} `json:"warnings"`
+	} `json:"files"`
+}
+
+// ParseBuildifier decodes buildifier's `--format=json --mode=check` output (source-verified from
+// bazelbuild/buildtools's diagnostics.go). Buildifier warnings carry no severity level of their
+// own, so every finding is reported as "warning".
+func ParseBuildifier(data []byte, linter string) ([]Finding, error) {
+	var doc buildifierDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("check: parse buildifier for %s: %w", linter, err)
+	}
+	var findings []Finding
+	for _, f := range doc.Files {
+		for _, w := range f.Warnings {
+			findings = append(findings, Finding{
+				Linter: linter, File: f.Filename, Line: w.Start.Line, Column: w.Start.Column,
+				Severity: "warning", RuleID: w.Category, Message: w.Message,
+			})
+		}
+	}
+	return findings, nil
+}
+
+type hamlLintDocument struct {
+	Files []struct {
+		Path     string `json:"path"`
+		Offenses []struct {
+			Severity   string `json:"severity"`
+			Message    string `json:"message"`
+			LinterName string `json:"linter_name"`
+			Location   struct {
+				Line int `json:"line"`
+			} `json:"location"`
+		} `json:"offenses"`
+	} `json:"files"`
+}
+
+// ParseHamlLint decodes haml-lint's `--reporter=json` output (source-verified from
+// sds/haml-lint's json_reporter.rb/hash_reporter.rb -- JsonReporter is literally
+// HashReporter.to_json). haml-lint's schema has no column field at all, only offenses[].location.line.
+func ParseHamlLint(data []byte, linter string) ([]Finding, error) {
+	var doc hamlLintDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("check: parse haml_lint for %s: %w", linter, err)
+	}
+	var findings []Finding
+	for _, f := range doc.Files {
+		for _, o := range f.Offenses {
+			findings = append(findings, Finding{
+				Linter: linter, File: f.Path, Line: o.Location.Line,
+				Severity: o.Severity, RuleID: o.LinterName, Message: o.Message,
+			})
+		}
+	}
+	return findings, nil
+}
+
+type markdownlintViolation struct {
+	LineNumber      int      `json:"lineNumber"`
+	RuleNames       []string `json:"ruleNames"`
+	RuleDescription string   `json:"ruleDescription"`
+	ErrorRange      []int    `json:"errorRange"`
+}
+
+// ParseMarkdownlint decodes markdownlint's `--json` output: an object keyed by filename, each
+// value an array of violations (DavidAnson/markdownlint's documented schema). RuleNames[0] is the
+// short code (e.g. "MD010"); ErrorRange[0], when present, is the 1-based column. Every violation
+// is reported as "error" -- markdownlint's base --json output does not reliably include its own
+// severity field (only cli2-formatter output was confirmed to have one).
+func ParseMarkdownlint(data []byte, linter string) ([]Finding, error) {
+	var doc map[string][]markdownlintViolation
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("check: parse markdownlint for %s: %w", linter, err)
+	}
+	var findings []Finding
+	for file, violations := range doc {
+		for _, v := range violations {
+			col := 0
+			if len(v.ErrorRange) > 0 {
+				col = v.ErrorRange[0]
+			}
+			rule := ""
+			if len(v.RuleNames) > 0 {
+				rule = v.RuleNames[0]
+			}
+			findings = append(findings, Finding{
+				Linter: linter, File: file, Line: v.LineNumber, Column: col,
+				Severity: "error", RuleID: rule, Message: v.RuleDescription,
+			})
+		}
+	}
+	return findings, nil
+}
+
+type rubocopDocument struct {
+	Files []struct {
+		Path     string `json:"path"`
+		Offenses []struct {
+			Severity string `json:"severity"`
+			Message  string `json:"message"`
+			CopName  string `json:"cop_name"`
+			Location struct {
+				Line   int `json:"line"`
+				Column int `json:"column"`
+			} `json:"location"`
+		} `json:"offenses"`
+	} `json:"files"`
+}
+
+// ParseRubocop decodes RuboCop's `--format json` output (source-verified from rubocop's own
+// json_formatter.rb -- standardrb wraps rubocop and shares this exact formatter). RuboCop's own
+// severities (refactor/convention/warning/error/fatal) are mapped via rubocopSeverity.
+func ParseRubocop(data []byte, linter string) ([]Finding, error) {
+	var doc rubocopDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("check: parse rubocop for %s: %w", linter, err)
+	}
+	var findings []Finding
+	for _, f := range doc.Files {
+		for _, o := range f.Offenses {
+			findings = append(findings, Finding{
+				Linter: linter, File: f.Path, Line: o.Location.Line, Column: o.Location.Column,
+				Severity: rubocopSeverity(o.Severity), RuleID: o.CopName, Message: o.Message,
+			})
+		}
+	}
+	return findings, nil
+}
+
+func rubocopSeverity(s string) string {
+	switch s {
+	case "error", "fatal":
+		return "error"
+	case "warning":
+		return "warning"
+	default: // "convention", "refactor"
+		return "info"
+	}
+}
+
+type stylelintFileResult struct {
+	Source   string `json:"source"`
+	Warnings []struct {
+		Line     int    `json:"line"`
+		Column   int    `json:"column"`
+		Rule     string `json:"rule"`
+		Severity string `json:"severity"`
+		Text     string `json:"text"`
+	} `json:"warnings"`
+}
+
+// ParseStylelint decodes stylelint's `-f json` output (stylelint's documented formatter schema: a
+// top-level array of per-file results, each with a nested warnings[] array).
+func ParseStylelint(data []byte, linter string) ([]Finding, error) {
+	var raw []stylelintFileResult
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("check: parse stylelint for %s: %w", linter, err)
+	}
+	var findings []Finding
+	for _, file := range raw {
+		for _, w := range file.Warnings {
+			findings = append(findings, Finding{
+				Linter: linter, File: file.Source, Line: w.Line, Column: w.Column,
+				Severity: w.Severity, RuleID: w.Rule, Message: w.Text,
+			})
+		}
+	}
+	return findings, nil
+}
