@@ -25,6 +25,8 @@ const fakeToolSrc = `package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -73,6 +75,30 @@ func main() {
 		time.Sleep(250 * time.Millisecond)
 	case "alwaysfail":
 		os.Exit(1)
+	case "pwdls":
+		// Reports its own cwd and a recursive listing of every regular file under it (relative
+		// paths, so a nested layout like "combo/target.combo" is visible, not just top-level
+		// names) as a fake SARIF finding's message, one result per file argument (args[1:], same
+		// pattern as the "sarif" case above) so a Batch invocation over N files still produces N
+		// findings, not one -- lets a test assert on exactly which directory the process ran from
+		// and which files it sees there (RunFrom resolution / SandboxType staging), while each
+		// finding's own artifactLocation still round-trips through the normal ParseSARIF +
+		// remapFindings pipeline.
+		wd, _ := os.Getwd()
+		var names []string
+		filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				names = append(names, path)
+			}
+			return nil
+		})
+		sort.Strings(names)
+		msg := "pwd=" + wd + ";files=" + strings.Join(names, ",")
+		var results []string
+		for _, f := range args[1:] {
+			results = append(results, "{\"ruleId\":\"pwd-check\",\"level\":\"error\",\"message\":{\"text\":\""+msg+"\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+f+"\"},\"region\":{\"startLine\":1}}}]}")
+		}
+		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
 	}
 }
 `
@@ -162,11 +188,11 @@ func TestRun(t *testing.T) {
 					},
 					"fakeskiprunfrom": {
 						Name: "fakeskiprunfrom", Files: []string{"ALL"}, Tools: []string{"faketool"},
-						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif", RunFrom: "${parent}"}},
+						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif", RunFrom: "apps"}},
 					},
 					"fakeskipsandbox": {
 						Name: "fakeskipsandbox", Files: []string{"ALL"}, Tools: []string{"faketool"},
-						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif", SandboxType: "copy_targets"}},
+						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif", SandboxType: "unknown_type"}},
 					},
 					"fakeformatteronly": {
 						Name: "fakeformatteronly", Files: []string{"ALL"}, Tools: []string{"faketool"},
@@ -566,4 +592,183 @@ func TestRun_NewOutputFormatDispatch(t *testing.T) {
 	require.True(t, ok, "expected an event for emptyjson-e2e")
 	assert.Equal(t, Done, emptyJSONEv.Phase, "empty output on a JSON-shaped format must not Fail the whole run")
 	assert.Empty(t, emptyJSONEv.Findings)
+}
+
+// TestRun_RunFromAndSandbox covers v0.3.2's real engine wiring end to end: RunFrom resolution
+// (${target_directory}), SandboxType staging (copy_targets, expanded -- including expanded's
+// empty-RunFrom default to the target's own directory), the two combined (mirroring snyk's real
+// ${parent}+copy_targets), and a Batch: true command whose matched files span two different
+// resolved directories. Each fixture linter is scoped to its own dedicated FileType (a unique
+// extension) so that walking every fixture directory in one Run() call never lets one linter
+// accidentally match another's files.
+func TestRun_RunFromAndSandbox(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+
+	// target-directory-linter (.td): one file in a subdirectory. RunFrom must resolve to that
+	// subdirectory, not repoRoot -- no sandboxing, so the process runs against the real directory.
+	subDir := filepath.Join(repoRoot, "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "file.td"), []byte("x\n"), 0o644))
+
+	// copy-targets-linter (.ct): a matched target plus a real, unmatched sibling file (a
+	// different, unregistered extension) in the same directory. RunFrom is left empty, so
+	// resolvedDir defaults to repoRoot -- the sandbox must contain exactly "ct/target.ct",
+	// never the sibling (which was never a Files() match at all, and copy_targets must not
+	// independently discover it).
+	ctDir := filepath.Join(repoRoot, "ct")
+	require.NoError(t, os.MkdirAll(ctDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ctDir, "target.ct"), []byte("x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(ctDir, "sibling.txt"), []byte("x\n"), 0o644))
+
+	// expanded-linter (.exp): two matched files in the same directory, RunFrom left empty.
+	// "expanded" must default to the target's own directory (this test's whole point -- see the
+	// buildJobs comment on effectiveRunFrom) and stage both files, even though only one directory
+	// is involved and Batch: true means a single invocation covers both.
+	expDir := filepath.Join(repoRoot, "exp")
+	require.NoError(t, os.MkdirAll(expDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(expDir, "a.exp"), []byte("x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(expDir, "b.exp"), []byte("x\n"), 0o644))
+
+	// combo-linter (.combo): mirrors snyk (${parent} -> repoRoot, + copy_targets). resolvedDir is
+	// repoRoot, so the sandboxed copy must preserve the nested "combo/" prefix, not flatten it.
+	comboDir := filepath.Join(repoRoot, "combo")
+	require.NoError(t, os.MkdirAll(comboDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(comboDir, "target.combo"), []byte("x\n"), 0o644))
+
+	// batch-split-linter (.bs): two files in two different subdirectories, Batch: true with
+	// ${target_directory} -- must become two separate invocations, not one.
+	batchDir1 := filepath.Join(repoRoot, "batch1")
+	batchDir2 := filepath.Join(repoRoot, "batch2")
+	require.NoError(t, os.MkdirAll(batchDir1, 0o755))
+	require.NoError(t, os.MkdirAll(batchDir2, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(batchDir1, "one.bs"), []byte("x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(batchDir2, "two.bs"), []byte("x\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{
+				"td":    {Name: "td", Extensions: []string{"td"}},
+				"ct":    {Name: "ct", Extensions: []string{"ct"}},
+				"exp":   {Name: "exp", Extensions: []string{"exp"}},
+				"combo": {Name: "combo", Extensions: []string{"combo"}},
+				"bs":    {Name: "bs", Extensions: []string{"bs"}},
+			},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"target-directory-linter": {
+						Name: "target-directory-linter", Files: []string{"td"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool pwdls ${target}", Output: "sarif",
+							RunFrom: "${target_directory}",
+						}},
+					},
+					"copy-targets-linter": {
+						Name: "copy-targets-linter", Files: []string{"ct"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool pwdls ${target}", Output: "sarif",
+							SandboxType: "copy_targets",
+						}},
+					},
+					"expanded-linter": {
+						Name: "expanded-linter", Files: []string{"exp"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool pwdls ${target}", Output: "sarif",
+							SandboxType: "expanded", Batch: true,
+						}},
+					},
+					"combo-linter": {
+						Name: "combo-linter", Files: []string{"combo"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool pwdls ${target}", Output: "sarif",
+							RunFrom: "${parent}", SandboxType: "copy_targets",
+						}},
+					},
+					"batch-split-linter": {
+						Name: "batch-split-linter", Files: []string{"bs"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool sarif ${target}", Output: "sarif",
+							RunFrom: "${target_directory}", Batch: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	require.NoError(t, err)
+
+	var all []Event
+	byLinter := map[string]Event{}
+	for ev := range events {
+		all = append(all, ev)
+		if ev.Phase == Done {
+			byLinter[ev.Linter] = ev
+		}
+	}
+
+	// target_directory: cwd must be subDir itself (no sandboxing), symlink-normalized -- t.TempDir()
+	// on macOS can live under a symlinked /tmp -- and the finding's File must come back
+	// repoRoot-relative.
+	tdEv := byLinter["target-directory-linter"]
+	require.Len(t, tdEv.Findings, 1)
+	wantSubDir, err := filepath.EvalSymlinks(subDir)
+	require.NoError(t, err)
+	assert.Contains(t, tdEv.Findings[0].Message, "pwd="+wantSubDir)
+	assert.Contains(t, tdEv.Findings[0].Message, "files=file.td")
+	assert.Equal(t, filepath.Join("sub", "file.td"), tdEv.Findings[0].File)
+
+	// copy_targets: resolvedDir is repoRoot (RunFrom left empty), so the sandbox must preserve the
+	// nested "ct/" prefix -- and sibling.txt (a real file, but never a Files() match) must never
+	// appear, proving copy_targets stages exactly the given targets, nothing it finds on its own.
+	ctEv := byLinter["copy-targets-linter"]
+	require.Len(t, ctEv.Findings, 1)
+	assert.Contains(t, ctEv.Findings[0].Message, "files=ct/target.ct")
+	assert.NotContains(t, ctEv.Findings[0].Message, "sibling")
+	assert.Equal(t, filepath.Join("ct", "target.ct"), ctEv.Findings[0].File)
+
+	// expanded: both a.exp and b.exp must appear -- proving the empty-RunFrom default resolved to
+	// expDir itself (not repoRoot, which has no .exp files at all), and expanded staged the whole
+	// directory, not just the matched targets.
+	expEv := byLinter["expanded-linter"]
+	require.Len(t, expEv.Findings, 2)
+	for _, f := range expEv.Findings {
+		assert.Contains(t, f.Message, "files=a.exp,b.exp")
+	}
+
+	// combo: ${parent} resolves to repoRoot, but copy_targets still sandboxes -- the sandbox's
+	// recursive listing must show the nested "combo/target.combo" path (not a flattened
+	// "target.combo"), and the finding's File must still come back repoRoot-relative.
+	comboEv := byLinter["combo-linter"]
+	require.Len(t, comboEv.Findings, 1)
+	assert.Contains(t, comboEv.Findings[0].Message, "files=combo/target.combo")
+	assert.Equal(t, filepath.Join("combo", "target.combo"), comboEv.Findings[0].File)
+
+	// batch-split: 2 files in 2 different resolved directories must produce 2 Running events for
+	// batch-split-linter, not 1 -- and 2 findings, each attributed to its own real file.
+	var batchRunning int
+	for _, ev := range all {
+		if ev.Linter == "batch-split-linter" && ev.Phase == Running {
+			batchRunning++
+		}
+	}
+	assert.Equal(t, 2, batchRunning, "files in 2 different resolved directories must split into 2 invocations")
+	batchEv := byLinter["batch-split-linter"]
+	require.Len(t, batchEv.Findings, 2)
+	gotFiles := map[string]bool{batchEv.Findings[0].File: true, batchEv.Findings[1].File: true}
+	assert.True(t, gotFiles[filepath.Join("batch1", "one.bs")] && gotFiles[filepath.Join("batch2", "two.bs")],
+		"want repoRoot-relative batch1/one.bs and batch2/two.bs, got %v", gotFiles)
 }

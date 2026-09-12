@@ -45,7 +45,7 @@ var templateVarRE = regexp.MustCompile(`\$\{[^}]*\}`)
 // supportedOutputFormats is every Command.Output value this package knows how to parse -- anything
 // else is Skipped. "taplo" gets its own top-level dispatch (its real Command.Output value, not a
 // "regex" special case). "regex" covers every other free-text linter dispatched by name in
-// runCommand's switch: perlcritic gets its own parser (see docs/superpowers/specs/
+// runBatch's switch: perlcritic gets its own parser (see docs/superpowers/specs/
 // 2026-09-12-check-v0.3.1-output-formats-design.md), everything else falls through to the
 // best-effort ParseGenericRegex.
 var supportedOutputFormats = map[string]bool{
@@ -57,21 +57,25 @@ var supportedOutputFormats = map[string]bool{
 
 // job is one command invocation queued for a worker: one batch (all matched files, for a Batch
 // command; one file otherwise) of one linter's one command, with that linter's tool shims already
-// resolved onto pathEnv. Resolving shims (which may download a tool) happens once per linter
+// resolved onto pathEnv. resolvedDir is the directory Command.RunFrom resolved to for every file
+// in batch (repoRoot when RunFrom is empty) -- batch's entries are paths relative to resolvedDir,
+// not repoRoot, ready for ${target} substitution once the invocation's cwd becomes resolvedDir (or
+// a sandbox mirroring it). Resolving shims (which may download a tool) happens once per linter
 // before any worker starts -- never inside a worker -- so two jobs never race downloading the
 // same tool.
 type job struct {
-	linterName string
-	linter     config.Linter
-	cmd        config.Command
-	batch      []string
-	pathEnv    string
+	linterName  string
+	linter      config.Linter
+	cmd         config.Command
+	batch       []string
+	pathEnv     string
+	resolvedDir string
 }
 
 // linterState accumulates one linter's concurrently-completing jobs into the single terminal
 // event (Done or Failed) a sequential run would send once its last command finished. Jobs for the
-// same linter can now finish on different workers in any order, so "is this linter done"
-// is tracked by a remaining-jobs counter guarded by mu, not by loop position.
+// same linter can now finish on different workers in any order, so "is this linter done" is
+// tracked by a remaining-jobs counter guarded by mu, not by loop position.
 type linterState struct {
 	mu           sync.Mutex
 	remaining    int
@@ -81,14 +85,15 @@ type linterState struct {
 }
 
 // Run executes every enabled linter's non-formatter commands against the files matched under
-// paths (repoRoot is the default walk root when paths is empty, and every command's working
-// directory), downloading any missing tool shim first, and streams one Event per linter that had
-// something to report. cfg is expected already enabled+used-trimmed (config.Resolve's output).
+// paths (repoRoot is the default walk root when paths is empty, and every command's default
+// working directory), downloading any missing tool shim first, and streams one Event per linter
+// that had something to report. cfg is expected already enabled+used-trimmed (config.Resolve's
+// output).
 //
 // concurrency workers (at least 1) run the queued command invocations in parallel; the queue
 // itself is built sequentially and in a fixed order -- linters sorted by name, each linter's own
-// batches sorted by file -- so which job a worker happens to pick up next is the only source of
-// nondeterminism, never the queue's own order.
+// batches sorted by resolved directory then file -- so which job a worker happens to pick up next
+// is the only source of nondeterminism, never the queue's own order.
 func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurrency int) (<-chan Event, error) {
 	root, err := download.Root(cacheDir)
 	if err != nil {
@@ -96,10 +101,10 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 	}
 
 	// Every match Files() returns is later relativized against repoRoot (here, for gitignore
-	// lookups; below, for the paths a linter's own command sees) via filepath.Rel, which errors
-	// outright if one side is absolute and the other relative -- e.g. `rtunk check .` passes
-	// paths=["."], a relative walk root, while repoRoot is always absolute. Absolutizing both up
-	// front means every path Files() walks and returns is comparable to repoRoot.
+	// lookups; below, for RunFrom resolution) via filepath.Rel, which errors outright if one side
+	// is absolute and the other relative -- e.g. `rtunk check .` passes paths=["."], a relative
+	// walk root, while repoRoot is always absolute. Absolutizing both up front means every path
+	// Files() walks and returns is comparable to repoRoot.
 	repoRoot, err = filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -163,10 +168,11 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 }
 
 // buildJobs resolves name's matched files and queues one job per runnable command invocation,
-// emitting a Skipped event immediately for every command an unsupported feature rules out (same
-// checks, same order, as the single-threaded engine this replaces) and a Failed event (returning
-// no jobs) if matching files or resolving tools errors outright. Shim resolution -- which may
-// download a tool -- runs at most once per linter, lazily, on the first command that needs it.
+// emitting a Skipped event immediately for every command an unsupported feature rules out (var,
+// output format, parser -- unchanged from v0.3.1; SandboxType/RunFrom now attempt real resolution
+// instead of a blanket skip) and a Failed event (returning no jobs) if matching files or resolving
+// tools errors outright. Shim resolution -- which may download a tool -- runs at most once per
+// linter, lazily, on the first command that needs it.
 func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, events chan<- Event) []job {
 	files, err := Files(cfg, linter, repoRoot, paths)
 	if err != nil {
@@ -177,36 +183,12 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		return nil
 	}
 
-	// files are relativized against repoRoot (every command's Dir) so both pass_fail's
-	// Finding.File and sarif's echoed-back ${target} URI come out repo-relative, matching the
-	// design spec's report format -- not absolute paths from the walk root. Sorting makes the
-	// queue's (and so the live Running events') file order deterministic regardless of how many
-	// paths were walked or in what order.
-	relFiles := make([]string, len(files))
-	for i, f := range files {
-		rel, err := filepath.Rel(repoRoot, f)
-		if err != nil {
-			events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
-			return nil
-		}
-		relFiles[i] = rel
-	}
-	sort.Strings(relFiles)
-
 	var jobs []job
 	var pathEnv string
 	pathEnvResolved := false
 
 	for _, cmd := range linter.Commands {
 		if cmd.Formatter {
-			continue
-		}
-		if cmd.RunFrom != "" {
-			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported run_from %q", cmd.RunFrom)}
-			continue
-		}
-		if cmd.SandboxType != "" {
-			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported sandbox_type %q", cmd.SandboxType)}
 			continue
 		}
 		if v, ok := findUnsupportedVar(cmd.Run); ok {
@@ -221,6 +203,28 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			events <- Event{Linter: name, Phase: Skipped, Note: "unsupported parser (native output requires a converter script)"}
 			continue
 		}
+		if cmd.SandboxType != "" && cmd.SandboxType != "copy_targets" && cmd.SandboxType != "expanded" {
+			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported sandbox_type %q", cmd.SandboxType)}
+			continue
+		}
+
+		// "expanded" without an explicit RunFrom needs to default to the target's own directory,
+		// not repoRoot: it exists to give a tool sibling-file context (a whole Go package, a
+		// whole Terraform module), and real catalog data confirms this matters -- gokart's real
+		// command is exactly SandboxType: expanded with RunFrom left empty, and it needs its
+		// target's own directory, not repoRoot, to expand meaningfully. tflint's own "expanded"
+		// command instead sets RunFrom: ${target_directory} explicitly, so this default only ever
+		// fires when RunFrom really is empty -- an explicit RunFrom (of any form) is untouched.
+		effectiveRunFrom := cmd.RunFrom
+		if cmd.SandboxType == "expanded" && effectiveRunFrom == "" {
+			effectiveRunFrom = "${target_directory}"
+		}
+
+		groups, ok := groupByRunFrom(effectiveRunFrom, files, repoRoot, linter.DirectConfigs)
+		if !ok {
+			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported run_from %q", cmd.RunFrom)}
+			continue
+		}
 
 		if !pathEnvResolved {
 			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools)
@@ -232,19 +236,70 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			pathEnvResolved = true
 		}
 
-		var batches [][]string
-		if cmd.Batch {
-			batches = [][]string{relFiles}
-		} else {
-			for _, f := range relFiles {
-				batches = append(batches, []string{f})
+		for _, dir := range sortedKeys(groups) {
+			relFiles := groups[dir]
+			var batches [][]string
+			if cmd.Batch {
+				batches = [][]string{relFiles}
+			} else {
+				for _, f := range relFiles {
+					batches = append(batches, []string{f})
+				}
 			}
-		}
-		for _, batch := range batches {
-			jobs = append(jobs, job{linterName: name, linter: linter, cmd: cmd, batch: batch, pathEnv: pathEnv})
+			for _, batch := range batches {
+				jobs = append(jobs, job{
+					linterName: name, linter: linter, cmd: cmd, batch: batch,
+					pathEnv: pathEnv, resolvedDir: dir,
+				})
+			}
 		}
 	}
 	return jobs
+}
+
+// groupByRunFrom resolves runFrom for every file in files (absolute paths, already matched under
+// repoRoot), grouping them by resolved directory -- each group's files are returned relative to
+// that directory (sorted), ready for ${target} substitution once the invocation's cwd becomes that
+// directory (or a sandbox mirroring it). ok is false if runFrom isn't a recognized form.
+func groupByRunFrom(runFrom string, files []string, repoRoot string, directConfigs []string) (map[string][]string, bool) {
+	groups := map[string][]string{}
+	for _, f := range files {
+		dir, ok := resolveRunFrom(runFrom, f, repoRoot, directConfigs)
+		if !ok {
+			return nil, false
+		}
+		rel, err := filepath.Rel(dir, f)
+		if err != nil {
+			return nil, false
+		}
+		groups[dir] = append(groups[dir], rel)
+	}
+	for dir := range groups {
+		sort.Strings(groups[dir])
+	}
+	return groups, true
+}
+
+func sortedKeys(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// findUnsupportedVar reports the first ${...} placeholder in run that isn't ${target} or
+// ${tmpfile} -- the only two this plan substitutes. Everything else (e.g. ${target,},
+// ${upstream-ref}) is unsupported: left unsubstituted, it either breaks the shell (bad
+// substitution) or gets silently reinterpreted by sh itself (${upstream-ref} -> ${upstream:-ref}).
+func findUnsupportedVar(run string) (string, bool) {
+	for _, v := range templateVarRE.FindAllString(run, -1) {
+		if v != "${target}" && v != "${tmpfile}" {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // runJob executes one queued job: sends a Running event, runs the invocation, then folds the
@@ -261,7 +316,7 @@ func runJob(j job, state *linterState, repoRoot string, events chan<- Event) {
 	state.mu.Unlock()
 
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
-	findings, err := runBatch(j.linterName, j.linter, j.cmd, j.batch, repoRoot, j.pathEnv)
+	findings, err := runBatch(j, repoRoot)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -284,29 +339,29 @@ func runJob(j job, state *linterState, repoRoot string, events chan<- Event) {
 	}
 }
 
-// findUnsupportedVar reports the first ${...} placeholder in run that isn't ${target} or
-// ${tmpfile} -- the only two this plan substitutes. Everything else (e.g. ${target,},
-// ${upstream-ref}) is unsupported: left unsubstituted, it either breaks the shell (bad
-// substitution) or gets silently reinterpreted by sh itself (${upstream-ref} -> ${upstream:-ref}).
-func findUnsupportedVar(run string) (string, bool) {
-	for _, v := range templateVarRE.FindAllString(run, -1) {
-		if v != "${target}" && v != "${tmpfile}" {
-			return v, true
+// runBatch runs one job's invocation and parses its output per cmd.Output, remapping every
+// finding's File back to repoRoot-relative before returning. If j.cmd.SandboxType is set, the
+// invocation actually runs against a temporary staged copy (see stageSandbox); the parser only
+// ever sees paths relative to j.resolvedDir, exactly as when no sandboxing is involved --
+// remapFindings is what turns those back into repoRoot-relative paths either way.
+func runBatch(j job, repoRoot string) ([]Finding, error) {
+	workDir := j.resolvedDir
+	if j.cmd.SandboxType != "" {
+		sandboxDir, cleanup, err := stageSandbox(j.cmd.SandboxType, j.resolvedDir, j.batch)
+		if cleanup != nil {
+			defer cleanup()
 		}
+		if err != nil {
+			return nil, err
+		}
+		workDir = sandboxDir
 	}
-	return "", false
-}
 
-// runBatch runs one job's invocation (cmd against batch, pathEnv already resolved for linter's
-// tools) and parses its output per cmd.Output -- the per-invocation body a sequential run used to
-// loop over inline, now one job's whole unit of work so a worker can run it independently of
-// every other job in flight.
-func runBatch(linterName string, linter config.Linter, cmd config.Command, batch []string, repoRoot, pathEnv string) ([]Finding, error) {
-	out, stderr, exitCode, err := runOneInvocation(cmd, repoRoot, pathEnv, batch)
+	out, stderr, exitCode, err := runOneInvocation(j.cmd, workDir, j.pathEnv, j.batch)
 	if err != nil {
 		return nil, err
 	}
-	if containsInt(cmd.ErrorCodes, exitCode) {
+	if containsInt(j.cmd.ErrorCodes, exitCode) {
 		msg := strings.TrimSpace(out)
 		if errText := strings.TrimSpace(stderr); errText != "" {
 			if msg == "" {
@@ -315,7 +370,7 @@ func runBatch(linterName string, linter config.Linter, cmd config.Command, batch
 				msg += "\n" + errText
 			}
 		}
-		return nil, fmt.Errorf("check: %s: %s exited %d: %s", linterName, cmd.Name, exitCode, msg)
+		return nil, fmt.Errorf("check: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
 	}
 
 	// Real plugin data confirms SuccessCodes already enumerates every "ran fine, here's the
@@ -332,57 +387,59 @@ func runBatch(linterName string, linter config.Linter, cmd config.Command, batch
 	// never parses JSON (exit-code only) and "regex"'s parsers (ParsePerlCritic/ParseGenericRegex)
 	// already tolerate empty input by iterating an empty line list, so both are excluded from this
 	// guard.
-	isJSONFormat := cmd.Output != "pass_fail" && cmd.Output != "regex"
+	isJSONFormat := j.cmd.Output != "pass_fail" && j.cmd.Output != "regex"
 	if isJSONFormat && strings.TrimSpace(out) == "" {
-		ApplyIssueURL(findings, linter.IssueURLFormat)
+		remapFindings(findings, j.resolvedDir, repoRoot)
+		ApplyIssueURL(findings, j.linter.IssueURLFormat)
 		return findings, nil
 	}
 
-	switch cmd.Output {
+	switch j.cmd.Output {
 	case "sarif", "sarif_uri":
 		// sarif_uri (checkov): ReadOutputFrom "tmp_file" already resolved the real SARIF bytes
 		// written to ${tmpfile} into out -- no separate parser needed.
-		findings, err = ParseSARIF([]byte(out), linterName)
+		findings, err = ParseSARIF([]byte(out), j.linterName)
 	case "pass_fail":
 		if exitCode != 0 {
-			findings = ParsePassFail(linterName, batch)
+			findings = ParsePassFail(j.linterName, j.batch)
 		}
 	case "actionlint":
-		findings, err = ParseActionlint([]byte(out), linterName)
+		findings, err = ParseActionlint([]byte(out), j.linterName)
 	case "bandit":
-		findings, err = ParseBandit([]byte(out), linterName)
+		findings, err = ParseBandit([]byte(out), j.linterName)
 	case "buildifier":
-		findings, err = ParseBuildifier([]byte(out), linterName)
+		findings, err = ParseBuildifier([]byte(out), j.linterName)
 	case "cfnlint":
-		findings, err = ParseCfnLint([]byte(out), linterName)
+		findings, err = ParseCfnLint([]byte(out), j.linterName)
 	case "eslint":
-		findings, err = ParseESLint([]byte(out), linterName)
+		findings, err = ParseESLint([]byte(out), j.linterName)
 	case "hadolint":
-		findings, err = ParseHadolint([]byte(out), linterName)
+		findings, err = ParseHadolint([]byte(out), j.linterName)
 	case "haml_lint":
-		findings, err = ParseHamlLint([]byte(out), linterName)
+		findings, err = ParseHamlLint([]byte(out), j.linterName)
 	case "markdownlint":
-		findings, err = ParseMarkdownlint([]byte(out), linterName)
+		findings, err = ParseMarkdownlint([]byte(out), j.linterName)
 	case "pylint":
-		findings, err = ParsePylint([]byte(out), linterName)
+		findings, err = ParsePylint([]byte(out), j.linterName)
 	case "rubocop":
-		findings, err = ParseRubocop([]byte(out), linterName)
+		findings, err = ParseRubocop([]byte(out), j.linterName)
 	case "stylelint":
-		findings, err = ParseStylelint([]byte(out), linterName)
+		findings, err = ParseStylelint([]byte(out), j.linterName)
 	case "taplo":
-		findings, err = ParseTaplo([]byte(out), linterName)
+		findings, err = ParseTaplo([]byte(out), j.linterName)
 	case "regex":
-		switch linterName {
+		switch j.linterName {
 		case "perlcritic":
-			findings, err = ParsePerlCritic([]byte(out), linterName)
+			findings, err = ParsePerlCritic([]byte(out), j.linterName)
 		default:
-			findings = ParseGenericRegex([]byte(out), linterName)
+			findings = ParseGenericRegex([]byte(out), j.linterName)
 		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	ApplyIssueURL(findings, linter.IssueURLFormat)
+	remapFindings(findings, j.resolvedDir, repoRoot)
+	ApplyIssueURL(findings, j.linter.IssueURLFormat)
 	return findings, nil
 }
 
@@ -426,12 +483,12 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 // runOneInvocation substitutes ${target}/${tmpfile} into cmd.Run and executes it through a shell
 // (a Command.Run string is a shell command line referencing its tool(s) by bare name, not a
 // path), with pathEnv prefixed onto PATH (verbatim PATH when pathEnv is empty -- a leading empty
-// PATH component means "current directory" on POSIX, which would let repoRoot's own files shadow
-// real binaries) and repoRoot as the working directory. Returns the output named by
+// PATH component means "current directory" on POSIX, which would let workDir's own files shadow
+// real binaries) and workDir as the working directory. Returns the output named by
 // cmd.ReadOutputFrom (default stdout), the process's raw stderr (always captured, regardless of
 // ReadOutputFrom, so callers can surface it on a crash), and the exit code; err is only ever a
 // launch failure (e.g. "sh" missing), never a non-zero exit -- callers read exitCode for that.
-func runOneInvocation(cmd config.Command, repoRoot, pathEnv string, files []string) (output, stderrOut string, exitCode int, err error) {
+func runOneInvocation(cmd config.Command, workDir, pathEnv string, files []string) (output, stderrOut string, exitCode int, err error) {
 	target := strings.Join(quoteAll(files), " ")
 
 	var tmpfile string
@@ -448,7 +505,7 @@ func runOneInvocation(cmd config.Command, repoRoot, pathEnv string, files []stri
 	run := strings.NewReplacer("${target}", target, "${tmpfile}", tmpfile).Replace(cmd.Run)
 
 	c := exec.Command("sh", "-c", run)
-	c.Dir = repoRoot
+	c.Dir = workDir
 	path := os.Getenv("PATH")
 	if pathEnv != "" {
 		path = pathEnv + string(os.PathListSeparator) + path

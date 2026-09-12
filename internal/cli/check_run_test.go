@@ -197,16 +197,17 @@ func TestCheckRunCmd_DedupesSkippedByLinter(t *testing.T) {
       files: [ALL]
       commands:
         - name: c1
-          run: "faketool sarif ${target}"
+          run: "faketool sarif ${target} ${workspace}"
           output: sarif
-          run_from: "${parent}"
         - name: c2
           run: "faketool sarif ${target}"
-          output: sarif
-          sandbox_type: copy_targets
+          output: xml
         - name: c3
           run: "faketool sarif ${target}"
-          output: regex
+          output: sarif
+          parser:
+            runtime: python
+            run: convert.py
 `)
 	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "work"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "work", "file.txt"), []byte("hi\n"), 0o644))
@@ -215,6 +216,6 @@ func TestCheckRunCmd_DedupesSkippedByLinter(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: multiskip [unsupported run_from \"${parent}\"])\n"
+	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: multiskip [unsupported template var \"${workspace}\"])\n"
 	assert.Equal(t, want, stdout)
 }
