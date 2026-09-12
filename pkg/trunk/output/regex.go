@@ -1,9 +1,19 @@
 package output
 
 import (
+	"errors"
 	"regexp"
 	"strconv"
 )
+
+// ErrEmptyPattern is returned by ParseFromRegex for an empty pattern -- an empty regexp compiles
+// successfully and matches every byte offset in data, which would otherwise turn a
+// missing/stale Command.ParseRegex into a flood of empty Findings (one per byte) rather than a
+// clear failure. A real "regex"-output catalog command always carries a non-empty pattern; an
+// empty one here means something upstream is wrong (a cache written before this field existed, a
+// hand-authored trunk.yaml command with output: regex and no parse_regex) and should surface as
+// an error, not silently misbehave.
+var ErrEmptyPattern = errors.New("output: empty ParseRegex pattern")
 
 // ParseFromRegex parses data using pattern's named capture groups, straight from the real
 // trunk-io catalog's own Command.ParseRegex field -- the same mechanism trunk's own closed-source
@@ -18,6 +28,9 @@ import (
 // group; a match missing it produces a Finding with an empty File rather than erroring, since a
 // missing group is a config-authoring mistake in the catalog, not a signal to fail the whole run.
 func ParseFromRegex(pattern string, data []byte, linter string) ([]Finding, error) {
+	if pattern == "" {
+		return nil, ErrEmptyPattern
+	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, err

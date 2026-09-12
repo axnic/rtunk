@@ -102,11 +102,21 @@ type linterState struct {
 // ctx cancellation stops the run: exec.CommandContext kills an in-flight linter subprocess the
 // moment ctx is canceled, and each worker checks ctx.Err() before picking up its next queued job,
 // so cancellation also stops new work from starting, not just kills whatever's already running.
+// The caller must still drain events to completion after canceling -- a canceled invocation
+// reports as a Failed event (its error is context.Canceled, not a real command failure), not a
+// silently-closed channel, and every event send blocks until read; an abandoned, undrained
+// channel leaks the producer goroutine and any worker still mid-send.
 //
 // include selects which of a linter's commands are runnable -- pkg/trunk/check passes
-// `func(c config.Command) bool { return !c.Formatter }`; a future pkg/trunk/fmt passes the
-// complement. Every other check-specific behavior (Output-format dispatch, Finding-based
-// reporting) is unaffected by this predicate -- it only decides which commands are considered.
+// `func(c config.Command) bool { return !c.Formatter }`; a future pkg/trunk/fmt would pass the
+// complement, but that alone is not enough to make fmt a thin sibling the way this doc used to
+// imply: the predicate only decides which commands are considered, while everything downstream of
+// it -- supportedOutputFormats, the Output-format dispatch switch, Event.Findings' []output.Finding
+// shape -- is still shaped around "check" reporting. A real formatter command (Output: "rewrite" or
+// "shfmt" in the real trunk-io catalog, InPlace: true) has neither a supported Output value here
+// nor any notion of "reformatted successfully" to report. What this package genuinely gives a
+// future fmt package is the job queue, RunFrom/SandboxType resolution, and file matching; the
+// output/reporting half remains fmt's own work.
 //
 // env.Concurrency workers (at least 1) run the queued command invocations in parallel; the queue
 // itself is built sequentially and in a fixed order -- linters sorted by name, each linter's own

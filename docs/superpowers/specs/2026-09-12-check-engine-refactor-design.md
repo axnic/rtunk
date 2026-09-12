@@ -24,8 +24,17 @@ path-traversal gap found while doing so. Four changes, one cohesive refactor:
 
 `pkg/trunk/check` becomes a thin adapter: `check.Run` calls `engine.Run` with a predicate that
 selects non-formatter commands, plus whatever check-specific glue (config editing for
-`enable`/`disable`, already in `internal/cli/check.go`) stays where it is. A future `pkg/trunk/fmt`
-becomes an equally thin sibling with a `Formatter: true` predicate.
+`enable`/`disable`, already in `internal/cli/check.go`) stays where it is.
+
+**Correction from this spec's final review:** a future `pkg/trunk/fmt` is not an equally thin
+sibling just by passing `Formatter: true` to the same predicate. The predicate only decides which
+commands are considered; everything downstream — `supportedOutputFormats`, the `Output`-format
+dispatch switch, `Event.Findings`' `[]output.Finding` shape — is still shaped around check's own
+reporting model. A real formatter command (`Output: "rewrite"` or `"shfmt"` in the real catalog,
+`InPlace: true`) has no supported `Output` value here and no "reformatted successfully" concept to
+report. What this refactor genuinely hands a future `fmt` is the job queue, `RunFrom`/`SandboxType`
+resolution, and file matching — real, substantial reuse — not a two-line sibling; the
+output/reporting half remains `fmt`'s own work, deferred to that milestone.
 
 ## Why now, not incrementally
 
@@ -248,12 +257,18 @@ adversarial coverage specifically for the security package:
 
 ## Non-goals
 
-- No behavior change for the 172 already-working real trunk-io commands, or the 9/10 that v0.3.2
-  unlocked -- this is a structural refactor plus one security fix and one data-loss fix, not new
-  linter coverage.
+- Identical finding _locations and severities_ for every already-working real trunk-io command --
+  verified via a byte-for-byte diff of every finding's file/line/column/severity, real tools, real
+  config, before and after this branch (see the design's final review). This is deliberately not
+  "zero behavior change" stated more broadly: the `parse_regex` fix (this refactor's whole point
+  for the "regex"-output commands) changes their `Message`/`RuleID`/`URL` for the better --
+  populated `RuleID` now, where the old best-effort parser often had none -- which is the intended
+  improvement, not a side effect to paper over.
 - `${compile_command}` and the literal `RunFrom: "apps"` remain unsupported, unchanged from v0.3.2.
 - No change to `internal/cli/check.go`'s CLI surface (flags, output format) beyond updated import
-  paths for the moved/renamed types.
+  paths for the moved/renamed types -- an error message's own text (e.g. `check: ...` ->
+  `engine: ...`, since that prefix comes from the package raising it) is not a flag or an output
+  format, but is still user-visible surface; noted here rather than silently left as a side effect.
 - `pkg/trunk/fmt` itself is not built in this refactor -- only the shared foundation it will sit on.
 
 ## Global constraints (carried into every task)

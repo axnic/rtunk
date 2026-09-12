@@ -83,6 +83,15 @@ func TestParseFromRegex_InvalidPattern(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestParseFromRegex_EmptyPatternIsAnErrorNotMatchEverything(t *testing.T) {
+	// A stale cache (or a hand-authored trunk.yaml with output: regex and no parse_regex) would
+	// otherwise compile "" successfully -- an empty regexp matches at every byte offset, turning
+	// this into a flood of empty Findings (len(data)+1 of them) instead of a clear failure.
+	got, err := ParseFromRegex("", []byte("some real linter output\nspanning two lines\n"), "fake")
+	require.ErrorIs(t, err, ErrEmptyPattern)
+	assert.Nil(t, got)
+}
+
 func TestParseFromRegex_NoMatchesReturnsEmpty(t *testing.T) {
 	got, err := ParseFromRegex(`(?P<path>.*):(?P<line>\d+): (?P<message>.*)`, []byte("not matching at all\n"), "fake")
 	require.NoError(t, err)
