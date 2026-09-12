@@ -1,12 +1,15 @@
-package check
+package security
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
 func TestStageSandbox_CopyTargetsOnlyStagesGivenFiles(t *testing.T) {
@@ -14,7 +17,7 @@ func TestStageSandbox_CopyTargetsOnlyStagesGivenFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "target.txt"), []byte("t"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sibling.txt"), []byte("s"), 0o644))
 
-	sandboxDir, cleanup, err := stageSandbox("copy_targets", dir, []string{"target.txt"})
+	sandboxDir, cleanup, err := StageSandbox("copy_targets", dir, []string{"target.txt"})
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -33,7 +36,7 @@ func TestStageSandbox_ExpandedCopiesWholeDirectoryNonRecursive(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "c.go"), []byte("c"), 0o644))
 
-	sandboxDir, cleanup, err := stageSandbox("expanded", dir, []string{"a.go"})
+	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"a.go"})
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -54,7 +57,7 @@ func TestStageSandbox_ExpandedAlsoStagesNestedTarget(t *testing.T) {
 	// dir's own top-level entries don't include "sub/a.go" -- a RunFrom that resolved to an
 	// ancestor of the actual target (e.g. "${parent}"/"${root_or_parent_with*}") would otherwise
 	// silently drop the one file the invocation is meant to check.
-	sandboxDir, cleanup, err := stageSandbox("expanded", dir, []string{"sub/a.go"})
+	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"sub/a.go"})
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -70,7 +73,7 @@ func TestStageSandbox_CleanupRemovesTempDir(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "target.txt"), []byte("t"), 0o644))
 
-	sandboxDir, cleanup, err := stageSandbox("copy_targets", dir, []string{"target.txt"})
+	sandboxDir, cleanup, err := StageSandbox("copy_targets", dir, []string{"target.txt"})
 	require.NoError(t, err)
 	cleanup()
 
@@ -79,15 +82,68 @@ func TestStageSandbox_CleanupRemovesTempDir(t *testing.T) {
 }
 
 func TestRemapFindings_NoOpWhenBaseIsRepoRoot(t *testing.T) {
-	findings := []Finding{{File: "foo.txt"}}
-	remapFindings(findings, "/repo", "/repo")
+	findings := []output.Finding{{File: "foo.txt"}}
+	RemapFindings(findings, "/repo", "/repo")
 	assert.Equal(t, "foo.txt", findings[0].File)
 }
 
 func TestRemapFindings_RebasesRelativeToRepoRoot(t *testing.T) {
 	repoRoot := t.TempDir()
 	base := filepath.Join(repoRoot, "sub", "dir")
-	findings := []Finding{{File: "foo.txt"}}
-	remapFindings(findings, base, repoRoot)
+	findings := []output.Finding{{File: "foo.txt"}}
+	RemapFindings(findings, base, repoRoot)
 	assert.Equal(t, filepath.Join("sub", "dir", "foo.txt"), findings[0].File)
+}
+
+func TestCopySandboxFile_RefusesPathOutsideSandbox(t *testing.T) {
+	sandboxDir := t.TempDir()
+	srcDir := t.TempDir()
+	src := filepath.Join(srcDir, "target.txt")
+	require.NoError(t, os.WriteFile(src, []byte("x"), 0o644))
+
+	// A dst outside sandboxDir must be refused, even called directly with a malicious-looking
+	// destination -- proving the guard holds independently of how StageSandbox itself computes dst.
+	escapedDst := filepath.Join(sandboxDir, "..", "..", "etc", "evil.txt")
+	err := copySandboxFile(sandboxDir, src, escapedDst)
+	require.Error(t, err)
+
+	_, statErr := os.Stat(escapedDst)
+	assert.True(t, os.IsNotExist(statErr), "the escaped file must never actually be written")
+}
+
+func TestStageSandbox_ExpandedHandlesManyFilesWithoutPathologicalBehavior(t *testing.T) {
+	dir := t.TempDir()
+	const n = 500
+	for i := 0; i < n; i++ {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%03d.txt", i)), []byte("x"), 0o644))
+	}
+
+	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"f000.txt"})
+	require.NoError(t, err)
+	defer cleanup()
+
+	entries, err := os.ReadDir(sandboxDir)
+	require.NoError(t, err)
+	assert.Len(t, entries, n, "every file must be staged, none silently dropped")
+}
+
+func TestCopySandboxFile_SymlinkedTargetCopiesContentNotLinkItself(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.txt")
+	require.NoError(t, os.WriteFile(real, []byte("real content"), 0o644))
+	linkDir := t.TempDir()
+	link := filepath.Join(linkDir, "link.txt")
+	require.NoError(t, os.Symlink(real, link))
+
+	sandboxDir := t.TempDir()
+	dst := filepath.Join(sandboxDir, "link.txt")
+	require.NoError(t, copySandboxFile(sandboxDir, link, dst))
+
+	data, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	assert.Equal(t, "real content", string(data), "os.Open follows the symlink -- the staged copy must be a real, independent file, not another link")
+
+	info, err := os.Lstat(dst)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "the staged copy itself must not be a symlink")
 }

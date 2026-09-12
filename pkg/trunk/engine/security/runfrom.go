@@ -1,4 +1,4 @@
-package check
+package security
 
 import (
 	"os"
@@ -14,7 +14,7 @@ var runFromWithFileRE = regexp.MustCompile(`^\$\{root_or_parent_with\((.+)\)\}$`
 // regular expression matched against each candidate directory's own entry names.
 var runFromWithRegexRE = regexp.MustCompile(`^\$\{root_or_parent_with_regex\((.+)\)\}$`)
 
-// resolveRunFrom resolves runFrom (a Command.RunFrom value) into the absolute directory a command
+// ResolveRunFrom resolves runFrom (a Command.RunFrom value) into the absolute directory a command
 // invocation should run from, given target (the absolute path of one matched file) and repoRoot.
 // directConfigs is the owning Linter's DirectConfigs, consulted only for
 // "${root_or_parent_with_any_config}". ok is false for any value this project doesn't recognize
@@ -22,7 +22,7 @@ var runFromWithRegexRE = regexp.MustCompile(`^\$\{root_or_parent_with_regex\((.+
 //
 // See docs/superpowers/specs/2026-09-12-check-v0.3.2-runfrom-sandbox-design.md for the real
 // trunk-io catalog data and reasoning behind each form, especially "${parent}" (below).
-func resolveRunFrom(runFrom, target, repoRoot string, directConfigs []string) (dir string, ok bool) {
+func ResolveRunFrom(runFrom, target, repoRoot string, directConfigs []string) (dir string, ok bool) {
 	switch {
 	case runFrom == "" || runFrom == "${parent}":
 		// rtunk has no nested-workspace model (one trunk.yaml resolves to one flat config), so

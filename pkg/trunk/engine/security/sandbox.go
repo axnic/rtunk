@@ -1,14 +1,18 @@
-package check
+package security
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
-// stageSandbox copies files from dir into a fresh temporary directory, mirroring dir's own
+// StageSandbox copies files from dir into a fresh temporary directory, mirroring dir's own
 // relative layout, so a Finding's path can be mapped back through dir to repoRoot afterward (see
-// remapFindings). sandboxType selects which files: "copy_targets" copies exactly targets (each
+// RemapFindings). sandboxType selects which files: "copy_targets" copies exactly targets (each
 // already relative to dir); "expanded" copies every regular file directly inside dir
 // (non-recursive), which naturally includes targets since they live in dir -- an inferred
 // best-effort interpretation, see the design spec: real trunk-io usage (gokart, tflint) needs
@@ -17,7 +21,7 @@ import (
 // cleanup is always non-nil once sandboxDir was created, even when err != nil (e.g. a copy
 // failed partway) -- callers must always defer cleanup() immediately after a non-nil sandboxDir
 // is returned, to avoid leaking the temp directory.
-func stageSandbox(sandboxType, dir string, targets []string) (sandboxDir string, cleanup func(), err error) {
+func StageSandbox(sandboxType, dir string, targets []string) (sandboxDir string, cleanup func(), err error) {
 	sandboxDir, err = os.MkdirTemp("", "rtunk-check-sandbox-*")
 	if err != nil {
 		return "", nil, err
@@ -52,7 +56,7 @@ func stageSandbox(sandboxType, dir string, targets []string) (sandboxDir string,
 	}
 
 	for _, rel := range relFiles {
-		if err := copySandboxFile(filepath.Join(dir, rel), filepath.Join(sandboxDir, rel)); err != nil {
+		if err := copySandboxFile(sandboxDir, filepath.Join(dir, rel), filepath.Join(sandboxDir, rel)); err != nil {
 			return sandboxDir, cleanup, err
 		}
 	}
@@ -60,8 +64,17 @@ func stageSandbox(sandboxType, dir string, targets []string) (sandboxDir string,
 }
 
 // copySandboxFile copies src to dst, creating dst's parent directories as needed, preserving
-// src's file mode.
-func copySandboxFile(src, dst string) error {
+// src's file mode. Refuses to write outside sandboxDir even if dst was computed from a rel that
+// somehow escaped it (see StageSandbox's callers -- Files() is expected to reject an out-of-repo
+// path before it ever reaches here, but this function does not trust that upstream check alone: a
+// path-traversal write here would be a real security bug, not a cosmetic one, so it is guarded
+// independently).
+func copySandboxFile(sandboxDir, src, dst string) error {
+	relCheck, err := filepath.Rel(sandboxDir, dst)
+	if err != nil || relCheck == ".." || strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) || filepath.IsAbs(relCheck) {
+		return fmt.Errorf("security: refusing to stage %q outside sandbox %q", dst, sandboxDir)
+	}
+
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
@@ -86,12 +99,12 @@ func copySandboxFile(src, dst string) error {
 	return err
 }
 
-// remapFindings rewrites every finding's File from a path relative to base (the resolved RunFrom
+// RemapFindings rewrites every finding's File from a path relative to base (the resolved RunFrom
 // directory a command actually ran against -- real or, when sandboxed, mirrored) back to a path
 // relative to repoRoot, the report's established contract. A no-op whenever base == repoRoot
 // (every command that doesn't use RunFrom/SandboxType today), so it is safe to call
 // unconditionally for every job.
-func remapFindings(findings []Finding, base, repoRoot string) {
+func RemapFindings(findings []output.Finding, base, repoRoot string) {
 	if base == repoRoot {
 		return
 	}
