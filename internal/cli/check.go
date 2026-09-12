@@ -53,18 +53,30 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer) error {
 
 	var findings []check.Finding
 	var skipped []string
+	skippedLinters := map[string]bool{}
+	var failed error
 	for ev := range events {
 		switch ev.Phase {
 		case check.Done:
 			findings = append(findings, ev.Findings...)
 		case check.Skipped:
-			skipped = append(skipped, fmt.Sprintf("%s [%s]", ev.Linter, ev.Note))
+			// Dedupe by linter: a linter with several unsupported commands emits one Skipped
+			// event per command, but the report should name it once, not once per command.
+			if !skippedLinters[ev.Linter] {
+				skippedLinters[ev.Linter] = true
+				skipped = append(skipped, fmt.Sprintf("%s [%s]", ev.Linter, ev.Note))
+			}
 		case check.Failed:
-			return ev.Err
+			if failed == nil {
+				failed = ev.Err
+			}
 		}
 	}
 
 	printReport(stdout, findings, skipped)
+	if failed != nil {
+		return failed
+	}
 	if len(findings) > 0 {
 		return fmt.Errorf("rtunk: check found %d issue(s)", len(findings))
 	}
@@ -126,7 +138,10 @@ func formatFinding(f check.Finding) string {
 type checkListCmd struct{}
 
 func (c *checkListCmd) Run(cli *CLI, stdout io.Writer) error {
-	cfg, err := resolveConfig(cli.Config, cli.CacheDir, false)
+	// all=true (config.ResolveAll): ROADMAP.md promises "list all linters available for the
+	// current configuration", not only the enabled+used subset Resolve trims to -- otherwise the
+	// enabled marker in formatLintList would be dead code (every listed line is always enabled).
+	cfg, err := resolveConfig(cli.Config, cli.CacheDir, true)
 	if err != nil {
 		return err
 	}
