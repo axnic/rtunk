@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
@@ -32,12 +33,8 @@ type Event struct {
 	Err      error     // Failed only
 }
 
-// unsupportedVars are every Command.Run template placeholder this plan does not implement --
-// ${target}/${tmpfile} are the only ones substituted; a command using any other is Skipped.
-var unsupportedVars = []string{
-	"${plugin}", "${workspace}", "${linter}", "${cachedir}", "${compile_commands_dir}",
-	"${compile_command}", "${cwd}", "${REPO_DIR}", "${shared_cachedir}", "${tmpdir}",
-}
+// templateVarRE matches every ${...} placeholder in a Command.Run string.
+var templateVarRE = regexp.MustCompile(`\$\{[^}]*\}`)
 
 // Run executes every enabled linter's non-formatter commands against the files matched under
 // paths (repoRoot is the default walk root when paths is empty, and every command's working
@@ -94,6 +91,10 @@ func runLinter(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported output format %q", cmd.Output)}
 			continue
 		}
+		if cmd.Parser != nil {
+			events <- Event{Linter: name, Phase: Skipped, Note: "unsupported parser (native output requires a converter script)"}
+			continue
+		}
 
 		cmdFindings, err := runCommand(cfg, root, cacheDir, repoRoot, name, linter, cmd, files)
 		if err != nil {
@@ -109,9 +110,13 @@ func runLinter(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 	}
 }
 
+// findUnsupportedVar reports the first ${...} placeholder in run that isn't ${target} or
+// ${tmpfile} -- the only two this plan substitutes. Everything else (e.g. ${target,},
+// ${upstream-ref}) is unsupported: left unsubstituted, it either breaks the shell (bad
+// substitution) or gets silently reinterpreted by sh itself (${upstream-ref} -> ${upstream:-ref}).
 func findUnsupportedVar(run string) (string, bool) {
-	for _, v := range unsupportedVars {
-		if strings.Contains(run, v) {
+	for _, v := range templateVarRE.FindAllString(run, -1) {
+		if v != "${target}" && v != "${tmpfile}" {
 			return v, true
 		}
 	}
@@ -127,23 +132,43 @@ func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, 
 	}
 	pathEnv := strings.Join(shimDirs, string(os.PathListSeparator))
 
+	// files are relativized against repoRoot (every command's Dir) so both pass_fail's
+	// Finding.File and sarif's echoed-back ${target} URI come out repo-relative, matching the
+	// design spec's report format -- not absolute paths from the walk root.
+	relFiles := make([]string, len(files))
+	for i, f := range files {
+		rel, err := filepath.Rel(repoRoot, f)
+		if err != nil {
+			return nil, err
+		}
+		relFiles[i] = rel
+	}
+
 	var batches [][]string
 	if cmd.Batch {
-		batches = [][]string{files}
+		batches = [][]string{relFiles}
 	} else {
-		for _, f := range files {
+		for _, f := range relFiles {
 			batches = append(batches, []string{f})
 		}
 	}
 
 	var findings []Finding
 	for _, batch := range batches {
-		out, exitCode, err := runOneInvocation(cmd, repoRoot, pathEnv, batch)
+		out, stderr, exitCode, err := runOneInvocation(cmd, repoRoot, pathEnv, batch)
 		if err != nil {
 			return nil, err
 		}
 		if containsInt(cmd.ErrorCodes, exitCode) {
-			return nil, fmt.Errorf("check: %s: %s exited %d: %s", linterName, cmd.Name, exitCode, strings.TrimSpace(out))
+			msg := strings.TrimSpace(out)
+			if errText := strings.TrimSpace(stderr); errText != "" {
+				if msg == "" {
+					msg = errText
+				} else {
+					msg += "\n" + errText
+				}
+			}
+			return nil, fmt.Errorf("check: %s: %s exited %d: %s", linterName, cmd.Name, exitCode, msg)
 		}
 
 		// Real plugin data confirms SuccessCodes already enumerates every "ran fine, here's the
@@ -206,18 +231,20 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 
 // runOneInvocation substitutes ${target}/${tmpfile} into cmd.Run and executes it through a shell
 // (a Command.Run string is a shell command line referencing its tool(s) by bare name, not a
-// path), with pathEnv prefixed onto PATH and repoRoot as the working directory. Returns the
-// output named by cmd.ReadOutputFrom (default stdout) and the process's exit code; err is only
-// ever a launch failure (e.g. "sh" missing), never a non-zero exit -- callers read exitCode for
-// that.
-func runOneInvocation(cmd config.Command, repoRoot, pathEnv string, files []string) (output string, exitCode int, err error) {
+// path), with pathEnv prefixed onto PATH (verbatim PATH when pathEnv is empty -- a leading empty
+// PATH component means "current directory" on POSIX, which would let repoRoot's own files shadow
+// real binaries) and repoRoot as the working directory. Returns the output named by
+// cmd.ReadOutputFrom (default stdout), the process's raw stderr (always captured, regardless of
+// ReadOutputFrom, so callers can surface it on a crash), and the exit code; err is only ever a
+// launch failure (e.g. "sh" missing), never a non-zero exit -- callers read exitCode for that.
+func runOneInvocation(cmd config.Command, repoRoot, pathEnv string, files []string) (output, stderrOut string, exitCode int, err error) {
 	target := strings.Join(quoteAll(files), " ")
 
 	var tmpfile string
 	if strings.Contains(cmd.Run, "${tmpfile}") {
 		f, err := os.CreateTemp("", "rtunk-check-*")
 		if err != nil {
-			return "", 0, err
+			return "", "", 0, err
 		}
 		tmpfile = f.Name()
 		f.Close()
@@ -228,7 +255,11 @@ func runOneInvocation(cmd config.Command, repoRoot, pathEnv string, files []stri
 
 	c := exec.Command("sh", "-c", run)
 	c.Dir = repoRoot
-	c.Env = append(os.Environ(), "PATH="+pathEnv+string(os.PathListSeparator)+os.Getenv("PATH"))
+	path := os.Getenv("PATH")
+	if pathEnv != "" {
+		path = pathEnv + string(os.PathListSeparator) + path
+	}
+	c.Env = append(os.Environ(), "PATH="+path)
 
 	var stdout, stderr strings.Builder
 	c.Stdout = &stdout
@@ -241,7 +272,7 @@ func runOneInvocation(cmd config.Command, repoRoot, pathEnv string, files []stri
 		if errors.As(runErr, &exitErr) {
 			code = exitErr.ExitCode()
 		} else {
-			return "", 0, runErr
+			return "", "", 0, runErr
 		}
 	}
 
@@ -251,13 +282,13 @@ func runOneInvocation(cmd config.Command, repoRoot, pathEnv string, files []stri
 	case "tmp_file":
 		data, readErr := os.ReadFile(tmpfile)
 		if readErr != nil {
-			return "", code, readErr
+			return "", stderr.String(), code, readErr
 		}
 		output = string(data)
 	default: // "" or "stdout"
 		output = stdout.String()
 	}
-	return output, code, nil
+	return output, stderr.String(), code, nil
 }
 
 func quoteAll(files []string) []string {
