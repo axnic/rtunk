@@ -1,6 +1,6 @@
 // Package cli implements rtunk's command-line interface on top of
 // github.com/alecthomas/kong. See ROADMAP.md for the staged command set; this currently
-// implements v0.1 ("read and query an existing trunk configuration") only.
+// implements v0.1 ("read and query"), v0.2 ("download"), and v0.3 ("check", read-only).
 package cli
 
 import (
@@ -28,6 +28,7 @@ type CLI struct {
 	ExecCmd     execCmd     `cmd:"" name:"exec" help:"Run a tool/runtime, downloading it first if missing."`
 	XCmd        execCmd     `cmd:"" name:"x" hidden:"" help:"Alias for exec."`
 	CacheCmd    cacheCmd    `cmd:"" name:"cache" help:"Manage the rtunk downloads cache."`
+	CheckCmd    checkCmd    `cmd:"" name:"check" help:"Run enabled checks against source files (read-only)."`
 }
 
 // Run parses args against CLI's grammar and executes the selected command's Run(), writing to
