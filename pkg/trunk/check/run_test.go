@@ -151,7 +151,7 @@ func TestRun(t *testing.T) {
 	errEv, ok := byLinter["fakeerror"]
 	require.True(t, ok, "expected an event for fakeerror")
 	assert.Equal(t, Failed, errEv.Phase)
-	assert.Error(t, errEv.Err)
+	assert.EqualError(t, errEv.Err, "check: fakeerror: boom exited 42: ")
 
 	skipFormatEv, ok := byLinter["fakeskipformat"]
 	require.True(t, ok)
