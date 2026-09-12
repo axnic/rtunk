@@ -88,6 +88,8 @@ func TestCheckRunCmd_SkipsUnsupportedFormats(t *testing.T) {
 	require.NoError(t, err, "stderr: %s", stderr)
 	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: unsupported-fmt [unsupported output format \"xml\"])\n"
 	assert.Equal(t, want, stdout)
+	assert.Equal(t, "skipped unsupported-fmt: unsupported output format \"xml\"\n", stderr,
+		"the Skipped event must stream to stderr as it happens; formatter-only produces no event at all")
 }
 
 // writeLinterFixture builds a trunk.yaml + local plugin source under t.TempDir(), laid out the
@@ -167,12 +169,21 @@ func TestCheckRunCmd_FailedLinterKeepsOtherFindings(t *testing.T) {
 
 	cacheDir := t.TempDir()
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
-	require.Empty(t, stderr)
 	require.Error(t, err)
 	assert.EqualError(t, err, "check: beta: check exited 1: ")
 
 	want := "work/file.txt error file did not pass\n\n1 issue(s) in 1 file(s)\n"
 	assert.Equal(t, want, stdout, "alpha's finding must still be printed despite beta's Failed event")
+
+	// cfg.Lint.Definitions is a Go map, so alpha/beta's lines can interleave in either order --
+	// only each linter's own two lines (Running then its terminal event) are ordered.
+	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
+	assert.ElementsMatch(t, []string{
+		"running alpha: work/file.txt",
+		"done alpha: 1 issue(s)",
+		"running beta: work/file.txt",
+		"failed: check: beta: check exited 1: ",
+	}, lines, "every streamed event must reach stderr")
 }
 
 // TestCheckRunCmd_DedupesSkippedByLinter covers item 8: a linter with several unsupported

@@ -175,9 +175,32 @@ func TestRun(t *testing.T) {
 	require.NoError(t, err)
 
 	byLinter := map[string]Event{}
+	var all []Event
 	for ev := range events {
+		all = append(all, ev)
 		byLinter[ev.Linter] = ev
 	}
+
+	// fakesarif's command is Batch: true -- both matched files go in one invocation, so exactly
+	// one Running event covers the whole batch, files comma-joined.
+	var sarifRunning []Event
+	for _, ev := range all {
+		if ev.Linter == "fakesarif" && ev.Phase == Running {
+			sarifRunning = append(sarifRunning, ev)
+		}
+	}
+	require.Len(t, sarifRunning, 1, "a Batch command must emit exactly one Running event for the whole batch")
+	assert.ElementsMatch(t, []string{"ok.txt", "fail.txt"}, strings.Split(sarifRunning[0].File, ", "))
+
+	// fakepassfail's command is not Batch -- one invocation per file, so one Running event per
+	// file, each naming just that file.
+	var pfRunning []string
+	for _, ev := range all {
+		if ev.Linter == "fakepassfail" && ev.Phase == Running {
+			pfRunning = append(pfRunning, ev.File)
+		}
+	}
+	assert.ElementsMatch(t, []string{"ok.txt", "fail.txt"}, pfRunning, "a non-Batch command must emit one Running event per file")
 
 	sarifEv, ok := byLinter["fakesarif"]
 	require.True(t, ok, "expected an event for fakesarif")

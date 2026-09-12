@@ -29,7 +29,7 @@ type checkRunCmd struct {
 	Paths []string `arg:"" optional:"" help:"Paths to check (default: whole repository)."`
 }
 
-func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer) error {
+func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	configPath := cli.Config
 	if configPath == "" {
 		found, err := findTrunkYAML()
@@ -56,6 +56,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer) error {
 	skippedLinters := map[string]bool{}
 	var failed error
 	for ev := range events {
+		printEvent(stderr, ev)
 		switch ev.Phase {
 		case check.Done:
 			findings = append(findings, ev.Findings...)
@@ -81,6 +82,23 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer) error {
 		return fmt.Errorf("rtunk: check found %d issue(s)", len(findings))
 	}
 	return nil
+}
+
+// printEvent prints every event Run streams -- including in-progress Running events -- to w
+// (stderr) as it arrives, so a long check run shows live which linter and file is currently being
+// checked instead of going silent until the final report. This is separate from printReport
+// (stdout, the final findings summary) so stdout's contract stays exact and machine-parseable.
+func printEvent(w io.Writer, ev check.Event) {
+	switch ev.Phase {
+	case check.Running:
+		fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
+	case check.Done:
+		fmt.Fprintf(w, "done %s: %d issue(s)\n", ev.Linter, len(ev.Findings))
+	case check.Skipped:
+		fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
+	case check.Failed:
+		fmt.Fprintf(w, "failed: %v\n", ev.Err)
+	}
 }
 
 // printReport prints findings (sorted by file, then line, then column) one per line, then a

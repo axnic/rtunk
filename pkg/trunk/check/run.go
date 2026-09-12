@@ -17,20 +17,24 @@ import (
 type Phase int
 
 const (
-	Done    Phase = iota // Findings is set (possibly empty -- the linter ran clean)
+	Running Phase = iota // File is set; a progress update, not a terminal outcome
+	Done                 // Findings is set (possibly empty -- the linter ran clean)
 	Skipped              // an unsupported feature; Note says which -- never an error
 	Failed               // the linter's own command errored; Err is set
 )
 
-// Event reports one linter's check outcome, streamed on the channel Run returns. A linter with no
-// matching files, or whose only commands are formatters (Formatter: true), produces no event at
-// all -- there is nothing to report.
+// Event reports one linter's check progress or outcome, streamed on the channel Run returns. A
+// linter with no matching files, or whose only commands are formatters (Formatter: true),
+// produces no event at all -- there is nothing to report. A linter that does run produces one
+// Running event per command invocation (per batch, or per file for a non-Batch command), followed
+// by exactly one terminal event (Done, Skipped, or Failed).
 type Event struct {
 	Linter   string
 	Phase    Phase
 	Findings []Finding // Done only
 	Note     string    // Skipped (why) or Failed (which command)
 	Err      error     // Failed only
+	File     string    // Running only -- the file (or comma-joined batch) about to be checked
 }
 
 // templateVarRE matches every ${...} placeholder in a Command.Run string.
@@ -109,7 +113,7 @@ func runLinter(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			continue
 		}
 
-		cmdFindings, err := runCommand(cfg, root, cacheDir, repoRoot, name, linter, cmd, files)
+		cmdFindings, err := runCommand(cfg, root, cacheDir, repoRoot, name, linter, cmd, files, events)
 		if err != nil {
 			events <- Event{Linter: name, Phase: Failed, Note: cmd.Name, Err: err}
 			return
@@ -137,8 +141,9 @@ func findUnsupportedVar(run string) (string, bool) {
 }
 
 // runCommand resolves every tool cmd's linter needs onto PATH, then runs cmd once (Batch) or once
-// per matched file, parsing each invocation's output per cmd.Output.
-func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, linter config.Linter, cmd config.Command, files []string) ([]Finding, error) {
+// per matched file, parsing each invocation's output per cmd.Output. Emits one Running event on
+// events per invocation, before running it, so a caller can show live progress.
+func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, linter config.Linter, cmd config.Command, files []string, events chan<- Event) ([]Finding, error) {
 	shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools)
 	if err != nil {
 		return nil, err
@@ -168,6 +173,8 @@ func runCommand(cfg config.Config, root, cacheDir, repoRoot, linterName string, 
 
 	var findings []Finding
 	for _, batch := range batches {
+		events <- Event{Linter: linterName, Phase: Running, File: strings.Join(batch, ", ")}
+
 		out, stderr, exitCode, err := runOneInvocation(cmd, repoRoot, pathEnv, batch)
 		if err != nil {
 			return nil, err
