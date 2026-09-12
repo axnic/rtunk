@@ -43,6 +43,12 @@ func main() {
 			results = append(results, "{\"ruleId\":\"fake-rule\",\"level\":\"error\",\"message\":{\"text\":\"fake finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+f+"\"},\"region\":{\"startLine\":1}}}]}")
 		}
 		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
+	case "sarifone":
+		// Emits exactly one SARIF result unconditionally, regardless of any file arguments --
+		// stands in for a real command whose Run string never references ${target} (e.g.
+		// tflint's, brakeman's first commands), which can't distinguish between the files it's
+		// nominally checking.
+		fmt.Print("{\"runs\":[{\"results\":[{\"ruleId\":\"fake-rule\",\"level\":\"error\",\"message\":{\"text\":\"fake finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"whatever\"},\"region\":{\"startLine\":1}}}]}]}]}")
 	case "passfail":
 		for _, f := range args[1:] {
 			data, err := os.ReadFile(f)
@@ -845,4 +851,73 @@ func TestRun_SandboxAbsolutePathFindingIsRemapped(t *testing.T) {
 		"an absolute artifactLocation.uri pointing into the sandbox must be remapped back to a "+
 			"clean repoRoot-relative path, not leak the sandbox's temp directory")
 	assert.NotContains(t, done.Findings[0].File, os.TempDir())
+}
+
+// TestRun_NoTargetCommandBatchesEvenWithoutBatchFlag covers a final-review finding: a command
+// with Batch: false whose Run string never references ${target} (real catalog examples:
+// tflint's and brakeman's first commands) can't distinguish between the files it's nominally
+// checking -- running it once per matched file (Batch: false's naive default) would repeat the
+// exact same invocation, and so the exact same findings, once per file. Such a command must
+// batch by resolved directory even though Batch is false, producing exactly one Running event
+// and no duplicated findings for 3 matched files in the same directory.
+func TestRun_NoTargetCommandBatchesEvenWithoutBatchFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.nt", "b.nt", "c.nt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{
+				"nt": {Name: "nt", Extensions: []string{"nt"}},
+			},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"no-target-linter": {
+						Name: "no-target-linter", Files: []string{"nt"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool sarifone", Output: "sarif", Batch: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	require.NoError(t, err)
+
+	var running int
+	var done *Event
+	for ev := range events {
+		if ev.Linter != "no-target-linter" {
+			continue
+		}
+		if ev.Phase == Running {
+			running++
+		}
+		if ev.Phase == Done {
+			e := ev
+			done = &e
+		}
+	}
+
+	assert.Equal(t, 1, running,
+		"a Run string with no ${target} can't distinguish files -- it must run once per resolved directory, not once per file")
+	require.NotNil(t, done, "expected a Done event for no-target-linter")
+	require.Len(t, done.Findings, 1,
+		"the identical invocation must not be repeated once per file, duplicating its findings")
 }

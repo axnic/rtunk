@@ -239,7 +239,12 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		for _, dir := range sortedKeys(groups) {
 			relFiles := groups[dir]
 			var batches [][]string
-			if cmd.Batch {
+			if cmd.Batch || !strings.Contains(cmd.Run, "${target}") {
+				// A Run string with no ${target} placeholder can't distinguish between files --
+				// running it once per matched file (Batch: false's default) would just repeat
+				// the exact same invocation N times, reporting the exact same findings N times
+				// (real catalog examples: tflint's and brakeman's first commands). One invocation
+				// per resolved directory is what such a command can actually tell apart.
 				batches = [][]string{relFiles}
 			} else {
 				for _, f := range relFiles {
