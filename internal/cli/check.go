@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/xunleii/rtunk/pkg/trunk/check"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/trunk/engine"
+	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
 // checkCmd is `rtunk check`: ROADMAP.md v0.3, running enabled linters read-only.
@@ -53,28 +56,30 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		jobs = runtime.NumCPU()
 	}
 
-	events, err := check.Run(cfg, cli.CacheDir, repoRoot, c.Paths, jobs)
+	events, err := check.Run(context.Background(), engine.Env{
+		Cfg: cfg, RepoRoot: repoRoot, CacheDir: cli.CacheDir, Concurrency: jobs,
+	}, c.Paths)
 	if err != nil {
 		return err
 	}
 
-	var findings []check.Finding
+	var findings []output.Finding
 	var skipped []string
 	skippedLinters := map[string]bool{}
 	var failed error
 	for ev := range events {
 		printEvent(stderr, ev)
 		switch ev.Phase {
-		case check.Done:
+		case engine.Done:
 			findings = append(findings, ev.Findings...)
-		case check.Skipped:
+		case engine.Skipped:
 			// Dedupe by linter: a linter with several unsupported commands emits one Skipped
 			// event per command, but the report should name it once, not once per command.
 			if !skippedLinters[ev.Linter] {
 				skippedLinters[ev.Linter] = true
 				skipped = append(skipped, fmt.Sprintf("%s [%s]", ev.Linter, ev.Note))
 			}
-		case check.Failed:
+		case engine.Failed:
 			if failed == nil {
 				failed = ev.Err
 			}
@@ -95,15 +100,15 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 // (stderr) as it arrives, so a long check run shows live which linter and file is currently being
 // checked instead of going silent until the final report. This is separate from printReport
 // (stdout, the final findings summary) so stdout's contract stays exact and machine-parseable.
-func printEvent(w io.Writer, ev check.Event) {
+func printEvent(w io.Writer, ev engine.Event) {
 	switch ev.Phase {
-	case check.Running:
+	case engine.Running:
 		fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
-	case check.Done:
+	case engine.Done:
 		fmt.Fprintf(w, "done %s: %d issue(s)\n", ev.Linter, len(ev.Findings))
-	case check.Skipped:
+	case engine.Skipped:
 		fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
-	case check.Failed:
+	case engine.Failed:
 		fmt.Fprintf(w, "failed: %v\n", ev.Err)
 	}
 }
@@ -111,7 +116,7 @@ func printEvent(w io.Writer, ev check.Event) {
 // printReport prints findings (sorted by file, then line, then column) one per line, then a
 // trailing summary line -- always printed, with a skipped-linters parenthetical only when
 // skipped is non-empty.
-func printReport(w io.Writer, findings []check.Finding, skipped []string) {
+func printReport(w io.Writer, findings []output.Finding, skipped []string) {
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].File != findings[j].File {
 			return findings[i].File < findings[j].File
@@ -141,7 +146,7 @@ func printReport(w io.Writer, findings []check.Finding, skipped []string) {
 	fmt.Fprintln(w, summary)
 }
 
-func formatFinding(f check.Finding) string {
+func formatFinding(f output.Finding) string {
 	loc := f.File
 	if f.Line > 0 {
 		loc += fmt.Sprintf(":%d", f.Line)

@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/xunleii/rtunk/pkg/trunk/check"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
 func TestPrintReport_FindingsSortedAndFormatted(t *testing.T) {
 	var buf strings.Builder
-	findings := []check.Finding{
+	findings := []output.Finding{
 		{File: "b.go", Line: 2, Severity: "error", RuleID: "r2", Message: "msg2"},
 		{File: "a.go", Line: 5, Column: 3, Severity: "warning", RuleID: "r1", Message: "msg1", URL: "https://example.com/r1"},
 		{File: "a.go", Line: 1, Severity: "error", Message: "no rule"},
@@ -170,7 +170,7 @@ func TestCheckRunCmd_FailedLinterKeepsOtherFindings(t *testing.T) {
 	cacheDir := t.TempDir()
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
 	require.Error(t, err)
-	assert.EqualError(t, err, "check: beta: check exited 1: ")
+	assert.EqualError(t, err, "engine: beta: check exited 1: ")
 
 	want := "work/file.txt error file did not pass\n\n1 issue(s) in 1 file(s)\n"
 	assert.Equal(t, want, stdout, "alpha's finding must still be printed despite beta's Failed event")
@@ -182,7 +182,7 @@ func TestCheckRunCmd_FailedLinterKeepsOtherFindings(t *testing.T) {
 		"running alpha: work/file.txt",
 		"done alpha: 1 issue(s)",
 		"running beta: work/file.txt",
-		"failed: check: beta: check exited 1: ",
+		"failed: engine: beta: check exited 1: ",
 	}, lines, "every streamed event must reach stderr")
 }
 
