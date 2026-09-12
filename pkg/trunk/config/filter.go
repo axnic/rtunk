@@ -10,11 +10,11 @@ import "strings"
 // still be caught as a duplicate; it just won't survive into the returned Config.
 //
 // "Used by the enabled ones" follows the reference graph one hop at a time: an enabled linter's
-// tools:/files:, then a kept tool's runtime:/download:, an enabled action's runtime:, and a kept
-// runtime's download:. A kept FileType's own inherit: chain is followed to a fixed point (unlike
-// the rest of the graph, it can be more than one hop deep — e.g. bazel -> bazel-build -> ...).
-// There's no cycle to worry about elsewhere (a Tool/Runtime never references a Linter/Action
-// back), so a single pass is enough there.
+// tools:/files:/commands[].parser.runtime, then a kept tool's runtime:/download:, an enabled
+// action's runtime:, and a kept runtime's download:. A kept FileType's own inherit: chain is
+// followed to a fixed point (unlike the rest of the graph, it can be more than one hop deep —
+// e.g. bazel -> bazel-build -> ...). There's no cycle to worry about elsewhere (a Tool/Runtime
+// never references a Linter/Action back), so a single pass is enough there.
 func filterEnabled(cfg *Config) {
 	keepLint := filterMap(cfg.Lint.Definitions, enabledIDs(cfg.Lint.Enabled))
 	keepActions := filterMap(cfg.Actions.Definitions, enabledIDs(cfg.Actions.Enabled))
@@ -33,6 +33,13 @@ func filterEnabled(cfg *Config) {
 	keepFiles := filterMapTransitive(cfg.Lint.Files, fileIDs, func(f FileType) []string { return f.Inherit })
 
 	runtimeIDs := enabledIDs(cfg.Runtimes.Enabled)
+	for _, l := range keepLint {
+		for _, cmd := range l.Commands {
+			if cmd.Parser != nil && cmd.Parser.Runtime != "" {
+				runtimeIDs[cmd.Parser.Runtime] = struct{}{}
+			}
+		}
+	}
 	for _, t := range keepTools {
 		if t.Runtime != "" {
 			runtimeIDs[t.Runtime] = struct{}{}

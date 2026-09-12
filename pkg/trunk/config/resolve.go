@@ -155,6 +155,7 @@ func mergePluginRepo(cfg *Config, dir string, errs *[]error) error {
 	if err != nil {
 		return err
 	}
+	setSourceRoot(defs, dir)
 	*errs = append(*errs, dupErrs...)
 	mergeSourceInto(cfg, defs, errs)
 	return nil
@@ -205,6 +206,16 @@ func parseSourceDir(dir string) (defs sourceDefs, dupErrs []error, err error) {
 				return sourceDefs{}, nil, err
 			}
 
+			// path is always dir/category/<name>/plugin.yaml (built from the Glob pattern just
+			// above), so filepath.Dir(path) is always under dir -- Rel cannot fail here.
+			sourceDir, relErr := filepath.Rel(dir, filepath.Dir(path))
+			if relErr != nil {
+				return sourceDefs{}, nil, relErr
+			}
+			for i := range pf.Lint.Definitions {
+				pf.Lint.Definitions[i].SourceDir = sourceDir
+			}
+
 			mergeKeyed(defs.Downloads, pf.Downloads, func(d Download) string { return d.Name }, "download", &dupErrs)
 			mergeKeyed(defs.Tools, pf.Tools.Definitions, func(t Tool) string { return t.Name }, "tool", &dupErrs)
 			mergeKeyed(defs.Lint, pf.Lint.Definitions, func(l Linter) string { return l.Name }, "lint", &dupErrs)
@@ -213,6 +224,17 @@ func parseSourceDir(dir string) (defs sourceDefs, dupErrs []error, err error) {
 		}
 	}
 	return defs, dupErrs, nil
+}
+
+// setSourceRoot stamps root onto every Linter defs.Lint holds -- root is where ${plugin} should
+// resolve to for this one source: a local source's own directory (mergePluginRepo), or a git
+// source's persisted checkout (fetchGitSource). Map values aren't addressable in Go, so this reads
+// each entry, sets the field, and writes it back.
+func setSourceRoot(defs sourceDefs, root string) {
+	for name, l := range defs.Lint {
+		l.SourceRoot = root
+		defs.Lint[name] = l
+	}
 }
 
 // readPluginFile reads and parses one plugin.yaml. A missing file is returned as the raw

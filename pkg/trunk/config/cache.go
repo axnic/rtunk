@@ -29,14 +29,13 @@ type sourceDefs struct {
 // cacheSchemaVersion must be bumped whenever sourceDefs' shape gains a field an older cache file
 // wouldn't populate -- json.Unmarshal silently leaves a new field zero-valued instead of erroring,
 // so a stale cache written before the field existed looks like a normal cache hit, forever, unless
-// something notices the version disagrees. Bumped for the check-engine-refactor branch's
-// Command.ParseRegex: a cache written before that field existed silently produced an empty
-// ParseRegex for every "regex"-output command, and ParseFromRegex compiling "" matches every byte
-// offset in a linter's real output -- thousands of empty findings, not an error, on every
-// upgrade for anyone with a warm cache. loadSourceCache rejects a version mismatch as a decode
-// failure; fetchGitSource already treats any decode failure as "drop and regenerate" (see
-// git.go), so this one check is the whole fix -- no new code path.
-const cacheSchemaVersion = 1
+// something notices the version disagrees. Bumped once already for check-engine-refactor's
+// Command.ParseRegex (see git history); bumped again here for Linter.SourceDir: a cache written
+// before that field existed would decode every Linter's SourceDir as "", silently breaking ${cwd}
+// substitution for every command that references it, with no error at all. loadSourceCache rejects
+// a version mismatch as a decode failure; fetchGitSource already treats any decode failure as
+// "drop and regenerate" (see git.go), so this one check is the whole fix -- no new code path.
+const cacheSchemaVersion = 2
 
 // cacheEnvelope is what actually lives on disk: sourceDefs plus the schema version it was written
 // under.
@@ -45,11 +44,24 @@ type cacheEnvelope struct {
 	Defs    sourceDefs
 }
 
-// cacheFilePath returns where src's cache lives: keyed by uri+ref, since a pinned ref never
-// changes content.
-func cacheFilePath(cacheDir string, src PluginSource) string {
+// sourceHash is the stable identity of a git plugin source, shared by cacheFilePath (the parsed-
+// definitions cache) and checkoutDirPath (the persisted checkout) so both live under the same key
+// for the same uri+ref.
+func sourceHash(src PluginSource) string {
 	sum := sha256.Sum256([]byte(src.URI + "@" + src.Ref))
-	return filepath.Join(cacheDir, hex.EncodeToString(sum[:])+".json")
+	return hex.EncodeToString(sum[:])
+}
+
+// cacheFilePath returns where src's parsed-definitions cache lives: keyed by uri+ref, since a
+// pinned ref never changes content.
+func cacheFilePath(cacheDir string, src PluginSource) string {
+	return filepath.Join(cacheDir, sourceHash(src)+".json")
+}
+
+// checkoutDirPath is where a git source's full checkout is persisted (see fetchGitSource) --
+// keyed the same way as cacheFilePath, since a pinned ref never changes content.
+func checkoutDirPath(cacheDir string, src PluginSource) string {
+	return filepath.Join(cacheDir, "checkouts", sourceHash(src))
 }
 
 // loadSourceCache reads path's cached sourceDefs, rejecting (as a decode failure, same as

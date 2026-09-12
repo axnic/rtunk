@@ -87,6 +87,12 @@ func TestResolve_WithPluginRepo(t *testing.T) {
 		{Name: "hash", LeadingDelimiter: "#"},
 		{Name: "slashes-inline", LeadingDelimiter: "//"},
 	}, cfg.Lint.CommentFormats)
+
+	// SourceDir/SourceRoot let ${cwd}/${plugin} resolve into this local source's own directory
+	// tree (pkg/trunk/engine's job): SourceDir is derived from the plugin.yaml's own path within
+	// the source; SourceRoot is that source's own directory as mergePluginRepo resolved it.
+	assert.Equal(t, filepath.Join("linters", "actionlint"), cfg.Lint.Definitions["actionlint"].SourceDir)
+	assert.Equal(t, filepath.Join("testdata", "pluginrepo"), cfg.Lint.Definitions["actionlint"].SourceRoot)
 }
 
 // TestResolveAll_WithPluginRepo mirrors TestResolve_WithPluginRepo but via ResolveAll: every

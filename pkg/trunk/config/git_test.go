@@ -73,7 +73,8 @@ func trunkYAMLFor(t *testing.T, src config.PluginSource, lintEnabled, actionsEna
 
 // TestResolve_GitSource clones a local git fixture (built from the same plugin repo excerpts as
 // TestResolve_WithPluginRepo) and resolves against it, and confirms the fetch leaves a cache file
-// behind under cacheDir.
+// AND a persisted checkout behind under cacheDir, with the Linter's own SourceRoot/SourceDir
+// pointing at real files inside that checkout.
 func TestResolve_GitSource(t *testing.T) {
 	src := gitFixture(t, "testdata/pluginrepo")
 	cacheDir := t.TempDir()
@@ -87,9 +88,20 @@ func TestResolve_GitSource(t *testing.T) {
 	assert.Contains(t, cfg.Actions.Definitions, "commitlint")
 	assert.Contains(t, cfg.Runtimes.Definitions, "node")
 
-	entries, err := os.ReadDir(cacheDir)
+	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
 	require.NoError(t, err)
-	assert.Len(t, entries, 1, "fetch must leave exactly one cache file behind")
+	assert.Len(t, cacheFiles, 1, "fetch must leave exactly one parsed-definitions cache file behind")
+
+	// The full checkout, not just the parsed-definitions cache, must be persisted -- this is what
+	// lets ${plugin}/${cwd} resolve to real files on a later warm run.
+	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "checkouts", "*"))
+	require.NoError(t, err)
+	require.Len(t, checkouts, 1, "fetch must persist exactly one checkout directory")
+	assert.Equal(t, checkouts[0], cfg.Lint.Definitions["actionlint"].SourceRoot,
+		"a git-sourced Linter's SourceRoot must point at its persisted checkout")
+	assert.Equal(t, filepath.Join("linters", "actionlint"), cfg.Lint.Definitions["actionlint"].SourceDir)
+	assert.FileExists(t, filepath.Join(checkouts[0], "linters", "actionlint", "plugin.yaml"),
+		"the persisted checkout must contain real files, not an empty directory")
 }
 
 // TestResolve_GitSource_DuplicateResource proves duplicate detection also fires for a git source
@@ -135,11 +147,10 @@ func TestResolve_GitSource_CorruptCache_Regenerates(t *testing.T) {
 	cfg1, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
 
-	entries, err := os.ReadDir(cacheDir)
+	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	cacheFile := filepath.Join(cacheDir, entries[0].Name())
-	require.NoError(t, os.WriteFile(cacheFile, []byte("not valid json"), 0o644))
+	require.Len(t, cacheFiles, 1)
+	require.NoError(t, os.WriteFile(cacheFiles[0], []byte("not valid json"), 0o644))
 
 	cfg2, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
@@ -157,10 +168,10 @@ func TestResolve_GitSource_CorruptCache_FetchFails(t *testing.T) {
 	_, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
 
-	entries, err := os.ReadDir(cacheDir)
+	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	cacheFile := filepath.Join(cacheDir, entries[0].Name())
+	require.Len(t, cacheFiles, 1)
+	cacheFile := cacheFiles[0]
 	require.NoError(t, os.WriteFile(cacheFile, []byte("not valid json"), 0o644))
 	require.NoError(t, os.RemoveAll(src.URI))
 
@@ -171,4 +182,59 @@ func TestResolve_GitSource_CorruptCache_FetchFails(t *testing.T) {
 	assert.Equal(t, "fixture", fetchErr.SourceID)
 	_, statErr := os.Stat(cacheFile)
 	assert.True(t, os.IsNotExist(statErr), "corrupt cache file must be removed, not left behind")
+}
+
+// TestResolve_GitSource_MissingCheckoutTriggersRefetch: a valid, decodable parsed-definitions
+// cache whose paired checkout directory has been deleted (e.g. an operator manually cleaned it up)
+// must not be trusted as a hit -- SourceRoot pointing at a directory that no longer exists would
+// make ${plugin}/${cwd} resolve to nothing. Deleting the fixture repo between calls would make a
+// real re-fetch fail outright, but here it's left alone: the point is only to prove the cache
+// entry gets rebuilt, so the assertions below check the checkout is a NEW directory with the
+// linter's fields pointing at it.
+func TestResolve_GitSource_MissingCheckoutTriggersRefetch(t *testing.T) {
+	src := gitFixture(t, "testdata/pluginrepo")
+	cacheDir := t.TempDir()
+	trunkYAML := trunkYAMLFor(t, src, []string{"actionlint"}, nil, nil)
+
+	_, err := config.Resolve(trunkYAML, cacheDir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.RemoveAll(filepath.Join(cacheDir, "checkouts")))
+
+	cfg2, err := config.Resolve(trunkYAML, cacheDir)
+	require.NoError(t, err)
+
+	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "checkouts", "*"))
+	require.NoError(t, err)
+	require.Len(t, checkouts, 1, "the missing checkout must be regenerated")
+	assert.Equal(t, checkouts[0], cfg2.Lint.Definitions["actionlint"].SourceRoot)
+	assert.Equal(t, filepath.Join("linters", "actionlint"), cfg2.Lint.Definitions["actionlint"].SourceDir)
+}
+
+// TestResolve_GitSource_CacheHitDoesNotReclone proves a genuine cache hit (parsed-definitions
+// cache AND its checkout both present) never touches git again -- not just that it doesn't error
+// (TestResolve_GitSource_CacheHit already proves that), but that the checkout directory itself is
+// left untouched, via its mtime.
+func TestResolve_GitSource_CacheHitDoesNotReclone(t *testing.T) {
+	src := gitFixture(t, "testdata/pluginrepo")
+	cacheDir := t.TempDir()
+	trunkYAML := trunkYAMLFor(t, src, []string{"actionlint"}, nil, nil)
+
+	_, err := config.Resolve(trunkYAML, cacheDir)
+	require.NoError(t, err)
+
+	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "checkouts", "*"))
+	require.NoError(t, err)
+	require.Len(t, checkouts, 1)
+	before, err := os.Stat(checkouts[0])
+	require.NoError(t, err)
+
+	require.NoError(t, os.RemoveAll(src.URI)) // a real second clone would now fail outright
+
+	_, err = config.Resolve(trunkYAML, cacheDir)
+	require.NoError(t, err)
+
+	after, err := os.Stat(checkouts[0])
+	require.NoError(t, err)
+	assert.Equal(t, before.ModTime(), after.ModTime(), "a genuine cache hit must not touch the persisted checkout")
 }

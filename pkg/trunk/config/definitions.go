@@ -95,6 +95,19 @@ type Linter struct {
 	RunTimeout         string          `yaml:"run_timeout,omitempty"`
 	CacheResults       *bool           `yaml:"cache_results,omitempty"`
 	VersionCommand     *VersionCommand `yaml:"version_command,omitempty"`
+
+	// SourceDir is this linter's own directory, relative to its plugin source's root (e.g.
+	// "linters/trufflehog") -- how ${cwd} resolves relative to ${plugin} in a Command.Run or
+	// Command.Parser.Run. Stable across machines/cacheDir, so safe to cache; set by
+	// parseSourceDir. yaml:"-" blocks it from ever being read out of an actual plugin.yaml file --
+	// it is derived from the file's own path, never authored.
+	SourceDir string `yaml:"-"`
+	// SourceRoot is the absolute local directory ${plugin} resolves to for this linter's
+	// Run/Parser.Run strings: a local plugin source's own directory, or a git source's persisted
+	// checkout (see fetchGitSource). Recomputed fresh from the *current* cacheDir on every Resolve
+	// call -- json:"-" keeps it out of the on-disk cache, so a cacheDir override (or a checkout
+	// later rebuilt at a new path) never leaves a stale absolute path baked into cached JSON.
+	SourceRoot string `yaml:"-" json:"-"`
 }
 
 // Command is one invocation of a Linter (ARCHITECTURE.md `commands[]`): a checker command by

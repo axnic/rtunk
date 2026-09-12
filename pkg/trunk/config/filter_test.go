@@ -79,3 +79,38 @@ func keysOf[T any](m map[string]T) []string {
 	}
 	return out
 }
+
+// TestFilterEnabled_ParserRuntimeTransitivelyKept: a Command.Parser.Runtime must be pulled in the
+// same way a Tool's or Action's Runtime already is -- an enabled linter whose only command sets
+// Parser.Runtime (no Tool/Action needs that runtime at all) must still keep it, not have Resolve's
+// trim silently drop the very runtime its parser script needs.
+func TestFilterEnabled_ParserRuntimeTransitivelyKept(t *testing.T) {
+	cfg := Config{
+		Lint: LintConfig{
+			CategoryConfig: CategoryConfig[Linter]{
+				Enabled: []string{"trufflehog"},
+				Definitions: map[string]Linter{
+					"trufflehog": {
+						Name: "trufflehog",
+						Commands: []Command{
+							{Name: "lint", Run: "trufflehog ${target}", Parser: &Parser{Runtime: "python", Run: "convert.py"}},
+						},
+					},
+				},
+			},
+		},
+		Runtimes: CategoryConfig[Runtime]{
+			Definitions: map[string]Runtime{
+				"python": {Type: "python", Download: "python"},
+			},
+		},
+		Downloads: map[string]Download{
+			"python": {Name: "python"},
+		},
+	}
+
+	filterEnabled(&cfg)
+
+	assert.Contains(t, cfg.Runtimes.Definitions, "python")
+	assert.Contains(t, cfg.Downloads, "python")
+}
