@@ -592,3 +592,62 @@ func ParseTaplo(data []byte, linter string) ([]Finding, error) {
 	}
 	return findings, nil
 }
+
+// genericRegexLineRE extracts the common "path:line[:col]" prefix most CLI linters' plain-text
+// line-oriented output uses, treating the rest of the line as the message.
+var genericRegexLineRE = regexp.MustCompile(`^([^:\s][^:]*):(\d+)(?::(\d+))?[:\s]+(.*)$`)
+
+// genericRegexSeverityRE peels an optional leading severity word (bracketed or not, with an
+// optional trailing colon) off a message, e.g. "[warning] foo" or "error: foo".
+var genericRegexSeverityRE = regexp.MustCompile(`^\[?(error|warning|warn|info|note)\]?:?\s*(.*)$`)
+
+// ParseGenericRegex is a best-effort, lossy parser for the many CLI linters whose Output is
+// "regex" but whose exact per-tool format trunk's closed-source binary parses via an internal,
+// per-linter pattern this project has no visibility into (see the design spec's "Generic
+// best-effort regex parser" section). It extracts file/line/column from the common
+// "path:line[:col]" prefix convention and takes the remainder as Message, with a light best-effort
+// peel of a leading severity word (defaulting to "error" when none is found). A line that doesn't
+// match the convention at all (e.g. biome/rome's multi-line code-frame diagnostics, djlint's
+// no-path-per-line format) is silently skipped -- a real, documented limitation (false negatives
+// for those linters), not a crash.
+//
+// ponytail: no per-tool rule-ID extraction or precise severity mapping -- upgrade path is a
+// dedicated parser per linter, the same way this plan already did for perlcritic/taplo once their
+// real shape was confirmed.
+func ParseGenericRegex(data []byte, linter string) []Finding {
+	var findings []Finding
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		m := genericRegexLineRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		lineNum, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		col := 0
+		if m[3] != "" {
+			col, _ = strconv.Atoi(m[3])
+		}
+
+		severity := "error"
+		message := strings.TrimSpace(m[4])
+		if sm := genericRegexSeverityRE.FindStringSubmatch(message); sm != nil {
+			severity = strings.ToLower(sm[1])
+			if severity == "warn" {
+				severity = "warning"
+			}
+			message = strings.TrimSpace(sm[2])
+		}
+
+		findings = append(findings, Finding{
+			Linter: linter, File: m[1], Line: lineNum, Column: col,
+			Severity: severity, Message: message,
+		})
+	}
+	return findings
+}

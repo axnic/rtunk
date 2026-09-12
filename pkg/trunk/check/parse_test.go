@@ -251,3 +251,57 @@ func TestParseTaplo(t *testing.T) {
 	}
 	assert.Equal(t, want, got, "the INFO/ERROR tracing-crate log lines must be ignored, not mistaken for findings")
 }
+
+func TestParseGenericRegex_YamllintStyle(t *testing.T) {
+	const sample = "file.yaml:3:5: [warning] wrong indentation (indentation)\n"
+	got := ParseGenericRegex([]byte(sample), "yamllint")
+	want := []Finding{
+		{Linter: "yamllint", File: "file.yaml", Line: 3, Column: 5, Severity: "warning", Message: "wrong indentation (indentation)"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseGenericRegex_GitDiffCheckStyle_NoColumn(t *testing.T) {
+	const sample = "file.txt:5: trailing whitespace.\n"
+	got := ParseGenericRegex([]byte(sample), "git-diff-check")
+	want := []Finding{
+		{Linter: "git-diff-check", File: "file.txt", Line: 5, Column: 0, Severity: "error", Message: "trailing whitespace."},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseGenericRegex_ValeStyle_NoSeverityWord(t *testing.T) {
+	const sample = "doc.md:4:2:Did you really mean 'recieve'?\n"
+	got := ParseGenericRegex([]byte(sample), "vale")
+	want := []Finding{
+		{Linter: "vale", File: "doc.md", Line: 4, Column: 2, Severity: "error", Message: "Did you really mean 'recieve'?"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseGenericRegex_SwiftlintStyle(t *testing.T) {
+	const sample = "file.swift:12:5: warning: Line should be 120 characters or less (line_length)\n"
+	got := ParseGenericRegex([]byte(sample), "swiftlint")
+	want := []Finding{
+		{Linter: "swiftlint", File: "file.swift", Line: 12, Column: 5, Severity: "warning", Message: "Line should be 120 characters or less (line_length)"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParseGenericRegex_MarkdownlintCli2_RealCapture(t *testing.T) {
+	const sample = "bad.md:3:1 error MD010/no-hard-tabs Hard tabs [Column: 1]\n"
+	got := ParseGenericRegex([]byte(sample), "markdownlint-cli2")
+	want := []Finding{
+		{Linter: "markdownlint-cli2", File: "bad.md", Line: 3, Column: 1, Severity: "error", Message: "MD010/no-hard-tabs Hard tabs [Column: 1]"},
+	}
+	assert.Equal(t, want, got, "rule id embedded in the message is a known best-effort limitation, not extracted separately")
+}
+
+func TestParseGenericRegex_SkipsNonMatchingLines(t *testing.T) {
+	// A stand-in for biome/rome's multi-line code-frame diagnostics and djlint's no-path-per-line
+	// format: neither has a "path:line" prefix on every line, so the generic parser must simply
+	// extract nothing rather than erroring or matching garbage.
+	const sample = "  × Some rich diagnostic header\n  ╭─[input.js:3:1]\n"
+	got := ParseGenericRegex([]byte(sample), "biome")
+	assert.Empty(t, got, "non-conforming multi-line diagnostics must yield zero findings, not an error or a garbage match")
+}
