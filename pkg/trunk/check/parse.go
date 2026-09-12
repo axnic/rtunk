@@ -3,6 +3,8 @@ package check
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -506,6 +508,41 @@ func ParseStylelint(data []byte, linter string) ([]Finding, error) {
 				Severity: w.Severity, RuleID: w.Rule, Message: w.Text,
 			})
 		}
+	}
+	return findings, nil
+}
+
+// perlCriticLineRE matches perlcritic's real invocation in this project's plugin catalog:
+// `perlcritic --verbose 'path=%f,line=%l,col=%c,code=%p,message=%m\n' ${target}` -- a
+// comma-separated key=value format, NOT the shared colon-separated convention most other
+// "regex"-output linters use. path/code use a non-greedy match up to the next known ",key="
+// delimiter; message is greedy to the end of the line since it may itself contain commas.
+var perlCriticLineRE = regexp.MustCompile(`^path=(.*?),line=(\d+),col=(\d+),code=(.*?),message=(.*)$`)
+
+// ParsePerlCritic decodes perlcritic's custom --verbose format-string output, one finding per
+// line. A line that doesn't match the expected shape (e.g. blank lines) is silently skipped, not
+// an error -- perlcritic's own severity levels (1-5) aren't included in this format string, so
+// every finding is reported as "warning".
+func ParsePerlCritic(data []byte, linter string) ([]Finding, error) {
+	var findings []Finding
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		m := perlCriticLineRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		lineNum, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		col, _ := strconv.Atoi(m[3])
+		findings = append(findings, Finding{
+			Linter: linter, File: m[1], Line: lineNum, Column: col,
+			Severity: "warning", RuleID: m[4], Message: strings.TrimSpace(m[5]),
+		})
 	}
 	return findings, nil
 }

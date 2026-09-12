@@ -207,3 +207,22 @@ func TestParseStylelint(t *testing.T) {
 	}
 	assert.Equal(t, want, got)
 }
+
+func TestParsePerlCritic(t *testing.T) {
+	const sample = "path=lib/Foo.pm,line=12,col=5,code=Subroutines::ProhibitExcessComplexity,message=Subroutine \"bar\" with high complexity score\npath=lib/Foo.pm,line=20,col=1,code=Modules::RequireExplicitPackage,message=Code not contained in explicit package\n\n"
+	got, err := ParsePerlCritic([]byte(sample), "perlcritic")
+	require.NoError(t, err)
+	want := []Finding{
+		{Linter: "perlcritic", File: "lib/Foo.pm", Line: 12, Column: 5, Severity: "warning", RuleID: "Subroutines::ProhibitExcessComplexity", Message: `Subroutine "bar" with high complexity score`},
+		{Linter: "perlcritic", File: "lib/Foo.pm", Line: 20, Column: 1, Severity: "warning", RuleID: "Modules::RequireExplicitPackage", Message: "Code not contained in explicit package"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestParsePerlCritic_SkipsNonMatchingLines(t *testing.T) {
+	const sample = "some unrelated stderr noise\npath=lib/Foo.pm,line=1,col=1,code=TestingAndDebugging::RequireUseStrict,message=Code before strictures are enabled\n"
+	got, err := ParsePerlCritic([]byte(sample), "perlcritic")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the non-matching noise line must be skipped, not produce a finding or an error")
+	assert.Equal(t, "lib/Foo.pm", got[0].File)
+}
