@@ -126,6 +126,37 @@ that's a fact about `ty`'s catalog entry, not something this parser corrects for
 carries no `parse_regex` field at all in the real catalog -- it is a genuine one-off, unlike
 perlcritic.
 
+### Corrections from trunk's own official `regex` documentation
+
+The user supplied trunk.io's real docs for the `regex` output type (`docs.trunk.io`) during this
+spec's review. Three corrections against them:
+
+- **`path` is documented as required**; `line`/`col`/`severity`/`code`/`message` are all optional
+  -- matches this spec's existing "absent group leaves that Finding field zero-valued" rule with no
+  change needed, but confirms `path`'s absence from a pattern is a config error, not a normal case.
+- **`severity`'s real value set is 8 values**: `note`, `notice`, `allow`, `deny`, `disabled`,
+  `error`, `info`, `warning` -- not the 3 (`error`/`warning`/`info`) `Finding.Severity`'s existing
+  doc comment claims. This project's existing convention (every current parser normalizes its
+  tool's own severity vocabulary down to those 3 via a dedicated `xSeverity()` helper --
+  `sarifSeverity`, `banditSeverity`, etc.) is a prior, deliberate design decision this refactor
+  doesn't revisit. `ParseFromRegex` gets its own `regexSeverity()` helper, same shape as the
+  others, mapping trunk's 8 real values down to the existing 3 -- exact mapping is an
+  implementation detail for the plan, not this spec.
+- **Trunk's own regex engine allows a pattern to repeat the same named group** (picking whichever
+  branch's capture is non-empty; two non-empty captures is a trunk-side error). Go's `regexp`
+  (RE2) does not support duplicate named capture groups in one pattern at all --
+  `regexp.Compile` fails outright. None of the 14 real `parse_regex` values in the catalog today
+  use this (confirmed: all 14 have exactly one capture per name), so this is a known, narrow,
+  currently-unreachable limitation, not something to build support for now: a hypothetical future
+  catalog entry using it would fail to compile with a clear Go error, surfacing as that command
+  failing outright rather than silently misparsing -- an acceptable failure mode to leave
+  undocumented-away rather than engineer around speculatively.
+- Trunk documents two more output types this project has never seen mentioned in its own
+  catalog research: `lsp_json` and `arcanist`. Checked: zero real linters in the current catalog
+  use either (`grep -rl "output: lsp_json\|output: arcanist"` across every real `plugin.yaml`
+  finds nothing) -- no follow-up plan needed for either, unlike the actual "second wave" gaps
+  (`ansible_lint`, `brakeman`, `buf`, etc.) that already have real linters waiting on them.
+
 ## `engine.Env` and `context.Context`
 
 ```go
