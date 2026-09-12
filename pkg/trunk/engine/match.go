@@ -1,11 +1,13 @@
-// Package check implements ROADMAP.md's v0.3 milestone: running enabled linters against source
-// files and reporting findings, read-only. See
-// docs/superpowers/specs/2026-09-12-check-v0.3-design.md for the full design.
-package check
+// Package engine implements the check/fmt-shared job-queue execution engine: matching files
+// against a linter's Files criteria, resolving RunFrom/SandboxType (see engine/security), and
+// running commands against the result. See docs/superpowers/specs/
+// 2026-09-12-check-engine-refactor-design.md for the full design.
+package engine
 
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -23,12 +25,24 @@ import (
 // paths can be a subset of repoRoot passed explicitly on the command line. A directory entry
 // that is itself a file (not a directory) is taken as-is, matched or not, without a walk.
 //
+// Every path in paths must resolve inside repoRoot -- a path outside it is rejected outright
+// (rather than silently matched and only failing later, deep inside sandbox staging, if any
+// enabled linter's command happens to use SandboxType: copy_targets/expanded; see the design
+// spec's "Security" section for the real gap this closes).
+//
 // ponytail: walks the filesystem once per linter call rather than combining every enabled
 // linter's file set into one shared walk -- simpler, correct, and fine at v0.3's scale; combine
 // them if `rtunk check` on a large repo with many enabled linters gets slow.
 func Files(cfg config.Config, linter config.Linter, repoRoot string, paths []string) ([]string, error) {
 	if len(linter.Files) == 0 {
 		return nil, nil
+	}
+
+	for _, p := range paths {
+		rel, err := filepath.Rel(repoRoot, p)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("engine: path %q is outside repository root %q", p, repoRoot)
+		}
 	}
 
 	var out []string

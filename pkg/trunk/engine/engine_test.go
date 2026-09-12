@@ -1,6 +1,7 @@
-package check
+package engine
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
 // fakeToolSrc is a real compiled Go program standing in for a linter's tool binary, not a shell
@@ -134,6 +136,11 @@ func buildFakeToolBinary(t *testing.T) string {
 	return binPath
 }
 
+// notFormatter is the include predicate every test in this file passes -- pkg/trunk/check's real
+// predicate (see engine.go's Run doc comment), reproduced here since these tests' fixtures never
+// set Formatter: true on a command they expect to run.
+func notFormatter(c config.Command) bool { return !c.Formatter }
+
 func TestRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("faketool invoked via sh -c")
@@ -223,7 +230,7 @@ func TestRun(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
 	require.NoError(t, err)
 
 	byLinter := map[string]Event{}
@@ -272,12 +279,12 @@ func TestRun(t *testing.T) {
 	errEv, ok := byLinter["fakeerror"]
 	require.True(t, ok, "expected an event for fakeerror")
 	assert.Equal(t, Failed, errEv.Phase)
-	assert.EqualError(t, errEv.Err, "check: fakeerror: boom exited 42: ")
+	assert.EqualError(t, errEv.Err, "engine: fakeerror: boom exited 42: ")
 
 	errStderrEv, ok := byLinter["fakeerrorstderr"]
 	require.True(t, ok, "expected an event for fakeerrorstderr")
 	assert.Equal(t, Failed, errStderrEv.Phase)
-	assert.EqualError(t, errStderrEv.Err, "check: fakeerrorstderr: boom exited 43: boom: disk on fire",
+	assert.EqualError(t, errStderrEv.Err, "engine: fakeerrorstderr: boom exited 43: boom: disk on fire",
 		"stderr must be included in the error message, not silently dropped")
 
 	skipFormatEv, ok := byLinter["fakeskipformat"]
@@ -357,7 +364,7 @@ func TestRun_RelativePathArgument(t *testing.T) {
 	}
 
 	t.Chdir(repoRoot)
-	events, err := Run(cfg, cacheDir, repoRoot, []string{"."}, 1)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, []string{"."}, notFormatter)
 	require.NoError(t, err)
 
 	var done *Event
@@ -415,7 +422,7 @@ func TestRun_ParallelWorkersRunConcurrently(t *testing.T) {
 
 	drain := func(concurrency int) time.Duration {
 		start := time.Now()
-		events, err := Run(newCfg(), cacheDir, repoRoot, nil, concurrency)
+		events, err := Run(context.Background(), Env{Cfg: newCfg(), RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: concurrency}, nil, notFormatter)
 		require.NoError(t, err)
 		for range events {
 		}
@@ -469,7 +476,7 @@ func TestRun_FailedLinterSkipsRemainingJobs(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
 	require.NoError(t, err)
 
 	var running, failed int
@@ -497,7 +504,7 @@ func TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent(t *testing.T) {
 	repoRoot := t.TempDir()
 	cmd := config.Command{Name: "check", Run: "echo \"$PATH\"", Output: "pass_fail"}
 
-	out, stderr, exitCode, err := runOneInvocation(cmd, repoRoot, "", nil)
+	out, stderr, exitCode, err := runOneInvocation(context.Background(), cmd, repoRoot, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, exitCode)
 	assert.Empty(t, stderr)
@@ -544,11 +551,11 @@ func TestRun_NewOutputFormatDispatch(t *testing.T) {
 					},
 					"perlcritic": {
 						Name: "perlcritic", Files: []string{"ALL"}, Tools: []string{"faketool"},
-						Commands: []config.Command{{Name: "lint", Run: "faketool perlcritic ${target}", Output: "regex"}},
+						Commands: []config.Command{{Name: "lint", Run: "faketool perlcritic ${target}", Output: "regex", ParseRegex: `path=(?P<path>[^,]+),line=(?P<line>\d+),col=(?P<col>\d+),code=(?P<code>[^,]+),message=(?P<message>.+)`}},
 					},
 					"genericregex-e2e": {
 						Name: "genericregex-e2e", Files: []string{"ALL"}, Tools: []string{"faketool"},
-						Commands: []config.Command{{Name: "lint", Run: "faketool genericregex ${target}", Output: "regex"}},
+						Commands: []config.Command{{Name: "lint", Run: "faketool genericregex ${target}", Output: "regex", ParseRegex: `(?P<path>[^:]+):(?P<line>\d+):(?P<col>\d+): \[(?P<severity>\w+)\] (?P<message>.+)`}},
 					},
 					"taplo-e2e": {
 						// Output: "taplo" (taplo's real Command.Output value) must dispatch
@@ -567,7 +574,7 @@ func TestRun_NewOutputFormatDispatch(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
 	require.NoError(t, err)
 
 	byLinter := map[string]Event{}
@@ -591,19 +598,19 @@ func TestRun_NewOutputFormatDispatch(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, Done, perlcriticEv.Phase)
 	require.Len(t, perlcriticEv.Findings, 1)
-	assert.Equal(t, "SomePolicy", perlcriticEv.Findings[0].RuleID, "the \"regex\" output for linter name \"perlcritic\" must dispatch to ParsePerlCritic, not the generic parser")
+	assert.Equal(t, "SomePolicy", perlcriticEv.Findings[0].RuleID, "the \"regex\" output must dispatch through output.ParseFromRegex using the command's own ParseRegex")
 
 	genericEv, ok := byLinter["genericregex-e2e"]
 	require.True(t, ok)
 	assert.Equal(t, Done, genericEv.Phase)
 	require.Len(t, genericEv.Findings, 1)
-	assert.Equal(t, "warning", genericEv.Findings[0].Severity, "a \"regex\" output for any other linter name must fall through to ParseGenericRegex")
+	assert.Equal(t, "warning", genericEv.Findings[0].Severity, "a \"regex\" output dispatches through output.ParseFromRegex using the command's own ParseRegex, regardless of linter name")
 
 	taploEv, ok := byLinter["taplo-e2e"]
 	require.True(t, ok, "expected an event for taplo-e2e")
 	assert.Equal(t, Done, taploEv.Phase, `Output: "taplo" must be dispatched, not Skipped as an unsupported output format`)
 	require.Len(t, taploEv.Findings, 1)
-	assert.Equal(t, Finding{
+	assert.Equal(t, output.Finding{
 		Linter: "taplo-e2e", File: "target.txt", Line: 2, Column: 8,
 		Severity: "error", Message: "invalid TOML",
 	}, taploEv.Findings[0], "the finding's fields must come from ParseTaplo, proving the \"taplo\" case actually ran")
@@ -728,7 +735,7 @@ func TestRun_RunFromAndSandbox(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
 	require.NoError(t, err)
 
 	var all []Event
@@ -835,7 +842,7 @@ func TestRun_SandboxAbsolutePathFindingIsRemapped(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
 	require.NoError(t, err)
 
 	var done *Event
@@ -897,7 +904,7 @@ func TestRun_NoTargetCommandBatchesEvenWithoutBatchFlag(t *testing.T) {
 		},
 	}
 
-	events, err := Run(cfg, cacheDir, repoRoot, nil, 1)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
 	require.NoError(t, err)
 
 	var running int
@@ -920,4 +927,62 @@ func TestRun_NoTargetCommandBatchesEvenWithoutBatchFlag(t *testing.T) {
 	require.NotNil(t, done, "expected a Done event for no-target-linter")
 	require.Len(t, done.Findings, 1,
 		"the identical invocation must not be repeated once per file, duplicating its findings")
+}
+
+// TestRun_ContextCancellationStopsNewWorkAndKillsInFlight covers "quick stop mid-work": a
+// canceled context must (a) let an already-started invocation's subprocess actually die (proven
+// by a fake tool that sleeps far longer than the test's own timeout budget -- if the subprocess
+// weren't killed, this test would itself time out) and (b) prevent any not-yet-started job from
+// running at all.
+func TestRun_ContextCancellationStopsNewWorkAndKillsInFlight(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"slow": {
+						Name: "slow", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool sleep ${target}", Output: "pass_fail"}},
+					},
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events, err := Run(ctx, Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	start := time.Now()
+	cancel()
+	for range events {
+		// drain fully -- Run must still close the channel promptly after cancellation
+	}
+	elapsed := time.Since(start)
+
+	// The fake tool's "sleep" case runs 250ms; this command has ${target} and Batch is unset, so
+	// this is 4 separate per-file jobs, at concurrency 1 -- uncanceled, 4 sequential 250ms
+	// invocations would take ~1s. Whichever race outcome actually happens here -- cancel() lands
+	// before the first job is even picked up (the worker's ctx.Err() check stops it cold) or lands
+	// after the first job's subprocess is already sleeping (exec.CommandContext kills it
+	// immediately regardless) -- elapsed must stay far under even one full sleep, let alone four.
+	assert.Less(t, elapsed, 200*time.Millisecond, "canceling must not wait out even one of the fake tool's 250ms sleeps, let alone all four")
 }

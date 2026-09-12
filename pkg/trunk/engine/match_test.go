@@ -1,4 +1,4 @@
-package check
+package engine
 
 import (
 	"os"
@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
@@ -188,4 +189,20 @@ func TestFiles_GitignoreNoOpOutsideGitRepo(t *testing.T) {
 	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
 	require.NoError(t, err)
 	require.Equal(t, []string{real}, got)
+}
+
+// TestFiles_RejectsPathOutsideRepoRoot covers the path-traversal boundary check: a path in paths
+// that resolves outside repoRoot must be rejected outright, not silently matched and only failing
+// later, deep inside sandbox staging.
+func TestFiles_RejectsPathOutsideRepoRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	outside := t.TempDir() // a sibling temp dir, guaranteed not under repoRoot
+	mustWrite(t, filepath.Join(outside, "file.go"), "package main\n")
+
+	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
+		"go": {Name: "go", Extensions: []string{"go"}},
+	}}}
+	_, err := Files(cfg, config.Linter{Files: []string{"go"}}, repoRoot, []string{outside})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside repository root")
 }

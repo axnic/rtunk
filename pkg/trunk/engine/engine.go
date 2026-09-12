@@ -1,6 +1,7 @@
-package check
+package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,30 +14,40 @@ import (
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/trunk/engine/security"
+	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
-// Phase is one linter's point in check's run lifecycle.
+// Env is every piece of shared configuration a job needs to run.
+type Env struct {
+	Cfg         config.Config
+	RepoRoot    string // always absolute, see Run
+	CacheDir    string
+	Concurrency int // workers, at least 1 -- Run clamps a lower value up to 1
+}
+
+// Phase is one linter's point in the run lifecycle.
 type Phase int
 
 const (
 	Running Phase = iota // File is set; a progress update, not a terminal outcome
-	Done                 // Findings is set (possibly empty -- the linter ran clean)
+	Done                 // Findings is set (possibly empty -- the command ran clean)
 	Skipped              // an unsupported feature; Note says which -- never an error
-	Failed               // the linter's own command errored; Err is set
+	Failed               // the command itself errored; Err is set
 )
 
-// Event reports one linter's check progress or outcome, streamed on the channel Run returns. A
-// linter with no matching files, or whose only commands are formatters (Formatter: true),
-// produces no event at all -- there is nothing to report. A linter that does run produces one
-// Running event per command invocation (per batch, or per file for a non-Batch command), followed
-// by exactly one terminal event (Done, Skipped, or Failed).
+// Event reports one linter's run progress or outcome, streamed on the channel Run returns. A
+// linter with no matching files, or none of whose commands pass include, produces no event at all
+// -- there is nothing to report. A linter that does run produces one Running event per command
+// invocation (per batch, or per file for a non-Batch command), followed by exactly one terminal
+// event (Done, Skipped, or Failed).
 type Event struct {
 	Linter   string
 	Phase    Phase
-	Findings []Finding // Done only
-	Note     string    // Skipped (why) or Failed (which command)
-	Err      error     // Failed only
-	File     string    // Running only -- the file (or comma-joined batch) about to be checked
+	Findings []output.Finding // Done only
+	Note     string           // Skipped (why) or Failed (which command)
+	Err      error            // Failed only
+	File     string           // Running only -- the file (or comma-joined batch) about to be checked
 }
 
 // templateVarRE matches every ${...} placeholder in a Command.Run string.
@@ -44,10 +55,8 @@ var templateVarRE = regexp.MustCompile(`\$\{[^}]*\}`)
 
 // supportedOutputFormats is every Command.Output value this package knows how to parse -- anything
 // else is Skipped. "taplo" gets its own top-level dispatch (its real Command.Output value, not a
-// "regex" special case). "regex" covers every other free-text linter dispatched by name in
-// runBatch's switch: perlcritic gets its own parser (see docs/superpowers/specs/
-// 2026-09-12-check-v0.3.1-output-formats-design.md), everything else falls through to the
-// best-effort ParseGenericRegex.
+// "regex" special case). "regex" is always dispatched through output.ParseFromRegex, using the
+// command's own ParseRegex field.
 var supportedOutputFormats = map[string]bool{
 	"sarif": true, "sarif_uri": true, "pass_fail": true,
 	"actionlint": true, "bandit": true, "buildifier": true, "cfnlint": true,
@@ -79,23 +88,32 @@ type job struct {
 type linterState struct {
 	mu           sync.Mutex
 	remaining    int
-	findings     []Finding
+	findings     []output.Finding
 	terminalSent bool
 	failed       bool // once true, workers skip any not-yet-started job for this linter
 }
 
-// Run executes every enabled linter's non-formatter commands against the files matched under
-// paths (repoRoot is the default walk root when paths is empty, and every command's default
-// working directory), downloading any missing tool shim first, and streams one Event per linter
-// that had something to report. cfg is expected already enabled+used-trimmed (config.Resolve's
-// output).
+// Run executes every command include selects, across every enabled linter, against the files
+// matched under paths (env.RepoRoot is the default walk root when paths is empty, and every
+// command's default working directory), downloading any missing tool shim first, and streams one
+// Event per linter that had something to report. env.Cfg is expected already
+// enabled+used-trimmed (config.Resolve's output).
 //
-// concurrency workers (at least 1) run the queued command invocations in parallel; the queue
+// ctx cancellation stops the run: exec.CommandContext kills an in-flight linter subprocess the
+// moment ctx is canceled, and each worker checks ctx.Err() before picking up its next queued job,
+// so cancellation also stops new work from starting, not just kills whatever's already running.
+//
+// include selects which of a linter's commands are runnable -- pkg/trunk/check passes
+// `func(c config.Command) bool { return !c.Formatter }`; a future pkg/trunk/fmt passes the
+// complement. Every other check-specific behavior (Output-format dispatch, Finding-based
+// reporting) is unaffected by this predicate -- it only decides which commands are considered.
+//
+// env.Concurrency workers (at least 1) run the queued command invocations in parallel; the queue
 // itself is built sequentially and in a fixed order -- linters sorted by name, each linter's own
 // batches sorted by resolved directory then file -- so which job a worker happens to pick up next
 // is the only source of nondeterminism, never the queue's own order.
-func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurrency int) (<-chan Event, error) {
-	root, err := download.Root(cacheDir)
+func Run(ctx context.Context, env Env, paths []string, include func(config.Command) bool) (<-chan Event, error) {
+	root, err := download.Root(env.CacheDir)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +123,7 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 	// is absolute and the other relative -- e.g. `rtunk check .` passes paths=["."], a relative
 	// walk root, while repoRoot is always absolute. Absolutizing both up front means every path
 	// Files() walks and returns is comparable to repoRoot.
-	repoRoot, err = filepath.Abs(repoRoot)
+	repoRoot, err := filepath.Abs(env.RepoRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +139,7 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 		}
 	}
 
+	concurrency := env.Concurrency
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -129,8 +148,8 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 	go func() {
 		defer close(events)
 
-		names := make([]string, 0, len(cfg.Lint.Definitions))
-		for name := range cfg.Lint.Definitions {
+		names := make([]string, 0, len(env.Cfg.Lint.Definitions))
+		for name := range env.Cfg.Lint.Definitions {
 			names = append(names, name)
 		}
 		sort.Strings(names)
@@ -138,7 +157,7 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 		states := make(map[string]*linterState, len(names))
 		var jobs []job
 		for _, name := range names {
-			linterJobs := buildJobs(cfg, root, cacheDir, repoRoot, name, cfg.Lint.Definitions[name], paths, events)
+			linterJobs := buildJobs(env.Cfg, root, env.CacheDir, repoRoot, name, env.Cfg.Lint.Definitions[name], paths, include, events)
 			if len(linterJobs) == 0 {
 				continue
 			}
@@ -158,7 +177,10 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 			go func() {
 				defer wg.Done()
 				for j := range jobCh {
-					runJob(j, states[j.linterName], repoRoot, events)
+					if ctx.Err() != nil {
+						return
+					}
+					runJob(ctx, j, states[j.linterName], repoRoot, events)
 				}
 			}()
 		}
@@ -167,13 +189,14 @@ func Run(cfg config.Config, cacheDir, repoRoot string, paths []string, concurren
 	return events, nil
 }
 
-// buildJobs resolves name's matched files and queues one job per runnable command invocation,
-// emitting a Skipped event immediately for every command an unsupported feature rules out (var,
-// output format, parser -- unchanged from v0.3.1; SandboxType/RunFrom now attempt real resolution
-// instead of a blanket skip) and a Failed event (returning no jobs) if matching files or resolving
-// tools errors outright. Shim resolution -- which may download a tool -- runs at most once per
-// linter, lazily, on the first command that needs it.
-func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, events chan<- Event) []job {
+// buildJobs resolves name's matched files and queues one job per runnable command invocation
+// (include selects which commands are runnable), emitting a Skipped event immediately for every
+// command an unsupported feature rules out (var, output format, parser -- unchanged from v0.3.1;
+// SandboxType/RunFrom attempt real resolution instead of a blanket skip, per v0.3.2) and a Failed
+// event (returning no jobs) if matching files or resolving tools errors outright. Shim resolution
+// -- which may download a tool -- runs at most once per linter, lazily, on the first command that
+// needs it.
+func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, include func(config.Command) bool, events chan<- Event) []job {
 	files, err := Files(cfg, linter, repoRoot, paths)
 	if err != nil {
 		events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
@@ -188,7 +211,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 	pathEnvResolved := false
 
 	for _, cmd := range linter.Commands {
-		if cmd.Formatter {
+		if !include(cmd) {
 			continue
 		}
 		if v, ok := findUnsupportedVar(cmd.Run); ok {
@@ -269,7 +292,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 func groupByRunFrom(runFrom string, files []string, repoRoot string, directConfigs []string) (map[string][]string, bool) {
 	groups := map[string][]string{}
 	for _, f := range files {
-		dir, ok := resolveRunFrom(runFrom, f, repoRoot, directConfigs)
+		dir, ok := security.ResolveRunFrom(runFrom, f, repoRoot, directConfigs)
 		if !ok {
 			return nil, false
 		}
@@ -312,7 +335,7 @@ func findUnsupportedVar(run string) (string, bool) {
 // marks the linter failed (any of its not-yet-started jobs are then skipped, best-effort: a job
 // already picked up by a worker still runs to completion), and the linter's single terminal event
 // fires exactly once, the moment its last job finishes.
-func runJob(j job, state *linterState, repoRoot string, events chan<- Event) {
+func runJob(ctx context.Context, j job, state *linterState, repoRoot string, events chan<- Event) {
 	state.mu.Lock()
 	if state.failed {
 		state.mu.Unlock()
@@ -321,7 +344,7 @@ func runJob(j job, state *linterState, repoRoot string, events chan<- Event) {
 	state.mu.Unlock()
 
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
-	findings, err := runBatch(j, repoRoot)
+	findings, err := runBatch(ctx, j, repoRoot)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -346,13 +369,14 @@ func runJob(j job, state *linterState, repoRoot string, events chan<- Event) {
 
 // runBatch runs one job's invocation and parses its output per cmd.Output, remapping every
 // finding's File back to repoRoot-relative before returning. If j.cmd.SandboxType is set, the
-// invocation actually runs against a temporary staged copy (see stageSandbox); the parser only
-// ever sees paths relative to j.resolvedDir, exactly as when no sandboxing is involved --
-// remapFindings is what turns those back into repoRoot-relative paths either way.
-func runBatch(j job, repoRoot string) ([]Finding, error) {
+// invocation actually runs against a temporary staged copy (see security.StageSandbox); the
+// parser only ever sees paths relative to j.resolvedDir, exactly as when no sandboxing is
+// involved -- security.RemapFindings is what turns those back into repoRoot-relative paths either
+// way.
+func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, error) {
 	workDir := j.resolvedDir
 	if j.cmd.SandboxType != "" {
-		sandboxDir, cleanup, err := stageSandbox(j.cmd.SandboxType, j.resolvedDir, j.batch)
+		sandboxDir, cleanup, err := security.StageSandbox(j.cmd.SandboxType, j.resolvedDir, j.batch)
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -362,7 +386,7 @@ func runBatch(j job, repoRoot string) ([]Finding, error) {
 		workDir = sandboxDir
 	}
 
-	out, stderr, exitCode, err := runOneInvocation(j.cmd, workDir, j.pathEnv, j.batch)
+	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch)
 	if err != nil {
 		return nil, err
 	}
@@ -375,13 +399,13 @@ func runBatch(j job, repoRoot string) ([]Finding, error) {
 				msg += "\n" + errText
 			}
 		}
-		return nil, fmt.Errorf("check: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
+		return nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
 	}
 
 	// Real plugin data confirms SuccessCodes already enumerates every "ran fine, here's the
 	// verdict" code, "found issues" included (e.g. ansible-lint sarif: [0,2,5]) -- there is no
 	// third bucket. Every exit code not in ErrorCodes parses normally.
-	var findings []Finding
+	var findings []output.Finding
 
 	// Every JSON-shaped Output format's parser fails to unmarshal empty/whitespace-only input
 	// ("unexpected end of JSON input"), which would otherwise abort this whole Run for every
@@ -389,13 +413,12 @@ func runBatch(j job, repoRoot string) ([]Finding, error) {
 	// (e.g. markdownlint), or when an OS/version-gated command variant of the same linter
 	// silently produces nothing on this platform (a known, separate architectural gap -- out of
 	// scope here) -- either way, empty output means zero findings, not a parse failure. "pass_fail"
-	// never parses JSON (exit-code only) and "regex"'s parsers (ParsePerlCritic/ParseGenericRegex)
-	// already tolerate empty input by iterating an empty line list, so both are excluded from this
-	// guard.
+	// never parses JSON (exit-code only) and "regex" (output.ParseFromRegex) already tolerates
+	// empty input (zero regex matches), so both are excluded from this guard.
 	isJSONFormat := j.cmd.Output != "pass_fail" && j.cmd.Output != "regex"
 	if isJSONFormat && strings.TrimSpace(out) == "" {
-		remapFindings(findings, j.resolvedDir, repoRoot)
-		ApplyIssueURL(findings, j.linter.IssueURLFormat)
+		security.RemapFindings(findings, j.resolvedDir, repoRoot)
+		output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
 		return findings, nil
 	}
 
@@ -403,42 +426,37 @@ func runBatch(j job, repoRoot string) ([]Finding, error) {
 	case "sarif", "sarif_uri":
 		// sarif_uri (checkov): ReadOutputFrom "tmp_file" already resolved the real SARIF bytes
 		// written to ${tmpfile} into out -- no separate parser needed.
-		findings, err = ParseSARIF([]byte(out), j.linterName)
+		findings, err = output.ParseSARIF([]byte(out), j.linterName)
 	case "pass_fail":
 		if exitCode != 0 {
-			findings = ParsePassFail(j.linterName, j.batch)
+			findings = output.ParsePassFail(j.linterName, j.batch)
 		}
 	case "actionlint":
-		findings, err = ParseActionlint([]byte(out), j.linterName)
+		findings, err = output.ParseActionlint([]byte(out), j.linterName)
 	case "bandit":
-		findings, err = ParseBandit([]byte(out), j.linterName)
+		findings, err = output.ParseBandit([]byte(out), j.linterName)
 	case "buildifier":
-		findings, err = ParseBuildifier([]byte(out), j.linterName)
+		findings, err = output.ParseBuildifier([]byte(out), j.linterName)
 	case "cfnlint":
-		findings, err = ParseCfnLint([]byte(out), j.linterName)
+		findings, err = output.ParseCfnLint([]byte(out), j.linterName)
 	case "eslint":
-		findings, err = ParseESLint([]byte(out), j.linterName)
+		findings, err = output.ParseESLint([]byte(out), j.linterName)
 	case "hadolint":
-		findings, err = ParseHadolint([]byte(out), j.linterName)
+		findings, err = output.ParseHadolint([]byte(out), j.linterName)
 	case "haml_lint":
-		findings, err = ParseHamlLint([]byte(out), j.linterName)
+		findings, err = output.ParseHamlLint([]byte(out), j.linterName)
 	case "markdownlint":
-		findings, err = ParseMarkdownlint([]byte(out), j.linterName)
+		findings, err = output.ParseMarkdownlint([]byte(out), j.linterName)
 	case "pylint":
-		findings, err = ParsePylint([]byte(out), j.linterName)
+		findings, err = output.ParsePylint([]byte(out), j.linterName)
 	case "rubocop":
-		findings, err = ParseRubocop([]byte(out), j.linterName)
+		findings, err = output.ParseRubocop([]byte(out), j.linterName)
 	case "stylelint":
-		findings, err = ParseStylelint([]byte(out), j.linterName)
+		findings, err = output.ParseStylelint([]byte(out), j.linterName)
 	case "taplo":
-		findings, err = ParseTaplo([]byte(out), j.linterName)
+		findings, err = output.ParseTaplo([]byte(out), j.linterName)
 	case "regex":
-		switch j.linterName {
-		case "perlcritic":
-			findings, err = ParsePerlCritic([]byte(out), j.linterName)
-		default:
-			findings = ParseGenericRegex([]byte(out), j.linterName)
-		}
+		findings, err = output.ParseFromRegex(j.cmd.ParseRegex, []byte(out), j.linterName)
 	}
 	if err != nil {
 		return nil, err
@@ -455,6 +473,11 @@ func runBatch(j job, repoRoot string) ([]Finding, error) {
 		// in the tempdir prefix (macOS: /tmp -> /private/tmp, /var -> /private/var, both live
 		// under os.MkdirTemp's default root) -- resolve workDir the same way before comparing, so
 		// this doesn't just work by coincidence on platforms with no such symlink.
+		//
+		// This is a real behavior security.RemapFindings does not perform on its own: it always
+		// remaps relative to j.resolvedDir, so an absolute finding path pointing into the sandbox
+		// (not j.resolvedDir) would otherwise pass through unrewritten whenever j.resolvedDir ==
+		// repoRoot (RemapFindings' own no-op guard).
 		base := workDir
 		if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
 			base = resolved
@@ -467,8 +490,8 @@ func runBatch(j job, repoRoot string) ([]Finding, error) {
 			}
 		}
 	}
-	remapFindings(findings, j.resolvedDir, repoRoot)
-	ApplyIssueURL(findings, j.linter.IssueURLFormat)
+	security.RemapFindings(findings, j.resolvedDir, repoRoot)
+	output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
 	return findings, nil
 }
 
@@ -489,7 +512,7 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 	for _, id := range toolIDs {
 		tool, ok := cfg.Tools[id]
 		if !ok {
-			return nil, fmt.Errorf("check: tool %q referenced but not found in resolved config", id)
+			return nil, fmt.Errorf("engine: tool %q referenced but not found in resolved config", id)
 		}
 		version := download.ResolveVersion(cfg.Lint.Enabled, id, tool.KnownGoodVersion)
 		shimPath := download.ShimPath(root, "tools", id, version, id)
@@ -513,11 +536,12 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 // (a Command.Run string is a shell command line referencing its tool(s) by bare name, not a
 // path), with pathEnv prefixed onto PATH (verbatim PATH when pathEnv is empty -- a leading empty
 // PATH component means "current directory" on POSIX, which would let workDir's own files shadow
-// real binaries) and workDir as the working directory. Returns the output named by
-// cmd.ReadOutputFrom (default stdout), the process's raw stderr (always captured, regardless of
-// ReadOutputFrom, so callers can surface it on a crash), and the exit code; err is only ever a
-// launch failure (e.g. "sh" missing), never a non-zero exit -- callers read exitCode for that.
-func runOneInvocation(cmd config.Command, workDir, pathEnv string, files []string) (output, stderrOut string, exitCode int, err error) {
+// real binaries) and workDir as the working directory. ctx cancellation kills the subprocess
+// immediately via exec.CommandContext. Returns the output named by cmd.ReadOutputFrom (default
+// stdout), the process's raw stderr (always captured, regardless of ReadOutputFrom, so callers
+// can surface it on a crash), and the exit code; err is only ever a launch failure (e.g. "sh"
+// missing), never a non-zero exit -- callers read exitCode for that.
+func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string) (output, stderrOut string, exitCode int, err error) {
 	target := strings.Join(quoteAll(files), " ")
 
 	var tmpfile string
@@ -533,7 +557,7 @@ func runOneInvocation(cmd config.Command, workDir, pathEnv string, files []strin
 
 	run := strings.NewReplacer("${target}", target, "${tmpfile}", tmpfile).Replace(cmd.Run)
 
-	c := exec.Command("sh", "-c", run)
+	c := exec.CommandContext(ctx, "sh", "-c", run)
 	c.Dir = workDir
 	path := os.Getenv("PATH")
 	if pathEnv != "" {
