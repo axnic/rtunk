@@ -261,7 +261,12 @@ func fetchDownload(root string, ref Ref, dl config.Download, version, installDir
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return err
 	}
-	url := TemplateURL(entry.URL, version, osVal, cpuVal)
+	extraArgs, err := ResolveArgs(dl.Args, version, osVal, cpuVal)
+	if err != nil {
+		events <- Event{Ref: ref, Phase: Failed, Err: err}
+		return err
+	}
+	url := TemplateURL(entry.URL, version, osVal, cpuVal, extraArgs)
 	blobPath, err := FetchBlob(root, url, func(n, total int64) {
 		events <- Event{Ref: ref, Phase: Progress, Bytes: n, Total: total}
 	})

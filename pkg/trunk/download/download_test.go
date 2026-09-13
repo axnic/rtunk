@@ -132,7 +132,7 @@ func TestDownload_LintRef_ExpandsToTools(t *testing.T) {
 	cfg := config.Config{
 		Downloads: map[string]config.Download{
 			"actionlint": {Downloads: []config.DownloadEntry{{
-				OS: config.OSSpec{"linux": "linux", "macos": "macos", "windows": "windows"},
+				OS:  config.OSSpec{"linux": "linux", "macos": "macos", "windows": "windows"},
 				CPU: config.OSSpec{"x86_64": "x86_64", "arm_64": "arm_64"},
 				URL: srv.URL + "/actionlint.tar.gz", StripComponents: 1,
 			}}},
@@ -436,6 +436,54 @@ func TestDownload_Runtime_FailedInstallNotPoisoned(t *testing.T) {
 	}
 	assert.NotContains(t, phases, download.Cached, "a failed install must not poison the cache as Cached")
 	assert.Contains(t, phases, download.Done, "the retry must actually (re)install")
+}
+
+// TestDownload_Runtime_WithArgsDerivedSemver pins down a real production bug: real taplo's own
+// download recipe references ${semver} in its URL, a template var derived from ${version} via the
+// download's own args: regex (real GitHub release tags like "release-cli-0.10.0" carry a prefix
+// its release ASSETS don't) -- before ResolveArgs existed, ${semver} was never substituted at all,
+// so the literal string "${semver}" ended up in the request URL and every fetch 404'd.
+func TestDownload_Runtime_WithArgsDerivedSemver(t *testing.T) {
+	archive := tarGzBytes(t, "tool-1.0.0", "taplo", "#!/bin/sh\n")
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write(archive)
+	}))
+	defer srv.Close()
+
+	cfg := config.Config{
+		Downloads: map[string]config.Download{
+			"taplo": {
+				Args: map[string]string{
+					"semver": "${version}=>(?:release-cli-|release-taplo-cli-)?(?P<semver>.*)",
+				},
+				Downloads: []config.DownloadEntry{{
+					OS:  config.OSSpec{"linux": "linux", "macos": "macos", "windows": "windows"},
+					CPU: config.OSSpec{"x86_64": "x86_64", "arm_64": "arm_64"},
+					URL: srv.URL + "/releases/download/${semver}/taplo.tar.gz", StripComponents: 1,
+				}},
+			},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"taplo": {Type: "taplo", Download: "taplo", KnownGoodVersion: "release-cli-1.0.0", Shims: []string{"taplo"}},
+			},
+		},
+	}
+
+	cacheDir := t.TempDir()
+	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "taplo"})
+	require.NoError(t, err)
+
+	var phases []download.Phase
+	for ev := range events {
+		require.NoError(t, ev.Err, "event: %+v", ev)
+		phases = append(phases, ev.Phase)
+	}
+	assert.Contains(t, phases, download.Done)
+	assert.Equal(t, "/releases/download/1.0.0/taplo.tar.gz", gotPath,
+		"${semver} must resolve to the bare version (release-tag prefix stripped), not the literal string \"${semver}\" or the raw prefixed version")
 }
 
 func TestDownload_PluginsRef_AlwaysCached(t *testing.T) {

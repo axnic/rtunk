@@ -4,9 +4,17 @@ import "gopkg.in/yaml.v3"
 
 // Download is a reusable, OS/CPU-templated download recipe (ARCHITECTURE.md `downloads:`).
 type Download struct {
-	Name      string          `yaml:"name"`
-	Version   string          `yaml:"version"`
-	Downloads []DownloadEntry `yaml:"downloads"`
+	Name    string `yaml:"name"`
+	Version string `yaml:"version"`
+	// Args declares extra template variables derived from ${version} (or ${os}/${cpu}) via a
+	// regex, for a URL to reference alongside the built-in vars -- real catalog example: taplo's
+	// own recipe strips a release-tag prefix trunk's real GitHub tags carry (e.g.
+	// "release-cli-0.10.0") down to the bare semver GitHub actually names its release assets with,
+	// via `args: {semver: "${version}=>(?:release-cli-|release-taplo-cli-)?(?P<semver>.*)"}`. Each
+	// value is "<template>=><regex>"; see download.ResolveArgs for the actual resolution logic
+	// (this package only carries the raw recipe, unparsed).
+	Args      map[string]string `yaml:"args,omitempty"`
+	Downloads []DownloadEntry   `yaml:"downloads"`
 }
 
 // DownloadEntry is one os/cpu-specific variant of a Download recipe.
