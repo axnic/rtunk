@@ -66,11 +66,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	// has never stopped its siblings from running).
 	var fixFailed error
 	if c.Fix {
-		fixEvents, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return cmd.Formatter })
-		if err != nil {
-			return err
-		}
-		_, changed, fixSkipped, ffErr := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, fixEvents)
+		changed, fixSkipped, ffErr := runStableFormat(context.Background(), env, c.Paths, stderr)
 		fixFailed = ffErr
 		printFmtReport(stdout, changed, fixSkipped)
 	}
@@ -216,6 +212,26 @@ func printFmtReport(w io.Writer, changed []string, skipped []string) {
 	}
 
 	summary := fmt.Sprintf("%d file(s) reformatted", len(sorted))
+	if len(skipped) > 0 {
+		sortedSkipped := append([]string(nil), skipped...)
+		sort.Strings(sortedSkipped)
+		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sortedSkipped), strings.Join(sortedSkipped, ", "))
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, summary)
+}
+
+// printFmtCheckReport is printFmtReport's standalone-dry-run equivalent: same shape (one file per
+// line, then a blank line, then a summary), but with truthful "would be reformatted" wording,
+// since --check never actually writes anything.
+func printFmtCheckReport(w io.Writer, wouldChange []string, skipped []string) {
+	sorted := append([]string(nil), wouldChange...)
+	sort.Strings(sorted)
+	for _, f := range sorted {
+		fmt.Fprintln(w, f)
+	}
+
+	summary := fmt.Sprintf("%d file(s) would be reformatted", len(sorted))
 	if len(skipped) > 0 {
 		sortedSkipped := append([]string(nil), skipped...)
 		sort.Strings(sortedSkipped)

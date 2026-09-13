@@ -40,27 +40,31 @@ func TestFmtCmd_ReportsOnlyChangedFiles(t *testing.T) {
 // TestFmtCmd_DedupesFilesChangedByMultipleLinters proves the same file reported changed by two
 // DIFFERENT linters is listed once, not twice, in the final report and its count -- real and
 // reachable: this repo's own actual .trunk/trunk.yaml enables both prettier and markdownlint,
-// both realistic InPlace formatter candidates over the same .md files. Two formatters writing the
-// SAME content to a shared file would only produce one ChangedFiles entry naturally (the second
-// rewrite is a no-op by the hashing definition) -- writing DIFFERENT content is what makes both
-// linters genuinely report the file changed, so dedup has a real duplicate to collapse.
+// both realistic InPlace formatter candidates over the same .md files. Both formatters here
+// unconditionally overwriting the file (as this fixture did before runStableFormat existed) would
+// now be a genuine, permanent conflict -- indistinguishable from
+// TestFmtCmd_UnstableReportsConflictingLinters' own fixture -- so each instead appends its own
+// marker only once (idempotent, and commutative with the other regardless of run order), giving
+// runStableFormat's own dry-run check nothing left to do after round 1 while still making both
+// linters genuinely report the file changed on their first pass, so dedup has a real duplicate to
+// collapse.
 func TestFmtCmd_DedupesFilesChangedByMultipleLinters(t *testing.T) {
 	cfgPath, repoRoot := writeLinterFixture(t, []string{"fmtA", "fmtB"}, `    - name: fmtA
-      description: A fake formatter writing content A
+      description: Appends AAA only if the file doesn't already contain it
       files: [ALL]
       commands:
         - name: format
-          run: printf 'AAA\n' > ${target}
+          run: grep -qF AAA ${target} || printf 'AAA\n' >> ${target}
           output: rewrite
           success_codes: [0]
           in_place: true
           formatter: true
     - name: fmtB
-      description: A fake formatter writing content B
+      description: Appends BBB only if the file doesn't already contain it
       files: [ALL]
       commands:
         - name: format
-          run: printf 'BBB\n' > ${target}
+          run: grep -qF BBB ${target} || printf 'BBB\n' >> ${target}
           output: rewrite
           success_codes: [0]
           in_place: true
