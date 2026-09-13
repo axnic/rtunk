@@ -51,7 +51,7 @@ func findUnsupportedActionVar(run string) (string, bool) {
 		case "${cwd}", "${plugin}", "${hook}", "${hook_stdin_path}", "${@}":
 			continue
 		}
-		if strings.HasPrefix(v, "${env.") {
+		if envVarRE.MatchString(v) {
 			continue
 		}
 		if len(v) == 4 && v[1] == '{' && v[2] >= '1' && v[2] <= '9' && v[3] == '}' {
@@ -66,20 +66,31 @@ func quoteOne(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+func quoteAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = quoteOne(s)
+	}
+	return out
+}
+
+// substituteVars quotes every substituted value at substitution time (quoteOne/quoteAll) and
+// leaves the corresponding ${...} bare in the Run string template -- the same convention
+// pkg/trunk/engine.go's Command.Run/${target} substitution uses. args (opts.Args) is untrusted
+// git-hook argv (branch/ref names an attacker controls), so ${1}..${9}/${@} MUST be quoted here:
+// an unquoted substitution lets a value like `a" ; id ; "b` break out of the Run string and
+// execute arbitrary shell.
 func substituteVars(run, hook, cwd, plugin, hookStdinPath string, args []string) string {
 	pairs := []string{
 		"${cwd}", quoteOne(cwd), "${plugin}", quoteOne(plugin),
 		"${hook}", hook, "${hook_stdin_path}", hookStdinPath,
-		// ${@} is joined unquoted -- Run strings that need word-splitting semantics wrap it in
-		// their own quotes (e.g. `"${@}"`, as in the real catalog and this package's own test),
-		// so quoting here would double-quote and break that convention.
-		"${@}", strings.Join(args, " "),
+		"${@}", strings.Join(quoteAll(args), " "),
 	}
 	for i, a := range args {
 		if i >= 9 {
 			break
 		}
-		pairs = append(pairs, fmt.Sprintf("${%d}", i+1), a)
+		pairs = append(pairs, fmt.Sprintf("${%d}", i+1), quoteOne(a))
 	}
 	run = strings.NewReplacer(pairs...).Replace(run)
 	return envVarRE.ReplaceAllStringFunc(run, func(m string) string {

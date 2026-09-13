@@ -16,7 +16,10 @@ import (
 
 func TestRun_SubstitutesHookAndArgsAndCwd(t *testing.T) {
 	repoRoot := t.TempDir()
-	action := config.Action{ID: "echo-test", Run: `echo "${hook}" "${1}" "${@}"`}
+	// ${1}/${@} are quoted at substitution time (quoteOne/quoteAll), so the Run string
+	// references them bare -- the same convention as ${cwd}/${plugin} and pkg/trunk/engine's
+	// own ${target}. Double-quoting them again here would nest quotes incorrectly.
+	action := config.Action{ID: "echo-test", Run: `echo ${hook} ${1} ${@}`}
 	var stdout, stderr bytes.Buffer
 
 	res, err := actions.Run(context.Background(), config.Config{}, action,
@@ -26,6 +29,27 @@ func TestRun_SubstitutesHookAndArgsAndCwd(t *testing.T) {
 	assert.Equal(t, 0, res.ExitCode)
 	assert.False(t, res.Skipped)
 	assert.Equal(t, "pre-commit a a b\n", stdout.String())
+}
+
+func TestRun_ArgsWithShellMetacharacters_AreNotInjected(t *testing.T) {
+	// A git-hook arg (branch/ref name) is untrusted input. If ${1}/${@} substituted it bare
+	// instead of quoted, this value would close the echo command's argument and execute a
+	// second command -- proving the quoting fix actually closes that path, not just that the
+	// happy-path test still passes.
+	evil := `a" ; echo INJECTED ; "b`
+	action := config.Action{ID: "injection-test", Run: `printf '%s\n' ${1} && printf '%s\n' ${@}`}
+	var stdout, stderr bytes.Buffer
+
+	res, err := actions.Run(context.Background(), config.Config{}, action,
+		actions.RunOptions{CacheDir: t.TempDir(), RepoRoot: t.TempDir(), Args: []string{evil}},
+		&stdout, &stderr)
+	require.NoError(t, err, "stderr: %s", stderr.String())
+	assert.Equal(t, 0, res.ExitCode)
+	// The evil string itself contains the literal text "echo INJECTED", so this only proves
+	// non-injection if the output is *exactly* the two round-tripped lines below -- an actual
+	// injection would additionally run `echo INJECTED` as its own command, printing a bare
+	// "INJECTED\n" line with no surrounding quotes/semicolons, which this exact match rules out.
+	assert.Equal(t, evil+"\n"+evil+"\n", stdout.String())
 }
 
 func TestRun_UnsupportedTemplateVar_IsAnError(t *testing.T) {
