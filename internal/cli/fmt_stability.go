@@ -110,10 +110,12 @@ func containsString(ss []string, s string) bool {
 // after both real rounds, names every linter whose own round-1 or round-2 ChangedFiles included
 // it -- the "suspects," without attempting to determine which one is actually at fault (either
 // could be the one undoing the other's fix; both are equally implicated). 0 or 1 suspects can
-// legitimately happen -- e.g. the known copy_targets sandbox limitation (Task 1): a formatter that
-// reads ancestor config from its real cwd but not from the dry-run sandbox (which only stages the
-// batch's own targets) can make round 2's dry-run check disagree with what any real round actually
-// wrote, so those cases get their own honest wording instead of a misleading or empty
+// legitimately happen -- the dry-run sandbox is staged inside repoRoot precisely so a genuine
+// ancestor-directory config walk (e.g. real prettier's own algorithm) still finds repoRoot-level
+// config, but a formatter reading config from some directory strictly between its own target and
+// repoRoot is still invisible to the sandbox (see engine.go's own "Known limitation" comment) --
+// that narrower residual case can still make round 2's dry-run check disagree with what any real
+// round actually wrote, so it gets its own honest wording instead of a misleading or empty
 // "conflicting" label.
 func unstableError(stillUnstable []string, round1, round2 map[string][]string) error {
 	var b strings.Builder

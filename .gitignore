@@ -3,3 +3,9 @@
 
 # Local git worktrees used for isolated subagent-driven development sessions.
 /.worktrees/
+
+# rtunk fmt's dry-run stability check stages a throwaway sandbox copy of in-place formatter
+# targets inside the repo tree (so ancestor config discovery still works); normally removed by
+# `defer cleanup()` before the command exits, but a hard kill (SIGKILL) mid-run can leave one
+# behind anywhere in the tree.
+rtunk-check-sandbox-*/

@@ -468,14 +468,6 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	// the exact same before/after hash comparison a real run already uses) still reports what
 	// would have changed.
 	//
-	// Known limitation: copy_targets stages only the batch's own target files, not any
-	// intermediate-directory config file living strictly between the file's own directory and
-	// repoRoot (e.g. a nested per-package .prettierrc override) -- staging inside repoRoot (see
-	// tmpBase above) recovers repoRoot-level config via a genuine ancestor walk, but a config file
-	// living in some directory between the target and repoRoot is still invisible to the sandbox.
-	// This is a narrower residual case than before; repoRoot-level config is the standard,
-	// near-universal convention for essentially every real formatter, so this is now expected to
-	// be rare in practice rather than the common case it was before this fix.
 	sandboxType := j.cmd.SandboxType
 	tmpBase := ""
 	if j.dryRun && j.cmd.InPlace {
@@ -489,6 +481,15 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		// NOT recover a config file living strictly between the file's own directory and repoRoot
 		// (a narrower, real, but much less common case) -- repoRoot-level config is the standard,
 		// near-universal convention for essentially every real formatter.
+		//
+		// Known limitation: copy_targets stages only the batch's own target files, not any
+		// intermediate-directory config file living strictly between the file's own directory and
+		// repoRoot (e.g. a nested per-package .prettierrc override) -- staging inside repoRoot
+		// (tmpBase, above) recovers repoRoot-level config via a genuine ancestor walk, but a config
+		// file living in some directory between the target and repoRoot is still invisible to the
+		// sandbox. This is a narrower residual case than before; repoRoot-level config is the
+		// standard, near-universal convention for essentially every real formatter, so this is now
+		// expected to be rare in practice rather than the common case it was before this fix.
 		tmpBase = repoRoot
 	}
 	if sandboxType != "" {
