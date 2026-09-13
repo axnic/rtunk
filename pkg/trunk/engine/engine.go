@@ -26,6 +26,13 @@ type Env struct {
 	RepoRoot    string // always absolute, see Run
 	CacheDir    string
 	Concurrency int // workers, at least 1 -- Run clamps a lower value up to 1
+	// DryRun forces every InPlace command in this run to execute against a throwaway sandbox copy
+	// of its own targets (reusing security.StageSandbox's "copy_targets" mechanism) instead of the
+	// real files -- Event.ChangedFiles still reports what WOULD change, but nothing on disk is
+	// ever modified. Independent of Command.SandboxType (which real catalog data never sets on an
+	// InPlace command anyway, since a sandboxed write would otherwise be silently lost -- see the
+	// InPlace+SandboxType skip in buildJobs).
+	DryRun bool
 }
 
 // Phase is one linter's point in the run lifecycle.
@@ -89,6 +96,8 @@ type job struct {
 	pathEnv       string
 	parserPathEnv string
 	resolvedDir   string
+	dryRun        bool // set uniformly from Env.DryRun for every job in a run -- a run-level
+	// setting, not a per-command one; see runBatch's own use of it.
 }
 
 // linterState accumulates one linter's concurrently-completing jobs into the single terminal
@@ -174,7 +183,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 		states := make(map[string]*linterState, len(names))
 		var jobs []job
 		for _, name := range names {
-			linterJobs := buildJobs(env.Cfg, root, env.CacheDir, repoRoot, name, env.Cfg.Lint.Definitions[name], paths, include, events)
+			linterJobs := buildJobs(env.Cfg, root, env.CacheDir, repoRoot, name, env.Cfg.Lint.Definitions[name], paths, include, env.DryRun, events)
 			if len(linterJobs) == 0 {
 				continue
 			}
@@ -215,7 +224,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 // resolution -- which may download a tool, or (separately) a Command.Parser's own runtime -- runs
 // at most once per linter (per distinct Parser.Runtime, for the parser case), lazily, on the first
 // command that needs it.
-func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, include func(config.Command) bool, events chan<- Event) []job {
+func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, include func(config.Command) bool, dryRun bool, events chan<- Event) []job {
 	files, err := Files(cfg, linter, repoRoot, paths)
 	if err != nil {
 		events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
@@ -325,7 +334,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			for _, batch := range batches {
 				jobs = append(jobs, job{
 					linterName: name, linter: linter, cmd: cmd, batch: batch,
-					pathEnv: pathEnv, parserPathEnv: parserPathEnv, resolvedDir: dir,
+					pathEnv: pathEnv, parserPathEnv: parserPathEnv, resolvedDir: dir, dryRun: dryRun,
 				})
 			}
 		}
@@ -449,11 +458,21 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // changed on disk (InPlace commands only, via hashFiles' before/after comparison) -- always nil
 // for a non-InPlace command. inPlaceMu serializes every InPlace invocation across the whole run
 // (see the lock acquired below) so two of them can never interleave their before-hash/invoke/
-// after-hash cycle over the same file.
+// after-hash cycle over the same file. A dry run (job.dryRun) never reaches the real file at all
+// -- see the sandboxType computation below.
 func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex) ([]output.Finding, []string, error) {
 	workDir := j.resolvedDir
-	if j.cmd.SandboxType != "" {
-		sandboxDir, cleanup, err := security.StageSandbox(j.cmd.SandboxType, j.resolvedDir, j.batch)
+	// A dry run stages InPlace commands into a throwaway sandbox copy regardless of the command's
+	// own SandboxType (always empty in practice for InPlace commands -- see the InPlace+SandboxType
+	// skip in buildJobs) so the real file is never touched, while ChangedFiles (computed below via
+	// the exact same before/after hash comparison a real run already uses) still reports what
+	// would have changed.
+	sandboxType := j.cmd.SandboxType
+	if j.dryRun && j.cmd.InPlace {
+		sandboxType = "copy_targets"
+	}
+	if sandboxType != "" {
+		sandboxDir, cleanup, err := security.StageSandbox(sandboxType, j.resolvedDir, j.batch)
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -524,7 +543,14 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 				changedFiles = append(changedFiles, f)
 			}
 		}
-		changedFiles = remapPaths(changedFiles, workDir, repoRoot)
+		// changedFiles entries are j.batch's own resolvedDir-relative names (see the job doc
+		// comment), not workDir-relative -- remap against j.resolvedDir, not workDir, exactly like
+		// the finding-path remap below does. Before DryRun, an InPlace command's workDir was always
+		// j.resolvedDir itself (SandboxType+InPlace is skipped in buildJobs), so this was a no-op
+		// distinction; DryRun is the first case where workDir is a sandbox unrelated to repoRoot,
+		// where joining it with a resolvedDir-relative name would produce a bogus path escaping
+		// repoRoot entirely.
+		changedFiles = remapPaths(changedFiles, j.resolvedDir, repoRoot)
 	}
 
 	// A Parser converts the real command's raw output into cmd.Output's expected shape (almost

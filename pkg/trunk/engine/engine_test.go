@@ -1807,3 +1807,61 @@ func TestRun_FormatterWithoutInPlaceAndRewriteOutputIsSkipped(t *testing.T) {
 	assert.Equal(t, Skipped, got.Phase)
 	assert.Equal(t, "formatter without in_place has no supported effect (stdin/stdout-based formatters are unsupported)", got.Note)
 }
+
+// TestRun_DryRunNeverWritesRealFile is the load-bearing test for this whole feature: a DryRun
+// run of a real content-changing InPlace command must report ChangedFiles correctly (it WOULD
+// change the file) while leaving the real file's content completely untouched -- proven by
+// reading the real file's bytes after the run, not just trusting the reported Event.
+func TestRun_DryRunNeverWritesRealFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "messy.txt")
+	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakefmt": {
+						Name: "fakefmt", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1, DryRun: true}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakefmt" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Equal(t, []string{"messy.txt"}, got.ChangedFiles, "DryRun must still correctly report what WOULD change")
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "messy\n", string(data), "DryRun must NEVER write to the real file, even though ChangedFiles reports a change")
+}
