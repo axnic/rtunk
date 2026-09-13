@@ -159,15 +159,28 @@ type VersionCommand struct {
 
 // Action is a git-hook or file-change-triggered automation (ARCHITECTURE.md `actions:`).
 type Action struct {
-	ID            string        `yaml:"id"`
-	DisplayName   string        `yaml:"display_name,omitempty"`
-	Description   string        `yaml:"description,omitempty"`
-	Runtime       string        `yaml:"runtime,omitempty"`
-	PackagesFile  string        `yaml:"packages_file,omitempty"`
-	Run           string        `yaml:"run,omitempty"`
-	Triggers      []Trigger     `yaml:"triggers,omitempty"`
-	Interactive   Interactivity `yaml:"interactive,omitempty"`
-	NotifyOnError bool          `yaml:"notify_on_error,omitempty"`
+	ID            string             `yaml:"id"`
+	DisplayName   string             `yaml:"display_name,omitempty"`
+	Description   string             `yaml:"description,omitempty"`
+	Runtime       string             `yaml:"runtime,omitempty"`
+	PackagesFile  string             `yaml:"packages_file,omitempty"`
+	Run           string             `yaml:"run,omitempty"`
+	Triggers      []Trigger          `yaml:"triggers,omitempty"`
+	Interactive   Interactivity      `yaml:"interactive,omitempty"`
+	// NotifyOnError is nil when the plugin.yaml omits it -- every real trunk-io/plugins action
+	// that sets it explicitly sets it to false (to suppress the implied default), so nil is
+	// treated as "true" by pkg/trunk/actions.Run, mirroring Command.Enabled's own *bool
+	// "unset vs. explicit false" convention.
+	NotifyOnError *bool `yaml:"notify_on_error,omitempty"`
+	// Environment contributes extra process env vars beyond runtime/PATH (real catalog example:
+	// actions/git/plugin.yaml's git-lfs action passes SSH_AUTH_SOCK/SSH_AGENT_PID through this
+	// way). Resolved via download.BuildEnv, same as Runtime.RuntimeEnvironment/LinterEnvironment.
+	Environment []EnvironmentEntry `yaml:"environment,omitempty"`
+
+	// SourceDir/SourceRoot mirror Linter's own fields exactly (see Linter's doc comments) -- an
+	// action's Run/Environment can reference ${cwd}/${plugin} the same way a linter's Command can.
+	SourceDir  string `yaml:"-"`
+	SourceRoot string `yaml:"-" json:"-"`
 }
 
 // Interactivity is Action.Interactive: bare `true`, or the literal string "optional".

@@ -30,7 +30,8 @@ type trunkFile struct {
 		Enabled []string `yaml:"enabled"`
 	} `yaml:"lint"`
 	Actions struct {
-		Enabled []string `yaml:"enabled"`
+		Enabled  []string `yaml:"enabled"`
+		Disabled []string `yaml:"disabled"`
 	} `yaml:"actions"`
 }
 
@@ -105,6 +106,7 @@ func resolveMerged(file, cacheDir string) (cfg Config, err error) {
 	cfg.Runtimes.Enabled = tf.Runtimes.Enabled
 	cfg.Lint.Enabled = tf.Lint.Enabled
 	cfg.Actions.Enabled = tf.Actions.Enabled
+	cfg.Actions.Disabled = tf.Actions.Disabled
 
 	var errs []error
 	mergeKeyed(cfg.Plugins.Sources, tf.Plugins.Sources, func(s PluginSource) string { return s.ID }, "plugin source", &errs)
@@ -219,6 +221,9 @@ func parseSourceDir(dir string) (defs sourceDefs, dupErrs []error, err error) {
 			for i := range pf.Lint.Definitions {
 				pf.Lint.Definitions[i].SourceDir = sourceDir
 			}
+			for i := range pf.Actions.Definitions {
+				pf.Actions.Definitions[i].SourceDir = sourceDir
+			}
 
 			mergeKeyed(defs.Downloads, pf.Downloads, func(d Download) string { return d.Name }, "download", &dupErrs)
 			mergeKeyed(defs.Tools, pf.Tools.Definitions, func(t Tool) string { return t.Name }, "tool", &dupErrs)
@@ -238,6 +243,10 @@ func setSourceRoot(defs sourceDefs, root string) {
 	for name, l := range defs.Lint {
 		l.SourceRoot = root
 		defs.Lint[name] = l
+	}
+	for name, a := range defs.Actions {
+		a.SourceRoot = root
+		defs.Actions[name] = a
 	}
 }
 

@@ -37,10 +37,14 @@ type sourceDefs struct {
 // so a real command hit this in production -- ${semver} (and any other args:-derived template
 // var) silently never got substituted, reaching the download URL literally and 404ing, even after
 // the code fix landed, because the stale cache from before this field existed was still a "hit".
+// Bumped again here for Action.Environment/SourceDir/SourceRoot/NotifyOnError: a cache
+// written before these fields existed decodes them as nil/""/nil, silently breaking
+// ${cwd}/${plugin} substitution and Environment/NotifyOnError for every action, exactly the same
+// class of bug hit three times already (ParseRegex, Linter.SourceDir, Download.Args).
 // loadSourceCache rejects a version mismatch as a decode failure; fetchGitSource already treats
 // any decode failure as "drop and regenerate" (see git.go), so this one check is the whole fix --
 // no new code path.
-const cacheSchemaVersion = 3
+const cacheSchemaVersion = 4
 
 // cacheEnvelope is what actually lives on disk: sourceDefs plus the schema version it was written
 // under.

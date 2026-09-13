@@ -159,3 +159,22 @@ func TestResolve_SourceNotFound(t *testing.T) {
 	require.ErrorAs(t, err, &notFoundErr)
 	assert.Equal(t, "gone", notFoundErr.SourceID)
 }
+
+func TestResolve_LocalSource_StampsActionSourceDirAndRoot(t *testing.T) {
+	cfg, err := config.Resolve("testdata/trunk-with-plugins.yaml", "")
+	require.NoError(t, err)
+	a, ok := cfg.Actions.Definitions["commitlint"]
+	require.True(t, ok, "trunk-with-plugins.yaml enables the commitlint action")
+	assert.Equal(t, "actions/commitlint", a.SourceDir)
+	absRepo, err := filepath.Abs("testdata/pluginrepo")
+	require.NoError(t, err)
+	assert.Equal(t, absRepo, a.SourceRoot)
+}
+
+func TestResolve_ActionsDisabledList_Parsed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trunk.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: \"0.1\"\nactions:\n  enabled: [commitlint]\n  disabled: [trunk-announce]\n"), 0o644))
+	cfg, err := config.Resolve(path, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"trunk-announce"}, cfg.Actions.Disabled)
+}
