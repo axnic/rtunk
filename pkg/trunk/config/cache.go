@@ -30,12 +30,17 @@ type sourceDefs struct {
 // wouldn't populate -- json.Unmarshal silently leaves a new field zero-valued instead of erroring,
 // so a stale cache written before the field existed looks like a normal cache hit, forever, unless
 // something notices the version disagrees. Bumped once already for check-engine-refactor's
-// Command.ParseRegex (see git history); bumped again here for Linter.SourceDir: a cache written
-// before that field existed would decode every Linter's SourceDir as "", silently breaking ${cwd}
-// substitution for every command that references it, with no error at all. loadSourceCache rejects
-// a version mismatch as a decode failure; fetchGitSource already treats any decode failure as
-// "drop and regenerate" (see git.go), so this one check is the whole fix -- no new code path.
-const cacheSchemaVersion = 2
+// Command.ParseRegex (see git history); bumped again for Linter.SourceDir: a cache written before
+// that field existed would decode every Linter's SourceDir as "", silently breaking ${cwd}
+// substitution for every command that references it, with no error at all. Bumped again here for
+// Download.Args: a cache written before that field existed decodes every Download's Args as nil,
+// so a real command hit this in production -- ${semver} (and any other args:-derived template
+// var) silently never got substituted, reaching the download URL literally and 404ing, even after
+// the code fix landed, because the stale cache from before this field existed was still a "hit".
+// loadSourceCache rejects a version mismatch as a decode failure; fetchGitSource already treats
+// any decode failure as "drop and regenerate" (see git.go), so this one check is the whole fix --
+// no new code path.
+const cacheSchemaVersion = 3
 
 // cacheEnvelope is what actually lives on disk: sourceDefs plus the schema version it was written
 // under.
