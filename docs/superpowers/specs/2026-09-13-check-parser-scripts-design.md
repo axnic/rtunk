@@ -206,6 +206,17 @@ loop shape as the existing Tool/Action contributions (iterate `keepLint`'s `Comm
 - `ruff_to_sarif.py`'s literal `0`/`1` positional argument is passed through unchanged as ordinary
   `parser.run` text (already substitutable, no new template mechanism); this plan does not attempt
   to understand or validate what that argument means.
+- **Known gap, found by the final whole-branch review, deliberately left unfixed:** `${target}` is
+  substituted through `quoteAll` (single-quoted), matching this project's existing convention for
+  `Command.Run`. Two of the 19 real linters this feature newly unblocks pre-quote it themselves in
+  their real catalog `run:`/`parser.run:` text -- `markdown-link-check` (`"${target}"` in both) and
+  `phpstan` (`"${target}"` in `run:`) -- which double-quotes under this convention and silently
+  produces a non-existent path (no error, just a script that can't find its input). This is
+  pre-existing quoting behavior, not something this feature's own code introduced; it was simply
+  unreachable before, since both commands were blanket-skipped for having a `Parser` at all. A
+  general fix (detecting and stripping an author's own enclosing quotes) is out of proportion to
+  this feature's scope; documented here as a known limitation for these two specific linters rather
+  than fixed.
 
 ## Global constraints (carried into every task)
 
