@@ -95,13 +95,24 @@ func fetchGitSource(cacheDir string, src PluginSource) (defs sourceDefs, dupErrs
 	if err := os.MkdirAll(checkoutParentDir, 0o755); err != nil {
 		return sourceDefs{}, nil, &FetchError{SourceID: src.ID, URI: src.URI, Ref: src.Ref, Err: err}
 	}
-	if err := os.RemoveAll(checkoutDir); err != nil {
-		return sourceDefs{}, nil, &FetchError{SourceID: src.ID, URI: src.URI, Ref: src.Ref, Err: err}
-	}
+	// checkoutDir's content is immutable once fetched (keyed by src's own pinned uri+ref, per
+	// ARCHITECTURE.md) -- if it already exists, whether from a concurrent process's own cold fetch
+	// racing this one, or a still-good checkout left over from before (this regeneration only
+	// happens because the *parsed-definitions* JSON cache was stale/corrupt/missing, not because
+	// the checkout itself was suspect), its content is equivalent to what was just cloned here. So
+	// on a failed rename, just use what's already there instead of erroring -- forcibly clearing
+	// the destination first (a prior RemoveAll-then-Rename here) only recreated the exact race this
+	// avoids: two processes' RemoveAll+Rename pairs interleaving deterministically failed with
+	// "directory not empty".
 	if err := os.Rename(tmpDir, checkoutDir); err != nil {
-		return sourceDefs{}, nil, &FetchError{SourceID: src.ID, URI: src.URI, Ref: src.Ref, Err: err}
+		if info, statErr := os.Stat(checkoutDir); statErr != nil || !info.IsDir() {
+			return sourceDefs{}, nil, &FetchError{SourceID: src.ID, URI: src.URI, Ref: src.Ref, Err: err}
+		}
+		// lost the race (or the destination was already there): fall through: this call's own
+		// tmpDir is now redundant, and the deferred cleanup at the top of this function removes it.
+	} else {
+		persisted = true // now living at checkoutDir; nothing left at tmpDir for the deferred cleanup
 	}
-	persisted = true // now living at checkoutDir; nothing left at tmpDir for the deferred cleanup
 
 	setSourceRoot(defs, checkoutDir)
 

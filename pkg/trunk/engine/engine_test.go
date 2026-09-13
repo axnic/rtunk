@@ -1077,6 +1077,16 @@ func TestRun_ParserConvertsRawOutputThroughStdinStdout(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(runtimeShim), 0o755))
 	require.NoError(t, download.WriteShim(runtimeShim, binPath))
 
+	pluginRoot := t.TempDir()
+	sourceDir := filepath.Join("linters", "fakeparsed")
+	cwdDir := filepath.Join(pluginRoot, sourceDir)
+	require.NoError(t, os.MkdirAll(cwdDir, 0o755))
+	// Stand in for a real converter script living right next to its own plugin.yaml (e.g. real
+	// trufflehog's trufflehog_to_sarif.py sits beside linters/trufflehog/plugin.yaml) -- a symlink
+	// to the already-built fake tool binary is enough to prove ${cwd} resolved to a real,
+	// invokable location, without building a second binary.
+	require.NoError(t, os.Symlink(binPath, filepath.Join(cwdDir, "faketool")))
+
 	repoRoot := t.TempDir()
 	target := filepath.Join(repoRoot, "target.txt")
 	require.NoError(t, os.WriteFile(target, []byte("content\n"), 0o644))
@@ -1096,9 +1106,10 @@ func TestRun_ParserConvertsRawOutputThroughStdinStdout(t *testing.T) {
 				Definitions: map[string]config.Linter{
 					"fakeparsed": {
 						Name: "fakeparsed", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						SourceRoot: pluginRoot, SourceDir: sourceDir,
 						Commands: []config.Command{{
 							Name: "lint", Run: "faketool rawtext ${target}", Output: "sarif", Batch: true,
-							Parser: &config.Parser{Runtime: "python", Run: "faketool sarifconvert"},
+							Parser: &config.Parser{Runtime: "python", Run: "${cwd}/faketool sarifconvert"},
 						}},
 					},
 				},
