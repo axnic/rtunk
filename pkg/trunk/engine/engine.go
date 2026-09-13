@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -386,11 +387,14 @@ func findUnsupportedVar(run string) (string, bool) {
 // runParser: a parser script gets its data on stdin, not via a tmpfile, and runOneInvocation's own
 // `defer os.Remove(tmpfile)` has already fired by the time runParser starts, so even substituting
 // it would point at a file that's already gone. Screened out here, even though it's valid for
-// cmd.Run itself.
+// cmd.Run itself. ${exit_code} is the one var valid ONLY here, never in cmd.Run: real prettier's
+// own parser.run is `python3 ${plugin}/linters/prettier/prettier_to_sarif.py ${exit_code}`,
+// passing the real command's own exit code so the converter script can distinguish "ran clean"
+// (0) from "reformatted" (prettier's own success_codes: [0, 2]) from a genuine tool error.
 func findUnsupportedParserVar(run string) (string, bool) {
 	for _, v := range templateVarRE.FindAllString(run, -1) {
 		switch v {
-		case "${target}", "${plugin}", "${cwd}":
+		case "${target}", "${plugin}", "${cwd}", "${exit_code}":
 			continue
 		}
 		return v, true
@@ -531,7 +535,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	// empty stdin to a converter script that may not tolerate it (e.g. Python's
 	// json.load(sys.stdin) raises on empty input).
 	if j.cmd.Parser != nil && strings.TrimSpace(out) != "" {
-		converted, err := runParser(ctx, j.cmd.Parser, workDir, j.parserPathEnv, out, j.batch, pluginDir, cwdDir)
+		converted, err := runParser(ctx, j.cmd.Parser, workDir, j.parserPathEnv, out, j.batch, pluginDir, cwdDir, exitCode)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -839,11 +843,16 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 // ${cwd} substitute into parser.Run exactly as they do into cmd.Run; workDir is the same directory
 // (or sandbox) the real command itself just ran in. parserPathEnv is the parser's own runtime's
 // shim directory (e.g. wherever python3 lives), entirely separate from the linter's own pathEnv --
-// a parser's runtime need not be any tool the linter itself uses.
-func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEnv, stdin string, batch []string, pluginDir, cwdDir string) (string, error) {
+// a parser's runtime need not be any tool the linter itself uses. exitCode is the real command's
+// own exit code, substituted for ${exit_code} -- real prettier's own parser.run passes it as a
+// bare positional argument (never quoted: it's always digits from strconv.Itoa, and prettier's
+// real script parses it as a Python int) so the converter script can tell "ran clean" from
+// "reformatted" from a genuine tool error, all of which are non-error exit codes for prettier.
+func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEnv, stdin string, batch []string, pluginDir, cwdDir string, exitCode int) (string, error) {
 	target := strings.Join(quoteAll(batch), " ")
 	run := strings.NewReplacer(
 		"${target}", target, "${plugin}", quoteOne(pluginDir), "${cwd}", quoteOne(cwdDir),
+		"${exit_code}", strconv.Itoa(exitCode),
 	).Replace(parser.Run)
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)

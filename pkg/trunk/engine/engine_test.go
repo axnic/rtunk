@@ -183,6 +183,24 @@ func main() {
 		// lets a test assert exactly what ${plugin}/${cwd} substituted into Command.Run, without
 		// needing a real linter or real plugin source.
 		fmt.Print("{\"runs\":[{\"results\":[{\"ruleId\":\"echo\",\"level\":\"error\",\"message\":{\"text\":\""+strings.Join(args[1:], "|")+"\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"whatever\"},\"region\":{\"startLine\":1}}}]}]}]}")
+	case "rawtextexit2":
+		// Like "rawtext" but exits 2 -- stands in for real prettier's own success_codes: [0, 2]
+		// (2 meaning "reformatted"), letting a test prove ${exit_code} carries the real command's
+		// own exit code through to the parser stage, exactly as real prettier's parser.run does.
+		fmt.Print("RAWFINDING:" + strings.Join(args[1:], ","))
+		os.Exit(2)
+	case "sarifconvertexitcode":
+		// Stands in for real prettier's own converter script contract: parser.run passes the real
+		// command's exit code as a bare positional argument (args[1]), which the script uses to
+		// decide what to report -- proven here by embedding it directly into the finding.
+		data, _ := io.ReadAll(os.Stdin)
+		raw := strings.TrimPrefix(strings.TrimSpace(string(data)), "RAWFINDING:")
+		exitCode := args[1]
+		var results []string
+		for _, f := range strings.Split(raw, ",") {
+			results = append(results, "{\"ruleId\":\"exit-code-"+exitCode+"\",\"level\":\"error\",\"message\":{\"text\":\"exit was "+exitCode+"\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+f+"\"},\"region\":{\"startLine\":1}}}]}")
+		}
+		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
 	}
 }
 `
@@ -1161,6 +1179,74 @@ func TestRun_ParserConvertsRawOutputThroughStdinStdout(t *testing.T) {
 		"the finding must come from sarifconvert's output, not rawtext's raw text")
 	assert.Equal(t, "converted from raw", got.Findings[0].Message)
 	assert.Equal(t, "target.txt", got.Findings[0].File)
+}
+
+// TestRun_ParserExitCodeTemplateVarSubstitutes proves ${exit_code} substitutes into
+// Command.Parser.Run as the real command's own exit code -- real prettier's own parser.run is
+// `python3 ${plugin}/linters/prettier/prettier_to_sarif.py ${exit_code}`, passing prettier's own
+// exit status (0 clean, 2 reformatted, both non-error per prettier's own success_codes: [0, 2])
+// so the converter script can tell them apart. Before this test existed, ${exit_code} wasn't in
+// findUnsupportedParserVar's allowlist at all, so any command using it (prettier included) was
+// unconditionally Skipped as "unsupported template var".
+func TestRun_ParserExitCodeTemplateVarSubstitutes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	toolShim := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(toolShim), 0o755))
+	require.NoError(t, download.WriteShim(toolShim, binPath))
+	runtimeShim := download.ShimPath(root, "runtimes", "python", "3.12.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(runtimeShim), 0o755))
+	require.NoError(t, download.WriteShim(runtimeShim, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("content\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"python": {Type: "python", KnownGoodVersion: "3.12.0", Shims: config.ShimList{"faketool"}},
+			},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakeprettier": {
+						Name: "fakeprettier", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rawtextexit2 ${target}", Output: "sarif", Batch: true,
+							Parser: &config.Parser{Runtime: "python", Run: "faketool sarifconvertexitcode ${exit_code}"},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakeprettier" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	require.Len(t, got.Findings, 1)
+	assert.Equal(t, "exit-code-2", got.Findings[0].RuleID,
+		"${exit_code} must substitute the real command's own exit code (2), not be left unsubstituted or blank")
+	assert.Equal(t, "exit was 2", got.Findings[0].Message)
 }
 
 // TestRun_PluginAndCwdTemplateVarsResolveFromLinterSource proves ${plugin} substitutes to the
