@@ -41,7 +41,7 @@ func TestInstallDownload_TarGz_StripComponents(t *testing.T) {
 
 	dest := filepath.Join(dir, "install")
 	entry := config.DownloadEntry{StripComponents: 1}
-	err := download.InstallDownload(blob, "https://example.com/shellcheck-v0.11.0.linux.x86_64.tar.gz", dest, entry)
+	err := download.InstallDownload(blob, "https://example.com/shellcheck-v0.11.0.linux.x86_64.tar.gz", dest, entry, "")
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dest, "shellcheck"))
@@ -60,7 +60,7 @@ func TestInstallDownload_Executable(t *testing.T) {
 
 	dest := filepath.Join(dir, "install")
 	entry := config.DownloadEntry{Executable: true}
-	err := download.InstallDownload(blob, "https://example.com/tool-linux-amd64", dest, entry)
+	err := download.InstallDownload(blob, "https://example.com/tool-linux-amd64", dest, entry, "")
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dest, "tool-linux-amd64"))
@@ -83,7 +83,7 @@ func TestInstallDownload_TarGz_PathTraversal(t *testing.T) {
 
 	dest := filepath.Join(dir, "install")
 	entry := config.DownloadEntry{StripComponents: 1}
-	err := download.InstallDownload(blob, "https://example.com/archive.tar.gz", dest, entry)
+	err := download.InstallDownload(blob, "https://example.com/archive.tar.gz", dest, entry, "")
 	assert.Error(t, err)
 
 	_, statErr := os.Stat(filepath.Join(dir, "escaped.txt"))
@@ -128,7 +128,7 @@ func TestInstallDownload_TarGz_PreservesSymlinks(t *testing.T) {
 
 	dest := filepath.Join(dir, "install")
 	entry := config.DownloadEntry{StripComponents: 1}
-	err := download.InstallDownload(blob, "https://nodejs.org/dist/v22.16.0/node-v22.16.0.tar.gz", dest, entry)
+	err := download.InstallDownload(blob, "https://nodejs.org/dist/v22.16.0/node-v22.16.0.tar.gz", dest, entry, "")
 	require.NoError(t, err)
 
 	link := filepath.Join(dest, "bin", "npm")
@@ -152,7 +152,7 @@ func TestInstallDownload_TarGz_SymlinkEscape(t *testing.T) {
 
 	dest := filepath.Join(dir, "install")
 	entry := config.DownloadEntry{StripComponents: 1}
-	err := download.InstallDownload(blob, "https://example.com/archive.tar.gz", dest, entry)
+	err := download.InstallDownload(blob, "https://example.com/archive.tar.gz", dest, entry, "")
 	assert.Error(t, err)
 
 	_, statErr := os.Lstat(filepath.Join(dest, "escape"))
@@ -182,7 +182,7 @@ func TestInstallDownload_Zip_PathTraversal(t *testing.T) {
 
 	dest := filepath.Join(dir, "install")
 	entry := config.DownloadEntry{StripComponents: 1}
-	err := download.InstallDownload(blob, "https://example.com/archive.zip", dest, entry)
+	err := download.InstallDownload(blob, "https://example.com/archive.zip", dest, entry, "")
 	assert.Error(t, err)
 
 	_, statErr := os.Stat(filepath.Join(dir, "escaped.txt"))
@@ -214,7 +214,7 @@ func TestInstallDownload_Zip_StripComponents_MultipleFilesNestedDirs(t *testing.
 
 	dest := filepath.Join(dir, "install")
 	entry := config.DownloadEntry{StripComponents: 1}
-	err := download.InstallDownload(blob, "https://example.com/tool-1.0.0.zip", dest, entry)
+	err := download.InstallDownload(blob, "https://example.com/tool-1.0.0.zip", dest, entry, "")
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dest, "bin", "tool"))
@@ -254,7 +254,7 @@ func TestInstallDownload_Concurrent_SameDest(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			errs[i] = download.InstallDownload(blob, "https://example.com/shellcheck.tar.gz", dest, entry)
+			errs[i] = download.InstallDownload(blob, "https://example.com/shellcheck.tar.gz", dest, entry, "")
 		}(i)
 	}
 	close(start)
@@ -269,10 +269,43 @@ func TestInstallDownload_Concurrent_SameDest(t *testing.T) {
 	assert.Equal(t, "#!/bin/sh\necho hi\n", string(data), "destDir must hold one complete extraction, not a partial/mixed write")
 }
 
+// TestInstallDownload_BareGz pins down a real production bug: real taplo's and tree-sitter's own
+// download recipes both ship a bare .gz (not .tar.gz) -- gzip alone, no internal filename or
+// directory structure of its own, unlike every other archive format this project already
+// supported. Before this test existed, a bare .gz URL fell into "unrecognized archive format" and
+// the fetch failed outright even after ${semver} substitution was fixed.
+func TestInstallDownload_BareGz(t *testing.T) {
+	dir := t.TempDir()
+	blob := filepath.Join(dir, "blob")
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, err := gz.Write([]byte("#!/bin/sh\necho hi\n"))
+	require.NoError(t, err)
+	require.NoError(t, gz.Close())
+	require.NoError(t, os.WriteFile(blob, buf.Bytes(), 0o644))
+
+	dest := filepath.Join(dir, "install")
+	err = download.InstallDownload(blob, "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-darwin-aarch64.gz", dest, config.DownloadEntry{}, "taplo")
+	require.NoError(t, err)
+
+	// The installed file must be named after the recipe's own name ("taplo"), not the release
+	// asset's own filename ("taplo-darwin-aarch64") -- shims: [taplo] (and FindShimTarget's own
+	// installDir/name lookup) expects to find it there regardless of what GitHub happened to name
+	// the actual downloaded asset.
+	data, err := os.ReadFile(filepath.Join(dest, "taplo"))
+	require.NoError(t, err)
+	assert.Equal(t, "#!/bin/sh\necho hi\n", string(data))
+
+	info, err := os.Stat(filepath.Join(dest, "taplo"))
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&0o111, "the extracted binary must be executable")
+}
+
 func TestInstallDownload_UnrecognizedFormat(t *testing.T) {
 	dir := t.TempDir()
 	blob := filepath.Join(dir, "blob")
 	require.NoError(t, os.WriteFile(blob, []byte("?"), 0o644))
-	err := download.InstallDownload(blob, "https://example.com/tool.unknown", filepath.Join(dir, "install"), config.DownloadEntry{})
+	err := download.InstallDownload(blob, "https://example.com/tool.unknown", filepath.Join(dir, "install"), config.DownloadEntry{}, "")
 	assert.Error(t, err)
 }

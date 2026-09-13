@@ -19,6 +19,16 @@ import (
 // bare-binary download (entry.Executable), or an extracted archive otherwise, format inferred
 // from url's own extension since blobPath's name is a content hash, not a filename.
 //
+// singleFileName names the result for a bare .gz URL (not .tar.gz/.tgz, which are ordinary tar
+// archives): unlike a tar/zip archive, gzip alone compresses exactly one anonymous byte stream
+// with no filename of its own, so there is nothing else to name it after. Real catalog examples
+// (taplo, tree-sitter) always pass their own Download recipe's own Name here -- the recipe's own
+// canonical name is what the tool's shims: entry (and FindShimTarget's own installDir/name
+// lookup) expects to find on disk, regardless of the release asset's own filename (e.g.
+// "taplo-darwin-aarch64.gz" must still become an installed file literally named "taplo"). Unused
+// (pass "") for every other archive format, which name themselves from their own internal
+// structure.
+//
 // All work happens inside a scratch temp directory (a sibling of destDir, so the final
 // os.Rename below stays on one filesystem), published into destDir only via finalizeInstall once
 // everything has succeeded (see Fix 3). Without this, destDir existed for the entire
@@ -26,7 +36,7 @@ import (
 // as this function's very first action; dirNonEmpty(destDir) (fetchRuntimeRef/fetchToolRef's own
 // "already cached" check) would then wrongly report a failed or interrupted install as Cached
 // forever, with no error and no way to detect it short of `rtunk cache clean`.
-func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry) error {
+func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, singleFileName string) error {
 	if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
 		return err
 	}
@@ -78,6 +88,26 @@ func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry) 
 			return err
 		}
 		if err := extractZip(zr, tmpDir, entry.StripComponents); err != nil {
+			return err
+		}
+	case strings.HasSuffix(url, ".gz"):
+		// A bare .gz (not .tar.gz/.tgz, already matched above) is gzip alone: exactly one
+		// anonymous compressed byte stream, no filename or directory structure of its own --
+		// real catalog examples (taplo, tree-sitter) both ship their tool binary this way.
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return err
+		}
+		defer gz.Close()
+		out, err := os.OpenFile(filepath.Join(tmpDir, singleFileName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, gz); err != nil {
+			out.Close()
+			return err
+		}
+		if err := out.Close(); err != nil {
 			return err
 		}
 	default:

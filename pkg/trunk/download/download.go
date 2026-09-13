@@ -274,7 +274,7 @@ func fetchDownload(root string, ref Ref, dl config.Download, version, installDir
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return err
 	}
-	if err := InstallDownload(blobPath, url, installDir, entry); err != nil {
+	if err := InstallDownload(blobPath, url, installDir, entry, dl.Name); err != nil {
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return err
 	}
