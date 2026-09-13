@@ -424,7 +424,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, eve
 	}
 
 	state.findings = append(state.findings, findings...)
-	state.changedFiles = append(state.changedFiles, changedFiles...)
+	state.changedFiles = dedupeStrings(append(state.changedFiles, changedFiles...))
 	if state.remaining == 0 {
 		state.terminalSent = true
 		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings, ChangedFiles: state.changedFiles}
@@ -607,6 +607,24 @@ func containsInt(codes []int, code int) bool {
 		}
 	}
 	return false
+}
+
+// dedupeStrings returns ss with duplicates removed, preserving first-occurrence order -- used for
+// Event.ChangedFiles, since a linter with more than one InPlace command touching the same file in
+// the same batch would otherwise list it more than once in that linter's own single Done event.
+func dedupeStrings(ss []string) []string {
+	if len(ss) < 2 {
+		return ss
+	}
+	seen := make(map[string]bool, len(ss))
+	out := ss[:0]
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // hashFiles returns each file's (dir-joined) SHA-256 content hash, keyed by its own entry in

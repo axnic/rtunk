@@ -1407,3 +1407,120 @@ func TestRemapPaths(t *testing.T) {
 	assert.Equal(t, []string{"a.txt"}, remapPaths([]string{"a.txt"}, "/repo", "/repo"),
 		"same base and repoRoot is a no-op, matching security.RemapFindings' own guard")
 }
+
+// TestRun_FormatterWithoutInPlaceHasNoChangedFiles proves ChangedFiles is gated on
+// Command.InPlace specifically, not Formatter -- a hypothetical Formatter: true command with
+// InPlace: false must report no ChangedFiles even if its underlying invocation happens to modify
+// a file's content, since nothing here has any reason to expect a non-InPlace command's target
+// files to change, and hashing one anyway would be wasted work with a misleading result.
+func TestRun_FormatterWithoutInPlaceHasNoChangedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	messy := filepath.Join(repoRoot, "messy.txt")
+	require.NoError(t, os.WriteFile(messy, []byte("messy\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakefmtnoinplace": {
+						Name: "fakefmtnoinplace", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: false, Formatter: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakefmtnoinplace" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Nil(t, got.ChangedFiles, "InPlace: false must produce no ChangedFiles, regardless of Formatter")
+}
+
+// TestRun_ChangedFilesDeduplicatedWithinOneLinter proves a linter with two InPlace commands both
+// touching the same file in the same batch reports it once, not twice, in its own single Done
+// event -- real and reachable, not theoretical: this repo's own .trunk/trunk.yaml enables both
+// prettier and markdownlint, both realistic InPlace candidates over the same .md files (a
+// cross-linter case Task 2 handles separately; this is the same-linter case).
+func TestRun_ChangedFilesDeduplicatedWithinOneLinter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakedoublefmt": {
+						Name: "fakedoublefmt", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{
+							{
+								Name: "format1", Run: "faketool rewrite ${target}", Output: "rewrite",
+								SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+							},
+							{
+								Name: "format2", Run: "faketool rewrite ${target}", Output: "rewrite",
+								SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakedoublefmt" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Equal(t, []string{"a.txt"}, got.ChangedFiles,
+		"two commands both changing the same file must report it once, not twice")
+}

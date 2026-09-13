@@ -113,27 +113,27 @@ type Linter struct {
 // Command is one invocation of a Linter (ARCHITECTURE.md `commands[]`): a checker command by
 // default, or a formatter when InPlace+Formatter are set.
 type Command struct {
-	Name           string  `yaml:"name"`
-	Run            string  `yaml:"run"`
-	Output         string  `yaml:"output,omitempty"`
-	SuccessCodes   []int   `yaml:"success_codes,omitempty"`
-	ErrorCodes     []int   `yaml:"error_codes,omitempty"`
-	Batch          bool    `yaml:"batch,omitempty"`
-	ReadOutputFrom string  `yaml:"read_output_from,omitempty"`
-	SandboxType    string  `yaml:"sandbox_type,omitempty"`
-	RunFrom        string  `yaml:"run_from,omitempty"`
-	ParseRegex     string  `yaml:"parse_regex,omitempty"`
-	Version        string  `yaml:"version,omitempty"`
-	InPlace        bool    `yaml:"in_place,omitempty"`
-	Formatter      bool    `yaml:"formatter,omitempty"`
+	Name           string `yaml:"name"`
+	Run            string `yaml:"run"`
+	Output         string `yaml:"output,omitempty"`
+	SuccessCodes   []int  `yaml:"success_codes,omitempty"`
+	ErrorCodes     []int  `yaml:"error_codes,omitempty"`
+	Batch          bool   `yaml:"batch,omitempty"`
+	ReadOutputFrom string `yaml:"read_output_from,omitempty"`
+	SandboxType    string `yaml:"sandbox_type,omitempty"`
+	RunFrom        string `yaml:"run_from,omitempty"`
+	ParseRegex     string `yaml:"parse_regex,omitempty"`
+	Version        string `yaml:"version,omitempty"`
+	InPlace        bool   `yaml:"in_place,omitempty"`
+	Formatter      bool   `yaml:"formatter,omitempty"`
 	// Enabled defaults a command on (nil) or explicitly off (real catalog example: ruff's own
 	// "format" command sets false, since ruff-format competes with black) -- distinct from
 	// Linter-level enable/disable (trunk.yaml's lint.enabled: list), which this field does not
 	// touch. rtunk has no trunk.yaml-level override for a single command's own Enabled today
 	// (a real gap, deliberately out of scope); this field only ever reflects what the plugin
 	// source's own catalog data says.
-	Enabled        *bool   `yaml:"enabled,omitempty"`
-	Parser         *Parser `yaml:"parser,omitempty"`
+	Enabled *bool   `yaml:"enabled,omitempty"`
+	Parser  *Parser `yaml:"parser,omitempty"`
 }
 
 // Parser converts a tool's native output into trunk's normalized shape, for tools with no native
