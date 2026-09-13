@@ -51,7 +51,7 @@ rtunk is, and will remain, a 100% local tool.
   downloading linter/runtime/tool binaries from their official sources (GitHub Releases, PyPI,
   npm, etc.) as declared in config; a manual `rtunk upgrade` checking the rtunk repo's own GitHub
   Releases; and resolving a remote plugin source (`plugins.sources`), which does an explicit `git
-  clone` of a repo URL pinned to a tag or SHA — never a branch.
+clone` of a repo URL pinned to a tag or SHA — never a branch.
 - **Local, movable, controllable cache.** The cache lives in the OS-appropriate default location
   (XDG cache dir on Linux, `~/Library/Caches/rtunk` on macOS, `%LOCALAPPDATA%\rtunk\cache` on
   Windows), overridable via `--cache-dir` flag > `RTUNK_CACHE_DIR` env var > `cache.dir` config
