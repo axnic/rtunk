@@ -13,7 +13,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/xunleii/rtunk/pkg/trunk/check"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/engine"
 	"github.com/xunleii/rtunk/pkg/trunk/output"
@@ -32,6 +31,7 @@ type checkCmd struct {
 type checkRunCmd struct {
 	Paths []string `arg:"" optional:"" help:"Paths to check (default: whole repository)."`
 	Jobs  int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
+	Fix   bool     `help:"Apply automatic fixes (formatter commands) before reporting."`
 }
 
 func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
@@ -55,23 +55,58 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	if jobs <= 0 {
 		jobs = runtime.NumCPU()
 	}
+	env := engine.Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cli.CacheDir, Concurrency: jobs}
 
-	events, err := check.Run(context.Background(), engine.Env{
-		Cfg: cfg, RepoRoot: repoRoot, CacheDir: cli.CacheDir, Concurrency: jobs,
-	}, c.Paths)
+	// --fix runs every Formatter command first (the exact same selection `rtunk fmt` uses) and
+	// lets it finish writing before the checking pass below ever reads the same files -- an
+	// issue the formatter genuinely fixed is, by definition, no longer wrong by the time the
+	// checking commands run, so it never appears in the findings this command reports. A Failed
+	// event in this pass is recorded but does not abort: the checking pass below still runs,
+	// matching this project's existing per-linter failure isolation (one linter's Failed event
+	// has never stopped its siblings from running).
+	var fixFailed error
+	if c.Fix {
+		fixEvents, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return cmd.Formatter })
+		if err != nil {
+			return err
+		}
+		_, changed, fixSkipped, ffErr := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, fixEvents)
+		fixFailed = ffErr
+		printFmtReport(stdout, changed, fixSkipped)
+	}
+
+	events, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return !cmd.Formatter })
 	if err != nil {
 		return err
 	}
+	findings, _, skipped, failed := drainRunEvents(func(ev engine.Event) { printEvent(stderr, ev) }, events)
 
-	var findings []output.Finding
-	var skipped []string
+	printReport(stdout, findings, skipped)
+	if fixFailed != nil {
+		return fixFailed
+	}
+	if failed != nil {
+		return failed
+	}
+	if len(findings) > 0 {
+		return fmt.Errorf("rtunk: check found %d issue(s)", len(findings))
+	}
+	return nil
+}
+
+// drainRunEvents streams every event from events through printFn as it arrives and accumulates
+// its terminal Done/Skipped/Failed outcomes -- shared by check's own reporting pass and check
+// --fix's earlier formatter pass, which differ only in which of findings/changed the caller goes
+// on to use (the other is simply empty: a Formatter command has no Findings to report, and a
+// non-Formatter one has no ChangedFiles).
+func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (findings []output.Finding, changed []string, skipped []string, failed error) {
 	skippedLinters := map[string]bool{}
-	var failed error
 	for ev := range events {
-		printEvent(stderr, ev)
+		printFn(ev)
 		switch ev.Phase {
 		case engine.Done:
 			findings = append(findings, ev.Findings...)
+			changed = append(changed, ev.ChangedFiles...)
 		case engine.Skipped:
 			// Dedupe by linter: a linter with several unsupported commands emits one Skipped
 			// event per command, but the report should name it once, not once per command.
@@ -85,15 +120,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 			}
 		}
 	}
-
-	printReport(stdout, findings, skipped)
-	if failed != nil {
-		return failed
-	}
-	if len(findings) > 0 {
-		return fmt.Errorf("rtunk: check found %d issue(s)", len(findings))
-	}
-	return nil
+	return findings, changed, skipped, failed
 }
 
 // printEvent prints every event Run streams -- including in-progress Running events -- to w
@@ -106,6 +133,22 @@ func printEvent(w io.Writer, ev engine.Event) {
 		fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
 	case engine.Done:
 		fmt.Fprintf(w, "done %s: %d issue(s)\n", ev.Linter, len(ev.Findings))
+	case engine.Skipped:
+		fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
+	case engine.Failed:
+		fmt.Fprintf(w, "failed: %v\n", ev.Err)
+	}
+}
+
+// printFmtEvent is printEvent's fmt/--fix-pass equivalent: a Done event here reports how many
+// files a formatter actually changed (Event.ChangedFiles), not how many issues it found -- a
+// Formatter command has nothing to report as a Finding.
+func printFmtEvent(w io.Writer, ev engine.Event) {
+	switch ev.Phase {
+	case engine.Running:
+		fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
+	case engine.Done:
+		fmt.Fprintf(w, "done %s: %d file(s) changed\n", ev.Linter, len(ev.ChangedFiles))
 	case engine.Skipped:
 		fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
 	case engine.Failed:
@@ -141,6 +184,38 @@ func printReport(w io.Writer, findings []output.Finding, skipped []string) {
 		sorted := append([]string(nil), skipped...)
 		sort.Strings(sorted)
 		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sorted), strings.Join(sorted, ", "))
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, summary)
+}
+
+// printFmtReport is printReport's fmt/--fix-pass equivalent: lists which files were actually
+// changed (sorted, deduplicated), then a trailing summary line, mirroring printReport's own shape
+// (one line per item, then a blank line, then the summary) so the two report kinds read
+// consistently. Deduplication matters here specifically: Event.ChangedFiles is only deduplicated
+// within a single linter's own Done event, so two different linters (e.g. prettier and
+// markdownlint both formatting the same .md file) can each report the same path -- changed here
+// is the aggregate across every linter's events, so it must be deduplicated again before it's
+// counted or printed, or the same file would be listed twice and double-counted in the summary.
+func printFmtReport(w io.Writer, changed []string, skipped []string) {
+	seen := map[string]bool{}
+	sorted := make([]string, 0, len(changed))
+	for _, f := range changed {
+		if !seen[f] {
+			seen[f] = true
+			sorted = append(sorted, f)
+		}
+	}
+	sort.Strings(sorted)
+	for _, f := range sorted {
+		fmt.Fprintln(w, f)
+	}
+
+	summary := fmt.Sprintf("%d file(s) reformatted", len(sorted))
+	if len(skipped) > 0 {
+		sortedSkipped := append([]string(nil), skipped...)
+		sort.Strings(sortedSkipped)
+		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sortedSkipped), strings.Join(sortedSkipped, ", "))
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, summary)

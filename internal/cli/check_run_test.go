@@ -219,3 +219,47 @@ func TestCheckRunCmd_DedupesSkippedByLinter(t *testing.T) {
 	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: multiskip [unsupported template var \"${workspace}\"])\n"
 	assert.Equal(t, want, stdout)
 }
+
+// TestCheckRunCmd_Fix_AppliesFixesBeforeReporting proves the two-pass ordering for real: a linter
+// with both a checking command (fails while the file's content isn't "formatted\n") and a
+// formatter command (rewrites it to exactly that). Plain `check` must report the finding; `check
+// --fix` must not, since the formatter pass fixes the file before the checking pass ever reads it.
+func TestCheckRunCmd_Fix_AppliesFixesBeforeReporting(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"fakefix"}, `    - name: fakefix
+      description: A fake linter with both a checker and a formatter command
+      files: [ALL]
+      commands:
+        - name: lint
+          run: grep -qxF formatted ${target}
+          output: pass_fail
+        - name: format
+          run: printf 'formatted\n' > ${target}
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+          formatter: true
+`)
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "work"), 0o755))
+	target := filepath.Join(repoRoot, "work", "file.txt")
+	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644))
+
+	cacheDir := t.TempDir()
+
+	// Without --fix: the checking command reports the file as failing.
+	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
+	require.Error(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "1 issue(s) in 1 file(s)")
+
+	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644)) // reset for the --fix run
+
+	// With --fix: the formatter pass rewrites the file before the checking pass ever reads it, so
+	// the finding that showed up above must be absent here.
+	stdout, stderr, err = run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", "--fix", filepath.Join(repoRoot, "work"))
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "1 file(s) reformatted")
+	assert.Contains(t, stdout, "0 issue(s) in 0 file(s)")
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "formatted\n", string(data))
+}
