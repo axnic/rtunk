@@ -1433,9 +1433,15 @@ func TestRemapPaths(t *testing.T) {
 
 // TestRun_FormatterWithoutInPlaceHasNoChangedFiles proves ChangedFiles is gated on
 // Command.InPlace specifically, not Formatter -- a hypothetical Formatter: true command with
-// InPlace: false must report no ChangedFiles even if its underlying invocation happens to modify
-// a file's content, since nothing here has any reason to expect a non-InPlace command's target
-// files to change, and hashing one anyway would be wasted work with a misleading result.
+// InPlace: false must report no ChangedFiles even though nothing here has any reason to expect a
+// non-InPlace command's target files to change, and hashing one anyway would be wasted work with
+// a misleading result. Uses Output: "sarif" (not "rewrite"/"shfmt") deliberately: the final
+// whole-branch review's own fix wave added a buildJobs Skip for exactly
+// Formatter:true+InPlace:false+Output-in-{rewrite,shfmt} (9 real catalog stdin/stdout-based
+// formatters this engine can't meaningfully run), which would otherwise make this fixture never
+// reach Done at all -- confirmed the fixture's prior "rewrite" Output made this test pass for the
+// wrong reason (it never reached Done, so the zero-valued Event's nil ChangedFiles trivially
+// satisfied the assertion) once that Skip landed.
 func TestRun_FormatterWithoutInPlaceHasNoChangedFiles(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("faketool invoked via sh -c")
@@ -1465,8 +1471,8 @@ func TestRun_FormatterWithoutInPlaceHasNoChangedFiles(t *testing.T) {
 					"fakefmtnoinplace": {
 						Name: "fakefmtnoinplace", Files: []string{"ALL"}, Tools: []string{"faketool"},
 						Commands: []config.Command{{
-							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
-							SuccessCodes: []int{0}, Batch: true, InPlace: false, Formatter: true,
+							Name: "format", Run: "faketool sarif ${target}", Output: "sarif",
+							Batch: true, InPlace: false, Formatter: true,
 						}},
 					},
 				},
