@@ -30,6 +30,8 @@ type CLI struct {
 	CacheCmd    cacheCmd    `cmd:"" name:"cache" help:"Manage the rtunk downloads cache."`
 	CheckCmd    checkCmd    `cmd:"" name:"check" help:"Run enabled checks against source files (read-only)."`
 	FmtCmd      fmtCmd      `cmd:"" name:"fmt" help:"Run configured formatters against source files."`
+	ActionsCmd  actionsCmd  `cmd:"" name:"actions" help:"Manage and run trunk actions."`
+	GitHooksCmd gitHooksCmd `cmd:"" name:"git-hooks" help:"Manage git hooks that trigger actions."`
 }
 
 // Run parses args against CLI's grammar and executes the selected command's Run(), writing to
