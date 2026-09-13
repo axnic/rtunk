@@ -26,6 +26,7 @@ const fakeToolSrc = `package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,6 +122,28 @@ func main() {
 			results = append(results, "{\"ruleId\":\"fake-rule\",\"level\":\"error\",\"message\":{\"text\":\"fake finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+abs+"\"},\"region\":{\"startLine\":1}}}]}")
 		}
 		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
+	case "rawtext":
+		// Stands in for a real tool's native (non-SARIF) output -- e.g. trufflehog's own NDJSON --
+		// that Command.Parser.Run converts into SARIF via the stdin/stdout pipe (see "sarifconvert"
+		// below).
+		fmt.Print("RAWFINDING:" + strings.Join(args[1:], ","))
+	case "sarifconvert":
+		// Stands in for a real converter script (e.g. trufflehog_to_sarif.py): reads the tool's
+		// raw output on stdin, writes SARIF on stdout. The files it reports come from what it
+		// actually read off stdin, not its own argv -- proving the pipe, not argv, carries the
+		// real data across the two stages.
+		data, _ := io.ReadAll(os.Stdin)
+		raw := strings.TrimPrefix(strings.TrimSpace(string(data)), "RAWFINDING:")
+		var results []string
+		for _, f := range strings.Split(raw, ",") {
+			results = append(results, "{\"ruleId\":\"converted-rule\",\"level\":\"error\",\"message\":{\"text\":\"converted from raw\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+f+"\"},\"region\":{\"startLine\":1}}}]}")
+		}
+		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
+	case "echoargs":
+		// Emits its own argv (minus args[0]) joined by "|" as a single SARIF finding's message --
+		// lets a test assert exactly what ${plugin}/${cwd} substituted into Command.Run, without
+		// needing a real linter or real plugin source.
+		fmt.Print("{\"runs\":[{\"results\":[{\"ruleId\":\"echo\",\"level\":\"error\",\"message\":{\"text\":\""+strings.Join(args[1:], "|")+"\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"whatever\"},\"region\":{\"startLine\":1}}}]}]}]}")
 	}
 }
 `
@@ -206,8 +229,11 @@ func TestRun(t *testing.T) {
 						Name: "fakeskipvarupstream", Files: []string{"ALL"}, Tools: []string{"faketool"},
 						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target} ${upstream-ref}", Output: "sarif"}},
 					},
-					"fakeskipparser": {
-						Name: "fakeskipparser", Files: []string{"ALL"}, Tools: []string{"faketool"},
+					"fakeskipparserruntime": {
+						// cfg has no Runtimes.Definitions["python"] entry at all -- resolveRuntimeShimDir
+						// must Skip this one command, not fail the whole linter, since a real unresolvable
+						// parser runtime is a per-command config gap, not a run-wide error.
+						Name: "fakeskipparserruntime", Files: []string{"ALL"}, Tools: []string{"faketool"},
 						Commands: []config.Command{{
 							Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif",
 							Parser: &config.Parser{Runtime: "python", Run: "convert.py"},
@@ -307,10 +333,11 @@ func TestRun(t *testing.T) {
 	assert.Equal(t, Skipped, skipVarUpstreamEv.Phase)
 	assert.Equal(t, `unsupported template var "${upstream-ref}"`, skipVarUpstreamEv.Note)
 
-	skipParserEv, ok := byLinter["fakeskipparser"]
+	skipParserEv, ok := byLinter["fakeskipparserruntime"]
 	require.True(t, ok)
 	assert.Equal(t, Skipped, skipParserEv.Phase)
-	assert.Equal(t, "unsupported parser (native output requires a converter script)", skipParserEv.Note)
+	assert.Contains(t, skipParserEv.Note, `parser runtime "python" unavailable`)
+	assert.Contains(t, skipParserEv.Note, "not found in resolved config")
 
 	skipRunFromEv, ok := byLinter["fakeskiprunfrom"]
 	require.True(t, ok)
@@ -504,7 +531,7 @@ func TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent(t *testing.T) {
 	repoRoot := t.TempDir()
 	cmd := config.Command{Name: "check", Run: "echo \"$PATH\"", Output: "pass_fail"}
 
-	out, stderr, exitCode, err := runOneInvocation(context.Background(), cmd, repoRoot, "", nil)
+	out, stderr, exitCode, err := runOneInvocation(context.Background(), cmd, repoRoot, "", nil, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, 0, exitCode)
 	assert.Empty(t, stderr)
@@ -985,4 +1012,137 @@ func TestRun_ContextCancellationStopsNewWorkAndKillsInFlight(t *testing.T) {
 	// after the first job's subprocess is already sleeping (exec.CommandContext kills it
 	// immediately regardless) -- elapsed must stay far under even one full sleep, let alone four.
 	assert.Less(t, elapsed, 200*time.Millisecond, "canceling must not wait out even one of the fake tool's 250ms sleeps, let alone all four")
+}
+
+// TestRun_ParserConvertsRawOutputThroughStdinStdout proves the real Command.Parser contract every
+// trunk-io converter script this feature's research found actually uses (trufflehog_to_sarif.py,
+// tfsec/parse.py, ruff_to_sarif.py, all read in full): the real command's raw stdout becomes the
+// parser script's stdin, and the parser script's own stdout is what gets parsed per cmd.Output --
+// not the real command's raw output directly.
+func TestRun_ParserConvertsRawOutputThroughStdinStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+
+	// The linter's own tool.
+	toolShim := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(toolShim), 0o755))
+	require.NoError(t, download.WriteShim(toolShim, binPath))
+
+	// The parser's own runtime -- a real "python" would resolve to a python3 shim; standing in
+	// with faketool itself is enough to prove the wiring (runtime lookup, PATH, stdin/stdout)
+	// without needing a real Python interpreter in CI.
+	runtimeShim := download.ShimPath(root, "runtimes", "python", "3.12.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(runtimeShim), 0o755))
+	require.NoError(t, download.WriteShim(runtimeShim, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("content\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"python": {Type: "python", KnownGoodVersion: "3.12.0", Shims: config.ShimList{"faketool"}},
+			},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakeparsed": {
+						Name: "fakeparsed", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool rawtext ${target}", Output: "sarif", Batch: true,
+							Parser: &config.Parser{Runtime: "python", Run: "faketool sarifconvert"},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakeparsed" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	require.Len(t, got.Findings, 1)
+	assert.Equal(t, "converted-rule", got.Findings[0].RuleID,
+		"the finding must come from sarifconvert's output, not rawtext's raw text")
+	assert.Equal(t, "converted from raw", got.Findings[0].Message)
+	assert.Equal(t, "target.txt", got.Findings[0].File)
+}
+
+// TestRun_PluginAndCwdTemplateVarsResolveFromLinterSource proves ${plugin} substitutes to the
+// Linter's own SourceRoot and ${cwd} to SourceRoot joined with SourceDir -- the two template vars
+// a real trunk-io Command.Run/Parser.Run references to reach its own plugin source's scripts
+// (nancy's real run.sh is `sh ${plugin}/linters/nancy/run.sh`; tfsec's real parser.run is
+// `python3 ${cwd}/parse.py`, both confirmed by reading the real catalog during this feature's
+// design).
+func TestRun_PluginAndCwdTemplateVarsResolveFromLinterSource(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("content\n"), 0o644))
+
+	pluginRoot := filepath.Join(t.TempDir(), "plugin-source")
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakevars": {
+						Name: "fakevars", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						SourceRoot: pluginRoot, SourceDir: filepath.Join("linters", "fakevars"),
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool echoargs ${plugin} ${cwd}", Output: "sarif", Batch: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakevars" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	require.Len(t, got.Findings, 1)
+	wantCwd := filepath.Join(pluginRoot, "linters", "fakevars")
+	assert.Equal(t, pluginRoot+"|"+wantCwd, got.Findings[0].Message)
 }

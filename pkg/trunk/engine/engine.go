@@ -66,19 +66,22 @@ var supportedOutputFormats = map[string]bool{
 
 // job is one command invocation queued for a worker: one batch (all matched files, for a Batch
 // command; one file otherwise) of one linter's one command, with that linter's tool shims already
-// resolved onto pathEnv. resolvedDir is the directory Command.RunFrom resolved to for every file
-// in batch (repoRoot when RunFrom is empty) -- batch's entries are paths relative to resolvedDir,
-// not repoRoot, ready for ${target} substitution once the invocation's cwd becomes resolvedDir (or
-// a sandbox mirroring it). Resolving shims (which may download a tool) happens once per linter
-// before any worker starts -- never inside a worker -- so two jobs never race downloading the
-// same tool.
+// resolved onto pathEnv, and -- when cmd.Parser is set -- that parser's own runtime shim directory
+// resolved onto parserPathEnv (a separate PATH prefix used only for the parser-stage invocation: a
+// parser's runtime need not be any tool the linter itself uses). resolvedDir is the directory
+// Command.RunFrom resolved to for every file in batch (repoRoot when RunFrom is empty) -- batch's
+// entries are paths relative to resolvedDir, not repoRoot, ready for ${target} substitution once
+// the invocation's cwd becomes resolvedDir (or a sandbox mirroring it). Resolving shims (which may
+// download a tool or runtime) happens once per linter before any worker starts -- never inside a
+// worker -- so two jobs never race downloading the same thing.
 type job struct {
-	linterName  string
-	linter      config.Linter
-	cmd         config.Command
-	batch       []string
-	pathEnv     string
-	resolvedDir string
+	linterName    string
+	linter        config.Linter
+	cmd           config.Command
+	batch         []string
+	pathEnv       string
+	parserPathEnv string
+	resolvedDir   string
 }
 
 // linterState accumulates one linter's concurrently-completing jobs into the single terminal
@@ -201,11 +204,12 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 
 // buildJobs resolves name's matched files and queues one job per runnable command invocation
 // (include selects which commands are runnable), emitting a Skipped event immediately for every
-// command an unsupported feature rules out (var, output format, parser -- unchanged from v0.3.1;
-// SandboxType/RunFrom attempt real resolution instead of a blanket skip, per v0.3.2) and a Failed
-// event (returning no jobs) if matching files or resolving tools errors outright. Shim resolution
-// -- which may download a tool -- runs at most once per linter, lazily, on the first command that
-// needs it.
+// command an unsupported feature rules out (var, output format, an unresolvable Parser.Runtime,
+// SandboxType/RunFrom attempt real resolution instead of a blanket skip too, per v0.3.2) and a
+// Failed event (returning no jobs) if matching files or resolving tools errors outright. Shim
+// resolution -- which may download a tool, or (separately) a Command.Parser's own runtime -- runs
+// at most once per linter (per distinct Parser.Runtime, for the parser case), lazily, on the first
+// command that needs it.
 func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, include func(config.Command) bool, events chan<- Event) []job {
 	files, err := Files(cfg, linter, repoRoot, paths)
 	if err != nil {
@@ -219,6 +223,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 	var jobs []job
 	var pathEnv string
 	pathEnvResolved := false
+	parserPathEnvByRuntime := map[string]string{}
 
 	for _, cmd := range linter.Commands {
 		if !include(cmd) {
@@ -232,10 +237,22 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported output format %q", cmd.Output)}
 			continue
 		}
+
+		var parserPathEnv string
 		if cmd.Parser != nil {
-			events <- Event{Linter: name, Phase: Skipped, Note: "unsupported parser (native output requires a converter script)"}
-			continue
+			dir, cached := parserPathEnvByRuntime[cmd.Parser.Runtime]
+			if !cached {
+				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime)
+				if err != nil {
+					events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("parser runtime %q unavailable: %v", cmd.Parser.Runtime, err)}
+					continue
+				}
+				dir = resolved
+				parserPathEnvByRuntime[cmd.Parser.Runtime] = dir
+			}
+			parserPathEnv = dir
 		}
+
 		if cmd.SandboxType != "" && cmd.SandboxType != "copy_targets" && cmd.SandboxType != "expanded" {
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported sandbox_type %q", cmd.SandboxType)}
 			continue
@@ -287,7 +304,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			for _, batch := range batches {
 				jobs = append(jobs, job{
 					linterName: name, linter: linter, cmd: cmd, batch: batch,
-					pathEnv: pathEnv, resolvedDir: dir,
+					pathEnv: pathEnv, parserPathEnv: parserPathEnv, resolvedDir: dir,
 				})
 			}
 		}
@@ -327,15 +344,19 @@ func sortedKeys(m map[string][]string) []string {
 	return keys
 }
 
-// findUnsupportedVar reports the first ${...} placeholder in run that isn't ${target} or
-// ${tmpfile} -- the only two this plan substitutes. Everything else (e.g. ${target,},
-// ${upstream-ref}) is unsupported: left unsubstituted, it either breaks the shell (bad
-// substitution) or gets silently reinterpreted by sh itself (${upstream-ref} -> ${upstream:-ref}).
+// findUnsupportedVar reports the first ${...} placeholder in run that isn't one of the four this
+// package substitutes: ${target}, ${tmpfile}, ${plugin} (a Linter's own plugin source's root
+// directory, config.Linter.SourceRoot), or ${cwd} (that plugin source's own linter subdirectory,
+// SourceRoot joined with SourceDir). Everything else (e.g. ${target,}, ${upstream-ref}) is
+// unsupported: left unsubstituted, it either breaks the shell (bad substitution) or gets silently
+// reinterpreted by sh itself (${upstream-ref} -> ${upstream:-ref}).
 func findUnsupportedVar(run string) (string, bool) {
 	for _, v := range templateVarRE.FindAllString(run, -1) {
-		if v != "${target}" && v != "${tmpfile}" {
-			return v, true
+		switch v {
+		case "${target}", "${tmpfile}", "${plugin}", "${cwd}":
+			continue
 		}
+		return v, true
 	}
 	return "", false
 }
@@ -396,7 +417,10 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 		workDir = sandboxDir
 	}
 
-	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch)
+	pluginDir := j.linter.SourceRoot
+	cwdDir := filepath.Join(j.linter.SourceRoot, j.linter.SourceDir)
+
+	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir)
 	if err != nil {
 		return nil, err
 	}
@@ -410,6 +434,17 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 			}
 		}
 		return nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
+	}
+
+	// A Parser converts the real command's raw output into cmd.Output's expected shape (almost
+	// always SARIF) before any of the dispatch below runs -- everything from here on parses out
+	// exactly as if the real tool had produced it directly, whether or not a parser was involved.
+	if j.cmd.Parser != nil {
+		converted, err := runParser(ctx, j.cmd.Parser, workDir, j.parserPathEnv, out, j.batch, pluginDir, cwdDir)
+		if err != nil {
+			return nil, err
+		}
+		out = converted
 	}
 
 	// Real plugin data confirms SuccessCodes already enumerates every "ran fine, here's the
@@ -542,16 +577,52 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 	return dirs, nil
 }
 
-// runOneInvocation substitutes ${target}/${tmpfile} into cmd.Run and executes it through a shell
-// (a Command.Run string is a shell command line referencing its tool(s) by bare name, not a
-// path), with pathEnv prefixed onto PATH (verbatim PATH when pathEnv is empty -- a leading empty
-// PATH component means "current directory" on POSIX, which would let workDir's own files shadow
-// real binaries) and workDir as the working directory. ctx cancellation kills the subprocess
-// immediately via exec.CommandContext. Returns the output named by cmd.ReadOutputFrom (default
-// stdout), the process's raw stderr (always captured, regardless of ReadOutputFrom, so callers
-// can surface it on a crash), and the exit code; err is only ever a launch failure (e.g. "sh"
-// missing), never a non-zero exit -- callers read exitCode for that.
-func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string) (output, stderrOut string, exitCode int, err error) {
+// resolveRuntimeShimDir resolves (downloading first if not already cached) runtimeID's own shim
+// directory -- mirrors resolveShimDirs, but for a single Command.Parser.Runtime rather than a
+// linter's own Tools list: a parser script is invoked through its runtime's own interpreter shim
+// (e.g. python3), not a tool binary, and that runtime need not be one any Tool in cfg references.
+//
+// Every real trunk-io Command.Parser this feature was designed against uses runtime: python or
+// runtime: node, and both real Runtime definitions fetch via a download: recipe (confirmed by
+// reading their real plugin.yaml files) -- so this always has a real shim to resolve in practice.
+// A runtime whose SystemVersion is set instead (the "already installed on this machine" case)
+// never gets a shim written for it at all (see fetchRuntimeRef), so resolving one here would
+// return a directory that was never created; this is a known, real gap for that specific
+// combination, left unhandled since no real catalog Command.Parser reaches it today.
+func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) (string, error) {
+	rt, ok := cfg.Runtimes.Definitions[runtimeID]
+	if !ok {
+		return "", fmt.Errorf("engine: parser runtime %q referenced but not found in resolved config", runtimeID)
+	}
+	if len(rt.Shims) == 0 {
+		return "", fmt.Errorf("engine: parser runtime %q has no shims declared", runtimeID)
+	}
+	version := download.ResolveVersion(cfg.Runtimes.Enabled, runtimeID, rt.KnownGoodVersion)
+	shimPath := download.ShimPath(root, "runtimes", runtimeID, version, rt.Shims[0])
+	if _, statErr := os.Stat(shimPath); statErr != nil {
+		evs, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
+		if err != nil {
+			return "", err
+		}
+		for ev := range evs {
+			if ev.Phase == download.Failed {
+				return "", ev.Err
+			}
+		}
+	}
+	return filepath.Dir(shimPath), nil
+}
+
+// runOneInvocation substitutes ${target}/${tmpfile}/${plugin}/${cwd} into cmd.Run and executes it
+// through a shell (a Command.Run string is a shell command line referencing its tool(s) by bare
+// name, not a path), with pathEnv prefixed onto PATH (verbatim PATH when pathEnv is empty -- a
+// leading empty PATH component means "current directory" on POSIX, which would let workDir's own
+// files shadow real binaries) and workDir as the working directory. ctx cancellation kills the
+// subprocess immediately via exec.CommandContext. Returns the output named by cmd.ReadOutputFrom
+// (default stdout), the process's raw stderr (always captured, regardless of ReadOutputFrom, so
+// callers can surface it on a crash), and the exit code; err is only ever a launch failure (e.g.
+// "sh" missing), never a non-zero exit -- callers read exitCode for that.
+func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string, pluginDir, cwdDir string) (out, stderrOut string, exitCode int, err error) {
 	target := strings.Join(quoteAll(files), " ")
 
 	var tmpfile string
@@ -565,7 +636,10 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 		defer os.Remove(tmpfile)
 	}
 
-	run := strings.NewReplacer("${target}", target, "${tmpfile}", tmpfile).Replace(cmd.Run)
+	run := strings.NewReplacer(
+		"${target}", target, "${tmpfile}", tmpfile,
+		"${plugin}", pluginDir, "${cwd}", cwdDir,
+	).Replace(cmd.Run)
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)
 	c.Dir = workDir
@@ -592,17 +666,55 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 
 	switch cmd.ReadOutputFrom {
 	case "stderr":
-		output = stderr.String()
+		out = stderr.String()
 	case "tmp_file":
 		data, readErr := os.ReadFile(tmpfile)
 		if readErr != nil {
 			return "", stderr.String(), code, readErr
 		}
-		output = string(data)
+		out = string(data)
 	default: // "" or "stdout"
-		output = stdout.String()
+		out = stdout.String()
 	}
-	return output, stderr.String(), code, nil
+	return out, stderr.String(), code, nil
+}
+
+// runParser converts a real command's raw native output into the shape cmd.Output expects, by
+// piping it through parser.Run: stdin is stdin (the real command's own raw output, exactly what
+// runOneInvocation returned), and the script's own stdout is the result -- the universal contract
+// every real trunk-io Command.Parser script uses (confirmed by reading trufflehog_to_sarif.py,
+// tfsec/parse.py, and ruff_to_sarif.py in full during this feature's design). ${target}/${plugin}/
+// ${cwd} substitute into parser.Run exactly as they do into cmd.Run; workDir is the same directory
+// (or sandbox) the real command itself just ran in. parserPathEnv is the parser's own runtime's
+// shim directory (e.g. wherever python3 lives), entirely separate from the linter's own pathEnv --
+// a parser's runtime need not be any tool the linter itself uses.
+func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEnv, stdin string, batch []string, pluginDir, cwdDir string) (string, error) {
+	target := strings.Join(quoteAll(batch), " ")
+	run := strings.NewReplacer(
+		"${target}", target, "${plugin}", pluginDir, "${cwd}", cwdDir,
+	).Replace(parser.Run)
+
+	c := exec.CommandContext(ctx, "sh", "-c", run)
+	c.Dir = workDir
+	c.Stdin = strings.NewReader(stdin)
+	path := os.Getenv("PATH")
+	if parserPathEnv != "" {
+		path = parserPathEnv + string(os.PathListSeparator) + path
+	}
+	c.Env = append(os.Environ(), "PATH="+path)
+
+	var stdout, stderr strings.Builder
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+
+	if err := c.Run(); err != nil {
+		errText := strings.TrimSpace(stderr.String())
+		if errText == "" {
+			errText = err.Error()
+		}
+		return "", fmt.Errorf("engine: parser: %s", errText)
+	}
+	return stdout.String(), nil
 }
 
 func quoteAll(files []string) []string {
