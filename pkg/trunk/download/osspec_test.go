@@ -78,3 +78,40 @@ func TestMatchEntry_VersionRange(t *testing.T) {
 	_, _, _, ok = download.MatchEntry(unconstrained, "linux", "amd64", "99.99.99")
 	assert.True(t, ok, "an entry with no Version field must match any version")
 }
+
+// TestMatchEntry_VersionRange_AllOperators exercises versionSatisfies' other four operators
+// (">=", "<", ">", "=") -- TestMatchEntry_VersionRange only covers "<=" -- plus its fallback for a
+// version string versionSatisfies can't parse, which degrades to "matches" rather than rejecting.
+func TestMatchEntry_VersionRange_AllOperators(t *testing.T) {
+	entryWith := func(op string) []config.DownloadEntry {
+		return []config.DownloadEntry{{
+			OS: config.OSSpec{"linux": "linux"}, CPU: config.OSSpec{"x86_64": "x86_64"},
+			URL: op + "-url", Version: op + "2.0.0",
+		}}
+	}
+
+	_, _, _, ok := download.MatchEntry(entryWith(">="), "linux", "amd64", "2.0.0")
+	assert.True(t, ok, "2.0.0 >= 2.0.0")
+	_, _, _, ok = download.MatchEntry(entryWith(">="), "linux", "amd64", "1.9.9")
+	assert.False(t, ok, "1.9.9 is not >= 2.0.0")
+
+	_, _, _, ok = download.MatchEntry(entryWith("<"), "linux", "amd64", "1.9.9")
+	assert.True(t, ok, "1.9.9 < 2.0.0")
+	_, _, _, ok = download.MatchEntry(entryWith("<"), "linux", "amd64", "2.0.0")
+	assert.False(t, ok, "2.0.0 is not < 2.0.0")
+
+	_, _, _, ok = download.MatchEntry(entryWith(">"), "linux", "amd64", "2.0.1")
+	assert.True(t, ok, "2.0.1 > 2.0.0")
+	_, _, _, ok = download.MatchEntry(entryWith(">"), "linux", "amd64", "2.0.0")
+	assert.False(t, ok, "2.0.0 is not > 2.0.0")
+
+	_, _, _, ok = download.MatchEntry(entryWith("="), "linux", "amd64", "2.0.0")
+	assert.True(t, ok, "2.0.0 = 2.0.0")
+	_, _, _, ok = download.MatchEntry(entryWith("="), "linux", "amd64", "2.0.1")
+	assert.False(t, ok, "2.0.1 != 2.0.0")
+
+	// A non-numeric (e.g. pre-release) version component can't be compared -- versionSatisfies
+	// degrades to "matches" rather than guessing wrong and rejecting an otherwise-good entry.
+	_, _, _, ok = download.MatchEntry(entryWith(">="), "linux", "amd64", "2.0.0a6")
+	assert.True(t, ok, "an incomparable version must fall back to matching, not rejecting")
+}

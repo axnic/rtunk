@@ -189,6 +189,43 @@ func TestInstallDownload_Zip_PathTraversal(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "entry must not have been written outside destDir")
 }
 
+// TestInstallDownload_Zip_StripComponents_MultipleFilesNestedDirs covers extractZip's ordinary
+// happy path with more than one entry and a nested directory -- the only real prior zip coverage
+// was single-file (StripComponents) and the PathTraversal error case, so extractZip's own
+// os.MkdirAll(filepath.Dir(dst)) branch (for a nested entry) and its multi-entry loop had no
+// direct test.
+func TestInstallDownload_Zip_StripComponents_MultipleFilesNestedDirs(t *testing.T) {
+	dir := t.TempDir()
+	blob := filepath.Join(dir, "blob")
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, content := range map[string]string{
+		"tool-1.0.0/bin/tool":        "#!/bin/sh\necho hi\n",
+		"tool-1.0.0/share/README.md": "hello\n",
+	} {
+		w, err := zw.Create(name)
+		require.NoError(t, err)
+		_, err = w.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	require.NoError(t, os.WriteFile(blob, buf.Bytes(), 0o644))
+
+	dest := filepath.Join(dir, "install")
+	entry := config.DownloadEntry{StripComponents: 1}
+	err := download.InstallDownload(blob, "https://example.com/tool-1.0.0.zip", dest, entry)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dest, "bin", "tool"))
+	require.NoError(t, err)
+	assert.Equal(t, "#!/bin/sh\necho hi\n", string(data))
+
+	data, err = os.ReadFile(filepath.Join(dest, "share", "README.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello\n", string(data))
+}
+
 // TestInstallDownload_Concurrent_SameDest is Fix 3's concurrency regression test, done at
 // InstallDownload's level (the choke point both fetchRuntimeRef and fetchToolRef funnel through)
 // rather than through the full Download() pipeline: Download()'s internal goroutine scheduling

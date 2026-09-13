@@ -448,3 +448,113 @@ func TestDownload_PluginsRef_AlwaysCached(t *testing.T) {
 	ev := <-events
 	assert.Equal(t, download.Cached, ev.Phase, "resolving cfg already fetched every plugin source it references")
 }
+
+func TestDownload_PluginsRef_UnknownSource(t *testing.T) {
+	events, err := download.Download(config.Config{}, t.TempDir(), download.Ref{Category: "plugins", ID: "nope"})
+	require.NoError(t, err)
+	ev := <-events
+	assert.Equal(t, download.Failed, ev.Phase)
+	assert.ErrorContains(t, ev.Err, `unknown plugin source "nope"`)
+}
+
+func TestDownload_LintRef_UnknownDefinition(t *testing.T) {
+	events, err := download.Download(config.Config{}, t.TempDir(), download.Ref{Category: "lint", ID: "nope"})
+	require.NoError(t, err)
+	ev := <-events
+	assert.Equal(t, download.Failed, ev.Phase)
+	assert.ErrorContains(t, ev.Err, `unknown lint definition "nope"`)
+}
+
+func TestDownload_ActionRef_UnknownAction(t *testing.T) {
+	events, err := download.Download(config.Config{}, t.TempDir(), download.Ref{Category: "actions", ID: "nope"})
+	require.NoError(t, err)
+	ev := <-events
+	assert.Equal(t, download.Failed, ev.Phase)
+	assert.ErrorContains(t, ev.Err, `unknown action "nope"`)
+}
+
+// TestDownload_ActionRef_NoRuntime_Cached covers an action with no runtime: field at all -- real
+// catalog data has actions like go-mod-tidy that shell out directly, needing nothing fetched.
+func TestDownload_ActionRef_NoRuntime_Cached(t *testing.T) {
+	cfg := config.Config{
+		Actions: config.CategoryConfig[config.Action]{
+			Definitions: map[string]config.Action{"go-mod-tidy": {ID: "go-mod-tidy"}},
+		},
+	}
+	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "actions", ID: "go-mod-tidy"})
+	require.NoError(t, err)
+	ev := <-events
+	assert.Equal(t, download.Cached, ev.Phase)
+}
+
+// TestDownload_ActionRef_ExpandsToRuntime covers an action that DOES name a runtime -- expanded
+// into a "runtimes" fetch (a system_version runtime, so this needs no network to prove the
+// expansion happens).
+func TestDownload_ActionRef_ExpandsToRuntime(t *testing.T) {
+	cfg := config.Config{
+		Actions: config.CategoryConfig[config.Action]{
+			Definitions: map[string]config.Action{"commitlint": {ID: "commitlint", Runtime: "node"}},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{"node": {Type: "node", SystemVersion: ">=18.0.0"}},
+		},
+	}
+	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "actions", ID: "commitlint"})
+	require.NoError(t, err)
+	ev := <-events
+	assert.Equal(t, download.Cached, ev.Phase, "expanded into the runtime's own fetch, which is Cached for system_version")
+}
+
+func TestDownload_ToolRef_UnknownDownloadRecipe(t *testing.T) {
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"foo": {Name: "foo", Download: "missing-recipe", KnownGoodVersion: "1.0.0"}},
+	}
+	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "tools", ID: "foo"})
+	require.NoError(t, err)
+	ev := <-events
+	assert.Equal(t, download.Failed, ev.Phase)
+	assert.ErrorContains(t, ev.Err, `no download recipe "missing-recipe"`)
+}
+
+func TestDownload_ToolRef_RuntimePackage_UnknownRuntime(t *testing.T) {
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"black": {Name: "black", Runtime: "missing-runtime", Package: "black", KnownGoodVersion: "1.0.0"}},
+	}
+	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "tools", ID: "black"})
+	require.NoError(t, err)
+	ev := <-events
+	assert.Equal(t, download.Failed, ev.Phase)
+	assert.ErrorContains(t, ev.Err, `no runtime "missing-runtime"`)
+}
+
+// TestDownload_AllRefs_DefaultsToEveryToolAndRuntime covers Download()'s empty-refs default path
+// (bare `rtunk download`): every tool and runtime in cfg, pre-cached here so this needs no network.
+func TestDownload_AllRefs_DefaultsToEveryToolAndRuntime(t *testing.T) {
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"actionlint": {Name: "actionlint", KnownGoodVersion: "1.0.0"},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"python": {Type: "python", SystemVersion: ">=3.11.0"},
+			},
+		},
+	}
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(download.InstallDir(root, "tools", "actionlint", "1.0.0"), 0o755))
+
+	events, err := download.Download(cfg, cacheDir)
+	require.NoError(t, err)
+
+	seen := map[download.Ref]download.Phase{}
+	for ev := range events {
+		require.NoError(t, ev.Err, "event: %+v", ev)
+		seen[ev.Ref] = ev.Phase
+	}
+	assert.Equal(t, download.Cached, seen[download.Ref{Category: "tools", ID: "actionlint"}],
+		"the pre-cached tool must be fetched by default, not just an explicitly-named ref")
+	assert.Equal(t, download.Cached, seen[download.Ref{Category: "runtimes", ID: "python"}],
+		"the system_version runtime must be fetched by default too")
+}
