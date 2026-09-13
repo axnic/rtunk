@@ -138,6 +138,14 @@ func main() {
 		for _, f := range args[1:] {
 			os.WriteFile(f, []byte("formatted\n"), 0o644)
 		}
+	case "rewrite2":
+		// Same idea as "rewrite" but writes different content -- lets a test give two separate
+		// commands on the same linter each genuinely change the same file (rather than one
+		// command's rewrite being a no-op on top of the other's), so ChangedFiles' dedup logic
+		// has a real duplicate to collapse instead of a vacuous one.
+		for _, f := range args[1:] {
+			os.WriteFile(f, []byte("formatted2\n"), 0o644)
+		}
 	case "rawtext":
 		// Stands in for a real tool's native (non-SARIF) output -- e.g. trufflehog's own NDJSON --
 		// that Command.Parser.Run converts into SARIF via the stdin/stdout pipe (see "sarifconvert"
@@ -1502,7 +1510,7 @@ func TestRun_ChangedFilesDeduplicatedWithinOneLinter(t *testing.T) {
 								SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
 							},
 							{
-								Name: "format2", Run: "faketool rewrite ${target}", Output: "rewrite",
+								Name: "format2", Run: "faketool rewrite2 ${target}", Output: "rewrite",
 								SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
 							},
 						},
