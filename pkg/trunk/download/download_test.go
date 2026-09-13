@@ -263,6 +263,48 @@ chmod +x "$3/node_modules/.bin/eslint"
 	assert.Equal(t, "ran-eslint\n", string(out))
 }
 
+// TestInstallPackagesFile_Node_NodeModulesBin drives InstallPackagesFile with a stub npm that
+// lays its installed binary out at node_modules/.bin/<name> -- the same real layout
+// installNodePackage's own test (TestDownload_ToolRuntimePackage_NodeModulesBin) already pins
+// down for a named-package install; this is the packages_file (manifest) equivalent.
+func TestInstallPackagesFile_Node_NodeModulesBin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("npm stub is a POSIX shell script")
+	}
+
+	runtimeDir := t.TempDir()
+	npmScript := `#!/bin/sh
+mkdir -p node_modules/.bin
+cat > node_modules/.bin/commitlint <<'EOS'
+#!/bin/sh
+echo ran-commitlint
+EOS
+chmod +x node_modules/.bin/commitlint
+`
+	require.NoError(t, os.MkdirAll(filepath.Join(runtimeDir, "bin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "bin", "npm"), []byte(npmScript), 0o755))
+
+	packagesFile := filepath.Join(t.TempDir(), "package.json")
+	require.NoError(t, os.WriteFile(packagesFile, []byte(`{"dependencies":{"@commitlint/cli":"^19.0"}}`), 0o644))
+
+	pkgInstallDir := filepath.Join(t.TempDir(), "install")
+	rt := config.Runtime{Type: "node"}
+	err := download.InstallPackagesFile(rt, runtimeDir, pkgInstallDir, packagesFile)
+	require.NoError(t, err)
+
+	shimTarget := filepath.Join(pkgInstallDir, "node_modules", ".bin", "commitlint")
+	require.FileExists(t, shimTarget)
+	out, err := exec.Command(shimTarget).CombinedOutput()
+	require.NoError(t, err, "output: %s", out)
+	assert.Equal(t, "ran-commitlint\n", string(out))
+}
+
+func TestInstallPackagesFile_UnsupportedRuntime(t *testing.T) {
+	err := download.InstallPackagesFile(config.Runtime{Type: "python"}, t.TempDir(), t.TempDir(), "package.json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `packages_file install not yet supported for runtime "python"`)
+}
+
 // pythonToolConfig builds a runtime+package "tools" config: a "python" runtime fetched from srv
 // (a tar.gz containing a stub bin/pip) and a "black" tool installed through it -- the shape
 // TestDownload_ToolRuntimePackage_PythonPythonPath exercises end to end.

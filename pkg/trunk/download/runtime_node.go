@@ -39,3 +39,40 @@ func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	}
 	return finalizeInstall(tmpDir, pkgInstallDir)
 }
+
+// installNodePackagesFile runs a bare `npm install` (no package arg) with packagesFilePath copied
+// into the scratch dir as ./package.json first, so npm reads it from its own cwd and installs into
+// ./node_modules there -- unlike installNodePackage's `--prefix`, there is no single pkg@version to
+// pass on the command line. Same scratch-dir-then-finalizeInstall shape (see installNodePackage's
+// own comment for why: a failed/killed npm install must never leave pkgInstallDir looking cached).
+func installNodePackagesFile(runtimeInstallDir, pkgInstallDir, packagesFilePath string) error {
+	npm := filepath.Join(runtimeInstallDir, "bin", "npm")
+	if _, err := os.Stat(npm); err != nil {
+		return fmt.Errorf("download: npm not found at %s: %w", npm, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o755); err != nil {
+		return err
+	}
+	tmpDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	data, err := os.ReadFile(packagesFilePath)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), data, 0o644); err != nil {
+		return err
+	}
+
+	cmd := exec.Command(npm, "install")
+	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("download: npm install (packages_file %s): %w: %s", packagesFilePath, err, out)
+	}
+	return finalizeInstall(tmpDir, pkgInstallDir)
+}

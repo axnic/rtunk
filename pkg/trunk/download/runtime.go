@@ -31,6 +31,22 @@ func InstallPackage(rt config.Runtime, runtimeInstallDir, pkgInstallDir, pkg, ve
 	}
 }
 
+// InstallPackagesFile installs every dependency named in the manifest at packagesFilePath through
+// rt's own package manager into pkgInstallDir. Unlike InstallPackage (a single pkg@version), there
+// is no version to key the install on -- the caller picks pkgInstallDir (pkg/trunk/actions keys it
+// by the manifest's own content hash). Node-only: the real trunk-io/plugins catalog has exactly
+// one action needing this (actions/commitlint/plugin.yaml's packages_file: package.json); every
+// other runtime type explicitly errors rather than guessing, matching InstallPackage's own
+// per-type dispatch above.
+func InstallPackagesFile(rt config.Runtime, runtimeInstallDir, pkgInstallDir, packagesFilePath string) error {
+	switch rt.Type {
+	case "node":
+		return installNodePackagesFile(runtimeInstallDir, pkgInstallDir, packagesFilePath)
+	default:
+		return fmt.Errorf("download: packages_file install not yet supported for runtime %q", rt.Type)
+	}
+}
+
 // ExtraToolEnv returns environment a runtime+package tool's shim needs beyond what the plugin's
 // own runtime_environment/linter_environment config provides. Most runtimes need nothing extra
 // (their install layout already matches what the plugin config assumes); python is the one
