@@ -99,14 +99,28 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 // --fix's earlier formatter pass, which differ only in which of findings/changed the caller goes
 // on to use (the other is simply empty: a Formatter command has no Findings to report, and a
 // non-Formatter one has no ChangedFiles).
+//
+// changed is deduplicated here, in the aggregator, before it's returned: Event.ChangedFiles is
+// only deduplicated within a single linter's own Done event, so two different linters (e.g.
+// prettier and markdownlint both formatting the same .md file -- a real, reachable case in this
+// repo's own trunk.yaml) can each report the same path changed. Deduping at the point where
+// changed is assembled, rather than in whichever printer happens to consume it, means every
+// future consumer of this return value (a --json mode, an exit-code counter, a future fmt
+// --check) inherits the guarantee instead of having to re-implement it.
 func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (findings []output.Finding, changed []string, skipped []string, failed error) {
 	skippedLinters := map[string]bool{}
+	seenChanged := map[string]bool{}
 	for ev := range events {
 		printFn(ev)
 		switch ev.Phase {
 		case engine.Done:
 			findings = append(findings, ev.Findings...)
-			changed = append(changed, ev.ChangedFiles...)
+			for _, f := range ev.ChangedFiles {
+				if !seenChanged[f] {
+					seenChanged[f] = true
+					changed = append(changed, f)
+				}
+			}
 		case engine.Skipped:
 			// Dedupe by linter: a linter with several unsupported commands emits one Skipped
 			// event per command, but the report should name it once, not once per command.
@@ -190,22 +204,12 @@ func printReport(w io.Writer, findings []output.Finding, skipped []string) {
 }
 
 // printFmtReport is printReport's fmt/--fix-pass equivalent: lists which files were actually
-// changed (sorted, deduplicated), then a trailing summary line, mirroring printReport's own shape
-// (one line per item, then a blank line, then the summary) so the two report kinds read
-// consistently. Deduplication matters here specifically: Event.ChangedFiles is only deduplicated
-// within a single linter's own Done event, so two different linters (e.g. prettier and
-// markdownlint both formatting the same .md file) can each report the same path -- changed here
-// is the aggregate across every linter's events, so it must be deduplicated again before it's
-// counted or printed, or the same file would be listed twice and double-counted in the summary.
+// changed (sorted), then a trailing summary line, mirroring printReport's own shape (one line per
+// item, then a blank line, then the summary) so the two report kinds read consistently. changed is
+// expected to already be deduplicated by its producer (drainRunEvents) -- see that function's doc
+// comment for why the dedup lives there rather than here.
 func printFmtReport(w io.Writer, changed []string, skipped []string) {
-	seen := map[string]bool{}
-	sorted := make([]string, 0, len(changed))
-	for _, f := range changed {
-		if !seen[f] {
-			seen[f] = true
-			sorted = append(sorted, f)
-		}
-	}
+	sorted := append([]string(nil), changed...)
 	sort.Strings(sorted)
 	for _, f := range sorted {
 		fmt.Fprintln(w, f)
