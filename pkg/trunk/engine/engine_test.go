@@ -1865,3 +1865,62 @@ func TestRun_DryRunNeverWritesRealFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "messy\n", string(data), "DryRun must NEVER write to the real file, even though ChangedFiles reports a change")
 }
+
+// TestRun_NonDryRunInPlaceStillWritesRealFile is TestRun_DryRunNeverWritesRealFile's own
+// counterpart: it proves the "j.dryRun &&" half of runBatch's sandboxType guard actually matters
+// -- without it, every InPlace command would always run sandboxed and rtunk fmt would silently
+// become a permanent no-op that never writes anything real. DryRun is left at its zero value
+// (false) deliberately, to also cover the case where a caller simply omits the field.
+func TestRun_NonDryRunInPlaceStillWritesRealFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "messy.txt")
+	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakefmt": {
+						Name: "fakefmt", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakefmt" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Equal(t, []string{"messy.txt"}, got.ChangedFiles, "a real run must still correctly report what changed")
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "formatted\n", string(data), "a non-DryRun InPlace command must actually write the real file")
+}

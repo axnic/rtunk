@@ -467,6 +467,19 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	// skip in buildJobs) so the real file is never touched, while ChangedFiles (computed below via
 	// the exact same before/after hash comparison a real run already uses) still reports what
 	// would have changed.
+	//
+	// Known limitation: copy_targets stages only the batch's own target files, not any ancestor
+	// config file a real formatter discovers by walking up from its own cwd (e.g. prettier's
+	// .prettierrc, black's pyproject.toml, rustfmt's rustfmt.toml). A dry run's cwd is the isolated
+	// sandbox directory, with no ancestor chain back to the real repo -- a config-driven formatter
+	// could silently fall back to default settings here while the real (non-dry-run) passes, whose
+	// cwd is the true resolvedDir, correctly find the project's real config. For a formatter whose
+	// real config differs meaningfully from its defaults, this can make a dry-run check report "would
+	// still change" even when a real second pass would not. gofmt-style config-free formatters are
+	// unaffected. This is a known, disclosed tradeoff of reusing copy_targets rather than a new
+	// architecture decision made here -- a real fix would need to either stage the ancestor
+	// directory chain too, or keep cwd at the real resolvedDir while redirecting only the actual
+	// read/write target to a shadow file, both real design changes beyond this feature's scope.
 	sandboxType := j.cmd.SandboxType
 	if j.dryRun && j.cmd.InPlace {
 		sandboxType = "copy_targets"
