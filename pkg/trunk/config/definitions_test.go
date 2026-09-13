@@ -39,3 +39,24 @@ downloads:
 	assert.Equal(t, config.OSSpec{"macos": "macos"}, d.Downloads[1].OS)
 	assert.Equal(t, config.OSSpec{"x86_64": "x86_64"}, d.Downloads[1].CPU)
 }
+
+// TestCommand_Enabled checks that an absent yaml "enabled:" key decodes to nil (a command is on
+// by default), while an explicit "enabled: false" decodes to a non-nil false -- real catalog data
+// (ruff's own "format" command) relies on distinguishing "not specified" from "explicitly off".
+func TestCommand_Enabled(t *testing.T) {
+	var withDefault config.Command
+	require.NoError(t, yaml.Unmarshal([]byte(`
+name: format
+run: echo hi
+`), &withDefault))
+	assert.Nil(t, withDefault.Enabled, "no enabled: key at all must default to on (nil), not false")
+
+	var explicitOff config.Command
+	require.NoError(t, yaml.Unmarshal([]byte(`
+name: format
+run: echo hi
+enabled: false
+`), &explicitOff))
+	require.NotNil(t, explicitOff.Enabled)
+	assert.False(t, *explicitOff.Enabled)
+}

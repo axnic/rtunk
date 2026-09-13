@@ -131,6 +131,13 @@ func main() {
 			results = append(results, "{\"ruleId\":\"fake-rule\",\"level\":\"error\",\"message\":{\"text\":\"fake finding\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\""+abs+"\"},\"region\":{\"startLine\":1}}}]}")
 		}
 		fmt.Print("{\"runs\":[{\"results\":[" + strings.Join(results, ",") + "]}]}")
+	case "rewrite":
+		// Simulates a real in-place formatter (gofmt -w): overwrites each target file with fixed
+		// content, so a test can prove InPlace hashing detects a genuine content change on one
+		// file while correctly excluding another whose content was already identical.
+		for _, f := range args[1:] {
+			os.WriteFile(f, []byte("formatted\n"), 0o644)
+		}
 	case "rawtext":
 		// Stands in for a real tool's native (non-SARIF) output -- e.g. trufflehog's own NDJSON --
 		// that Command.Parser.Run converts into SARIF via the stdin/stdout pipe (see "sarifconvert"
@@ -1254,4 +1261,149 @@ func TestRun_ParserNotInvokedOnEmptyOutput(t *testing.T) {
 	}
 	assert.Equal(t, Done, got.Phase, "the parser must never run on empty output, or a script that rejects empty stdin would spuriously fail a clean run")
 	assert.Empty(t, got.Findings)
+}
+
+// TestRun_InPlaceReportsOnlyGenuinelyChangedFiles proves ChangedFiles reflects a real content
+// difference, not just "the command ran" -- one file already has the formatter's target content
+// (untouched by the rewrite), the other doesn't (genuinely rewritten).
+func TestRun_InPlaceReportsOnlyGenuinelyChangedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	alreadyFormatted := filepath.Join(repoRoot, "already.txt")
+	messy := filepath.Join(repoRoot, "messy.txt")
+	require.NoError(t, os.WriteFile(alreadyFormatted, []byte("formatted\n"), 0o644))
+	require.NoError(t, os.WriteFile(messy, []byte("messy\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakefmt": {
+						Name: "fakefmt", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakefmt" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Empty(t, got.Findings, "a rewrite/shfmt command has nothing to parse")
+	assert.Equal(t, []string{"messy.txt"}, got.ChangedFiles,
+		"only the file whose content genuinely differs before/after must be reported changed")
+}
+
+// TestRun_InPlaceWithSandboxIsSkipped covers the new explicit skip: no real catalog formatter
+// combines InPlace with SandboxType (a sandboxed write would be silently lost), so this project
+// rejects the combination outright rather than silently discarding a fix.
+func TestRun_InPlaceWithSandboxIsSkipped(t *testing.T) {
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakebadfmt": {
+						Name: "fakebadfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							InPlace: true, SandboxType: "copy_targets",
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return true })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		got = ev
+	}
+	assert.Equal(t, Skipped, got.Phase)
+	assert.Contains(t, got.Note, "sandbox_type is unsupported")
+}
+
+// TestRun_DisabledCommandIsSkipped covers Command.Enabled: false -- real catalog example: ruff's
+// own "format" command defaults off since ruff-format competes with black.
+func TestRun_DisabledCommandIsSkipped(t *testing.T) {
+	disabled := false
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakedisabled": {
+						Name: "fakedisabled", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							InPlace: true, Enabled: &disabled,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return true })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		got = ev
+	}
+	assert.Equal(t, Skipped, got.Phase)
+	assert.Equal(t, "disabled by its own plugin source", got.Note)
+}
+
+func TestHashFiles_DetectsContentChange(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one"), 0o644))
+	before := hashFiles(dir, []string{"a.txt", "missing.txt"})
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two"), 0o644))
+	after := hashFiles(dir, []string{"a.txt", "missing.txt"})
+
+	assert.NotEqual(t, before["a.txt"], after["a.txt"])
+	_, missingBefore := before["missing.txt"]
+	_, missingAfter := after["missing.txt"]
+	assert.False(t, missingBefore, "a file that never existed must be absent from the result, not zero-valued")
+	assert.False(t, missingAfter)
+}
+
+func TestRemapPaths(t *testing.T) {
+	assert.Equal(t, []string{"sub/a.txt"}, remapPaths([]string{"a.txt"}, "/repo/sub", "/repo"))
+	assert.Equal(t, []string{"a.txt"}, remapPaths([]string{"a.txt"}, "/repo", "/repo"),
+		"same base and repoRoot is a no-op, matching security.RemapFindings' own guard")
 }

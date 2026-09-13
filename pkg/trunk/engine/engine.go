@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -42,12 +43,13 @@ const (
 // invocation (per batch, or per file for a non-Batch command), followed by exactly one terminal
 // event (Done, Skipped, or Failed).
 type Event struct {
-	Linter   string
-	Phase    Phase
-	Findings []output.Finding // Done only
-	Note     string           // Skipped (why) or Failed (which command)
-	Err      error            // Failed only
-	File     string           // Running only -- the file (or comma-joined batch) about to be checked
+	Linter       string
+	Phase        Phase
+	Findings     []output.Finding // Done only
+	ChangedFiles []string         // Done only, InPlace commands only -- repoRoot-relative paths this linter actually rewrote (content differed before/after)
+	Note         string           // Skipped (why) or Failed (which command)
+	Err          error            // Failed only
+	File         string           // Running only -- the file (or comma-joined batch) about to be checked
 }
 
 // templateVarRE matches every ${...} placeholder in a Command.Run string.
@@ -62,6 +64,10 @@ var supportedOutputFormats = map[string]bool{
 	"actionlint": true, "bandit": true, "buildifier": true, "cfnlint": true,
 	"eslint": true, "hadolint": true, "haml_lint": true, "markdownlint": true,
 	"pylint": true, "rubocop": true, "stylelint": true, "taplo": true, "regex": true,
+	// rewrite/shfmt: real catalog formatter commands (gofmt, black, rustfmt, isort, autopep8,
+	// rubocop's fix-layout, stylelint's fix) with nothing to parse -- success is decided purely
+	// by ErrorCodes; the caller learns what changed via Event.ChangedFiles instead.
+	"rewrite": true, "shfmt": true,
 }
 
 // job is one command invocation queued for a worker: one batch (all matched files, for a Batch
@@ -92,6 +98,7 @@ type linterState struct {
 	mu           sync.Mutex
 	remaining    int
 	findings     []output.Finding
+	changedFiles []string
 	terminalSent bool
 	failed       bool // once true, workers skip any not-yet-started job for this linter
 }
@@ -110,16 +117,12 @@ type linterState struct {
 // silently-closed channel, and every event send blocks until read; an abandoned, undrained
 // channel leaks the producer goroutine and any worker still mid-send.
 //
-// include selects which of a linter's commands are runnable -- pkg/trunk/check passes
-// `func(c config.Command) bool { return !c.Formatter }`; a future pkg/trunk/fmt would pass the
-// complement, but that alone is not enough to make fmt a thin sibling the way this doc used to
-// imply: the predicate only decides which commands are considered, while everything downstream of
-// it -- supportedOutputFormats, the Output-format dispatch switch, Event.Findings' []output.Finding
-// shape -- is still shaped around "check" reporting. A real formatter command (Output: "rewrite" or
-// "shfmt" in the real trunk-io catalog, InPlace: true) has neither a supported Output value here
-// nor any notion of "reformatted successfully" to report. What this package genuinely gives a
-// future fmt package is the job queue, RunFrom/SandboxType resolution, and file matching; the
-// output/reporting half remains fmt's own work.
+// include selects which of a linter's commands are runnable -- internal/cli's check command
+// passes `func(c config.Command) bool { return !c.Formatter }`, its fmt command passes the
+// complement. A Formatter command (Output: "rewrite" or "shfmt" in the real trunk-io catalog,
+// InPlace: true) reports via Event.ChangedFiles (a before/after content-hash comparison per file,
+// see runBatch) rather than Event.Findings -- there is nothing to parse; success is decided
+// purely by ErrorCodes, same as any other command.
 //
 // env.Concurrency workers (at least 1) run the queued command invocations in parallel; the queue
 // itself is built sequentially and in a fixed order -- linters sorted by name, each linter's own
@@ -229,6 +232,10 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		if !include(cmd) {
 			continue
 		}
+		if cmd.Enabled != nil && !*cmd.Enabled {
+			events <- Event{Linter: name, Phase: Skipped, Note: "disabled by its own plugin source"}
+			continue
+		}
 		if v, ok := findUnsupportedVar(cmd.Run); ok {
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q", v)}
 			continue
@@ -257,6 +264,10 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			parserPathEnv = dir
 		}
 
+		if cmd.InPlace && cmd.SandboxType != "" {
+			events <- Event{Linter: name, Phase: Skipped, Note: "in_place command combined with sandbox_type is unsupported (writes would be lost)"}
+			continue
+		}
 		if cmd.SandboxType != "" && cmd.SandboxType != "copy_targets" && cmd.SandboxType != "expanded" {
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported sandbox_type %q", cmd.SandboxType)}
 			continue
@@ -396,7 +407,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, eve
 	state.mu.Unlock()
 
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
-	findings, err := runBatch(ctx, j, repoRoot)
+	findings, changedFiles, err := runBatch(ctx, j, repoRoot)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -413,9 +424,10 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, eve
 	}
 
 	state.findings = append(state.findings, findings...)
+	state.changedFiles = append(state.changedFiles, changedFiles...)
 	if state.remaining == 0 {
 		state.terminalSent = true
-		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings}
+		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings, ChangedFiles: state.changedFiles}
 	}
 }
 
@@ -424,8 +436,10 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, eve
 // invocation actually runs against a temporary staged copy (see security.StageSandbox); the
 // parser only ever sees paths relative to j.resolvedDir, exactly as when no sandboxing is
 // involved -- security.RemapFindings is what turns those back into repoRoot-relative paths either
-// way.
-func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, error) {
+// way. The second return value is the repoRoot-relative subset of j.batch this command actually
+// changed on disk (InPlace commands only, via hashFiles' before/after comparison) -- always nil
+// for a non-InPlace command.
+func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, []string, error) {
 	workDir := j.resolvedDir
 	if j.cmd.SandboxType != "" {
 		sandboxDir, cleanup, err := security.StageSandbox(j.cmd.SandboxType, j.resolvedDir, j.batch)
@@ -433,7 +447,7 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 			defer cleanup()
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		workDir = sandboxDir
 	}
@@ -441,9 +455,14 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 	pluginDir := j.linter.SourceRoot
 	cwdDir := filepath.Join(j.linter.SourceRoot, j.linter.SourceDir)
 
+	var beforeHashes map[string][32]byte
+	if j.cmd.InPlace {
+		beforeHashes = hashFiles(workDir, j.batch)
+	}
+
 	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if containsInt(j.cmd.ErrorCodes, exitCode) {
 		msg := strings.TrimSpace(out)
@@ -454,7 +473,18 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 				msg += "\n" + errText
 			}
 		}
-		return nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
+		return nil, nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
+	}
+
+	var changedFiles []string
+	if j.cmd.InPlace {
+		afterHashes := hashFiles(workDir, j.batch)
+		for _, f := range j.batch {
+			if beforeHashes[f] != afterHashes[f] {
+				changedFiles = append(changedFiles, f)
+			}
+		}
+		changedFiles = remapPaths(changedFiles, workDir, repoRoot)
 	}
 
 	// A Parser converts the real command's raw output into cmd.Output's expected shape (almost
@@ -467,7 +497,7 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 	if j.cmd.Parser != nil && strings.TrimSpace(out) != "" {
 		converted, err := runParser(ctx, j.cmd.Parser, workDir, j.parserPathEnv, out, j.batch, pluginDir, cwdDir)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = converted
 	}
@@ -483,13 +513,15 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 	// (e.g. markdownlint), or when an OS/version-gated command variant of the same linter
 	// silently produces nothing on this platform (a known, separate architectural gap -- out of
 	// scope here) -- either way, empty output means zero findings, not a parse failure. "pass_fail"
-	// never parses JSON (exit-code only) and "regex" (output.ParseFromRegex) already tolerates
-	// empty input (zero regex matches), so both are excluded from this guard.
-	isJSONFormat := j.cmd.Output != "pass_fail" && j.cmd.Output != "regex"
+	// never parses JSON (exit-code only), "regex" (output.ParseFromRegex) already tolerates empty
+	// input (zero regex matches), and "rewrite"/"shfmt" never parse anything at all -- all four are
+	// excluded from this guard.
+	isJSONFormat := j.cmd.Output != "pass_fail" && j.cmd.Output != "regex" &&
+		j.cmd.Output != "rewrite" && j.cmd.Output != "shfmt"
 	if isJSONFormat && strings.TrimSpace(out) == "" {
 		security.RemapFindings(findings, j.resolvedDir, repoRoot)
 		output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
-		return findings, nil
+		return findings, changedFiles, nil
 	}
 
 	switch j.cmd.Output {
@@ -527,9 +559,12 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 		findings, err = output.ParseTaplo([]byte(out), j.linterName)
 	case "regex":
 		findings, err = output.ParseFromRegex(j.cmd.ParseRegex, []byte(out), j.linterName)
+	case "rewrite", "shfmt":
+		// No structured output to parse -- success is already decided by the ErrorCodes check
+		// above; the caller learns what changed via changedFiles (populated above) instead.
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if workDir != j.resolvedDir {
 		// workDir is a sandbox mirroring j.resolvedDir's structure. Most tools echo back the
@@ -562,7 +597,7 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 	}
 	security.RemapFindings(findings, j.resolvedDir, repoRoot)
 	output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
-	return findings, nil
+	return findings, changedFiles, nil
 }
 
 func containsInt(codes []int, code int) bool {
@@ -572,6 +607,44 @@ func containsInt(codes []int, code int) bool {
 		}
 	}
 	return false
+}
+
+// hashFiles returns each file's (dir-joined) SHA-256 content hash, keyed by its own entry in
+// files -- a missing file (deleted, or never existed) is simply absent from the result, so
+// comparing a before/after pair naturally treats "existed then, gone now" (and vice versa) as
+// changed, the same as any other content difference, with no special-casing needed.
+func hashFiles(dir string, files []string) map[string][32]byte {
+	hashes := make(map[string][32]byte, len(files))
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			continue
+		}
+		hashes[f] = sha256.Sum256(data)
+	}
+	return hashes
+}
+
+// remapPaths is security.RemapFindings' own base/repoRoot remap logic, for a plain list of
+// dir-relative paths instead of []output.Finding -- used for Event.ChangedFiles, which has no
+// Finding struct to carry a File field.
+func remapPaths(paths []string, base, repoRoot string) []string {
+	if base == repoRoot || len(paths) == 0 {
+		return paths
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(base, p)
+		}
+		if rel, err := filepath.Rel(repoRoot, abs); err == nil {
+			out[i] = rel
+		} else {
+			out[i] = p
+		}
+	}
+	return out
 }
 
 // resolveShimDirs resolves (downloading first if not already cached) every tool id's shim, and

@@ -126,6 +126,13 @@ type Command struct {
 	Version        string  `yaml:"version,omitempty"`
 	InPlace        bool    `yaml:"in_place,omitempty"`
 	Formatter      bool    `yaml:"formatter,omitempty"`
+	// Enabled defaults a command on (nil) or explicitly off (real catalog example: ruff's own
+	// "format" command sets false, since ruff-format competes with black) -- distinct from
+	// Linter-level enable/disable (trunk.yaml's lint.enabled: list), which this field does not
+	// touch. rtunk has no trunk.yaml-level override for a single command's own Enabled today
+	// (a real gap, deliberately out of scope); this field only ever reflects what the plugin
+	// source's own catalog data says.
+	Enabled        *bool   `yaml:"enabled,omitempty"`
 	Parser         *Parser `yaml:"parser,omitempty"`
 }
 
