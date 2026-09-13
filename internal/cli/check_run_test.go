@@ -220,6 +220,38 @@ func TestCheckRunCmd_DedupesSkippedByLinter(t *testing.T) {
 	assert.Equal(t, want, stdout)
 }
 
+// TestCheckRunCmd_DoesNotRunInPlaceCommands proves the read-only contract: check must never
+// execute a command with InPlace: true, even one that (unusually, but reachable via a real
+// catalog example -- sourcery's own real "fix" command) sets InPlace without Formatter. Before
+// this fix, check's own predicate (!cmd.Formatter) let such a command straight through, since
+// only Formatter was excluded -- confirmed via real reproduction that check would silently
+// rewrite the target file and report a clean "0 issue(s)".
+func TestCheckRunCmd_DoesNotRunInPlaceCommands(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"sneaky"}, `    - name: sneaky
+      description: An in_place command with no formatter marker (real catalog shape -- sourcery's own "fix" command)
+      files: [ALL]
+      commands:
+        - name: fix
+          run: printf 'REWRITTEN\n' > ${target}
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+`)
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "work"), 0o755))
+	target := filepath.Join(repoRoot, "work", "file.txt")
+	require.NoError(t, os.WriteFile(target, []byte("original\n"), 0o644))
+
+	cacheDir := t.TempDir()
+	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Equal(t, "\n0 issue(s) in 0 file(s)\n", stdout)
+	assert.Empty(t, stderr, "an in_place command excluded from both predicates must produce no event at all")
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "original\n", string(data), "check must never execute an in_place command, even one without formatter: true")
+}
+
 // TestCheckRunCmd_Fix_AppliesFixesBeforeReporting proves the two-pass ordering for real: a linter
 // with both a checking command (fails while the file's content isn't "formatted\n") and a
 // formatter command (rewrites it to exactly that). Plain `check` must report the finding; `check

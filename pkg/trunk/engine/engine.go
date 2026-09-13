@@ -187,6 +187,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 		}
 		close(jobCh)
 
+		var inPlaceMu sync.Mutex
 		var wg sync.WaitGroup
 		for i := 0; i < concurrency; i++ {
 			wg.Add(1)
@@ -196,7 +197,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 					if ctx.Err() != nil {
 						return
 					}
-					runJob(ctx, j, states[j.linterName], repoRoot, events)
+					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, events)
 				}
 			}()
 		}
@@ -242,6 +243,10 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		}
 		if !supportedOutputFormats[cmd.Output] {
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported output format %q", cmd.Output)}
+			continue
+		}
+		if cmd.Formatter && !cmd.InPlace && (cmd.Output == "rewrite" || cmd.Output == "shfmt") {
+			events <- Event{Linter: name, Phase: Skipped, Note: "formatter without in_place has no supported effect (stdin/stdout-based formatters are unsupported)"}
 			continue
 		}
 
@@ -398,7 +403,7 @@ func findUnsupportedParserVar(run string) (string, bool) {
 // marks the linter failed (any of its not-yet-started jobs are then skipped, best-effort: a job
 // already picked up by a worker still runs to completion), and the linter's single terminal event
 // fires exactly once, the moment its last job finishes.
-func runJob(ctx context.Context, j job, state *linterState, repoRoot string, events chan<- Event) {
+func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inPlaceMu *sync.Mutex, events chan<- Event) {
 	state.mu.Lock()
 	if state.failed {
 		state.mu.Unlock()
@@ -407,7 +412,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, eve
 	state.mu.Unlock()
 
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
-	findings, changedFiles, err := runBatch(ctx, j, repoRoot)
+	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu)
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -438,8 +443,10 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, eve
 // involved -- security.RemapFindings is what turns those back into repoRoot-relative paths either
 // way. The second return value is the repoRoot-relative subset of j.batch this command actually
 // changed on disk (InPlace commands only, via hashFiles' before/after comparison) -- always nil
-// for a non-InPlace command.
-func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, []string, error) {
+// for a non-InPlace command. inPlaceMu serializes every InPlace invocation across the whole run
+// (see the lock acquired below) so two of them can never interleave their before-hash/invoke/
+// after-hash cycle over the same file.
+func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex) ([]output.Finding, []string, error) {
 	workDir := j.resolvedDir
 	if j.cmd.SandboxType != "" {
 		sandboxDir, cleanup, err := security.StageSandbox(j.cmd.SandboxType, j.resolvedDir, j.batch)
@@ -450,6 +457,18 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, []
 			return nil, nil, err
 		}
 		workDir = sandboxDir
+	}
+
+	// Two InPlace commands (same or different linters) touching overlapping files must not
+	// interleave their before-hash/invoke/after-hash cycle, or one's write can silently clobber
+	// or be clobbered by the other's -- confirmed by real reproduction (25 runs, 5 lost a
+	// formatter's write entirely) with two concurrent InPlace commands over the same file.
+	// Serializing every InPlace invocation (not just per-file) is the simplest correct fix; a
+	// per-path lock is the natural upgrade if this measurably limits throughput on a large
+	// in_place run.
+	if j.cmd.InPlace {
+		inPlaceMu.Lock()
+		defer inPlaceMu.Unlock()
 	}
 
 	pluginDir := j.linter.SourceRoot
@@ -465,6 +484,23 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, []
 		return nil, nil, err
 	}
 	if containsInt(j.cmd.ErrorCodes, exitCode) {
+		msg := strings.TrimSpace(out)
+		if errText := strings.TrimSpace(stderr); errText != "" {
+			if msg == "" {
+				msg = errText
+			} else {
+				msg += "\n" + errText
+			}
+		}
+		return nil, nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
+	}
+
+	// Real catalog formatters specify SuccessCodes, not ErrorCodes -- without this, an exit code
+	// outside a rewrite/shfmt command's own SuccessCodes fell through as a clean success with the
+	// failure completely swallowed (stderr included). Other Output formats already have their own
+	// separate failure signal (pass_fail turns a nonzero exit into a finding; sarif/json formats
+	// fail to parse on garbage output), so this is scoped to rewrite/shfmt only.
+	if (j.cmd.Output == "rewrite" || j.cmd.Output == "shfmt") && len(j.cmd.SuccessCodes) > 0 && !containsInt(j.cmd.SuccessCodes, exitCode) {
 		msg := strings.TrimSpace(out)
 		if errText := strings.TrimSpace(stderr); errText != "" {
 			if msg == "" {

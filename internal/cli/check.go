@@ -75,7 +75,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		printFmtReport(stdout, changed, fixSkipped)
 	}
 
-	events, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return !cmd.Formatter })
+	events, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace })
 	if err != nil {
 		return err
 	}

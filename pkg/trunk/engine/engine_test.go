@@ -91,6 +91,21 @@ func main() {
 		fmt.Print("{\"runs\":[{\"results\":[]}]}")
 	case "sleep":
 		time.Sleep(250 * time.Millisecond)
+	case "sleepwrite":
+		// Stands in for two concurrent in_place formatters racing the same file: records an
+		// "enter"/"exit" pair (with a deliberate sleep between them) to args[1] (a shared probe
+		// log file), so a test can assert no two invocations' [enter,exit] windows overlap --
+		// proving real serialization, not just "the final file content happens to look right."
+		probePath := args[1]
+		target := args[2]
+		f, _ := os.OpenFile(probePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f.WriteString("enter\n")
+		f.Close()
+		time.Sleep(100 * time.Millisecond)
+		os.WriteFile(target, []byte("done\n"), 0o644)
+		f2, _ := os.OpenFile(probePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f2.WriteString("exit\n")
+		f2.Close()
 	case "alwaysfail":
 		os.Exit(1)
 	case "pwdls":
@@ -1531,4 +1546,172 @@ func TestRun_ChangedFilesDeduplicatedWithinOneLinter(t *testing.T) {
 	}
 	assert.Equal(t, []string{"a.txt"}, got.ChangedFiles,
 		"two commands both changing the same file must report it once, not twice")
+}
+
+// TestRun_ConcurrentInPlaceCommandsAreSerialized proves two InPlace commands (here, two
+// different linters) touching the same file never interleave their invocation: real
+// reproduction (final whole-branch review) found 5/25 runs lost one formatter's write entirely
+// when two InPlace commands raced the same file under Concurrency > 1. A probe log records
+// "enter"/"exit" pairs around each invocation's own sleep-then-write; the two pairs must never
+// interleave (enter,enter,exit,exit), only nest cleanly (enter,exit,enter,exit).
+func TestRun_ConcurrentInPlaceCommandsAreSerialized(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("x\n"), 0o644))
+	probe := filepath.Join(t.TempDir(), "probe.log")
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakeraceA": {
+						Name: "fakeraceA", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool sleepwrite " + probe + " ${target}", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+						}},
+					},
+					"fakeraceB": {
+						Name: "fakeraceB", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool sleepwrite " + probe + " ${target}", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 2}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+	for range events {
+	}
+
+	data, err := os.ReadFile(probe)
+	require.NoError(t, err)
+	lines := strings.Fields(strings.TrimSpace(string(data)))
+	require.Len(t, lines, 4, "two invocations, each logging enter+exit")
+
+	depth := 0
+	for _, l := range lines {
+		switch l {
+		case "enter":
+			depth++
+			require.LessOrEqual(t, depth, 1, "a second invocation entered before the first exited -- not serialized")
+		case "exit":
+			depth--
+		}
+	}
+}
+
+// TestRun_RewriteCommandFailingSuccessCodesReportsFailed proves a rewrite/shfmt command that
+// exits outside its own SuccessCodes is reported Failed, not silently treated as a clean success
+// -- real catalog formatters specify SuccessCodes (not ErrorCodes), and before this fix,
+// rewrite/shfmt had no fallback failure signal at all (unlike pass_fail/sarif/etc., which have
+// their own separate way of surfacing a non-zero exit).
+func TestRun_RewriteCommandFailingSuccessCodesReportsFailed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("x\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakebadfmt": {
+						Name: "fakebadfmt", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool crashstderr", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakebadfmt" {
+			got = ev
+		}
+	}
+	assert.Equal(t, Failed, got.Phase, "an exit code outside SuccessCodes must be reported Failed for rewrite/shfmt, not silently succeed")
+	assert.ErrorContains(t, got.Err, "boom: disk on fire", "stderr must be surfaced in the error")
+}
+
+// TestRun_FormatterWithoutInPlaceAndRewriteOutputIsSkipped covers 9 real catalog counterexamples
+// (terraform fmt, tofu fmt, stylua, opa, perltidy, sql-formatter, pragma-once,
+// markdown-table-prettify) this feature's design spec didn't account for: Formatter: true,
+// Output: rewrite/shfmt, but NO InPlace -- these are stdin/stdout-based formatters this engine
+// can't meaningfully run (it neither feeds them stdin nor captures useful stdout), so running
+// them anyway would silently accomplish nothing (or worse, litter side files) while reporting
+// clean success. Must be Skipped instead.
+func TestRun_FormatterWithoutInPlaceAndRewriteOutputIsSkipped(t *testing.T) {
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		got = ev
+	}
+	assert.Equal(t, Skipped, got.Phase)
+	assert.Equal(t, "formatter without in_place has no supported effect (stdin/stdout-based formatters are unsupported)", got.Note)
 }
