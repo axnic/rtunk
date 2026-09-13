@@ -39,6 +39,11 @@ func fetchGitSource(cacheDir string, src PluginSource) (defs sourceDefs, dupErrs
 		cacheDir = filepath.Join(dir, "rtunk", "plugins")
 	}
 
+	cacheDir, err = filepath.Abs(cacheDir)
+	if err != nil {
+		return sourceDefs{}, nil, &FetchError{SourceID: src.ID, URI: src.URI, Ref: src.Ref, Err: err}
+	}
+
 	cacheFile := cacheFilePath(cacheDir, src)
 	checkoutDir := checkoutDirPath(cacheDir, src)
 

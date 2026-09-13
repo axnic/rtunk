@@ -92,7 +92,9 @@ func TestResolve_WithPluginRepo(t *testing.T) {
 	// tree (pkg/trunk/engine's job): SourceDir is derived from the plugin.yaml's own path within
 	// the source; SourceRoot is that source's own directory as mergePluginRepo resolved it.
 	assert.Equal(t, filepath.Join("linters", "actionlint"), cfg.Lint.Definitions["actionlint"].SourceDir)
-	assert.Equal(t, filepath.Join("testdata", "pluginrepo"), cfg.Lint.Definitions["actionlint"].SourceRoot)
+	wantRoot, err := filepath.Abs(filepath.Join("testdata", "pluginrepo"))
+	require.NoError(t, err)
+	assert.Equal(t, wantRoot, cfg.Lint.Definitions["actionlint"].SourceRoot)
 }
 
 // TestResolveAll_WithPluginRepo mirrors TestResolve_WithPluginRepo but via ResolveAll: every

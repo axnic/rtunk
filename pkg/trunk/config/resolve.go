@@ -155,7 +155,11 @@ func mergePluginRepo(cfg *Config, dir string, errs *[]error) error {
 	if err != nil {
 		return err
 	}
-	setSourceRoot(defs, dir)
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	setSourceRoot(defs, absDir)
 	*errs = append(*errs, dupErrs...)
 	mergeSourceInto(cfg, defs, errs)
 	return nil
