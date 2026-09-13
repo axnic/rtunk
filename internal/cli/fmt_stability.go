@@ -17,9 +17,12 @@ import (
 // aggregate (drainRunEvents' own ChangedFiles) discards, needed here to name which linters are
 // responsible when a file doesn't stabilize. Used only for runStableFormat's two real (writing)
 // rounds, where attribution is meaningful; its two dry-run rounds use drainRunEvents' own flat
-// dedup instead, since they only need "is this file still unstable at all."
-func collectChangedByLinter(printFn func(engine.Event), events <-chan engine.Event) (changed map[string][]string, failed error) {
+// dedup instead, since they only need "is this file still unstable at all." Skipped events are
+// tracked the same way drainRunEvents tracks them (deduped by linter), so a real round that skips
+// a linter still surfaces in the final report even when nothing else changed.
+func collectChangedByLinter(printFn func(engine.Event), events <-chan engine.Event) (changed map[string][]string, skipped []string, failed error) {
 	changed = map[string][]string{}
+	skippedLinters := map[string]bool{}
 	for ev := range events {
 		printFn(ev)
 		switch ev.Phase {
@@ -27,13 +30,39 @@ func collectChangedByLinter(printFn func(engine.Event), events <-chan engine.Eve
 			if len(ev.ChangedFiles) > 0 {
 				changed[ev.Linter] = ev.ChangedFiles
 			}
+		case engine.Skipped:
+			if !skippedLinters[ev.Linter] {
+				skippedLinters[ev.Linter] = true
+				skipped = append(skipped, fmt.Sprintf("%s [%s]", ev.Linter, ev.Note))
+			}
 		case engine.Failed:
 			if failed == nil {
 				failed = ev.Err
 			}
 		}
 	}
-	return changed, failed
+	return changed, skipped, failed
+}
+
+// mergeSortedUnique merges a and b into one slice with duplicates removed -- used to combine
+// skipped-linter reports across runStableFormat's multiple rounds, since the same always-skipped
+// linter would otherwise be reported once per round it appears in.
+func mergeSortedUnique(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range a {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // dedupeSortedFiles flattens a map[linter][]file's values into one deduplicated, sorted []string
@@ -80,7 +109,12 @@ func containsString(ss []string, s string) bool {
 // unstableError builds the final error when fmt fails to converge: for each file still unstable
 // after both real rounds, names every linter whose own round-1 or round-2 ChangedFiles included
 // it -- the "suspects," without attempting to determine which one is actually at fault (either
-// could be the one undoing the other's fix; both are equally implicated).
+// could be the one undoing the other's fix; both are equally implicated). 0 or 1 suspects can
+// legitimately happen -- e.g. the known copy_targets sandbox limitation (Task 1): a formatter that
+// reads ancestor config from its real cwd but not from the dry-run sandbox (which only stages the
+// batch's own targets) can make round 2's dry-run check disagree with what any real round actually
+// wrote, so those cases get their own honest wording instead of a misleading or empty
+// "conflicting" label.
 func unstableError(stillUnstable []string, round1, round2 map[string][]string) error {
 	var b strings.Builder
 	fmt.Fprintln(&b, "fmt did not converge after 2 attempts. Still unstable:")
@@ -97,7 +131,14 @@ func unstableError(stillUnstable []string, round1, round2 map[string][]string) e
 			}
 		}
 		sort.Strings(suspects)
-		fmt.Fprintf(&b, "  %s (conflicting: %s)\n", f, strings.Join(suspects, ", "))
+		switch len(suspects) {
+		case 0:
+			fmt.Fprintf(&b, "  %s (no formatter reported changing this file in either real round -- likely a dry-run/real mismatch, e.g. a formatter reading config the dry-run sandbox couldn't see)\n", f)
+		case 1:
+			fmt.Fprintf(&b, "  %s (only %s reported changing this file -- likely a dry-run/real mismatch, e.g. it reads config the dry-run sandbox couldn't see)\n", f, suspects[0])
+		default:
+			fmt.Fprintf(&b, "  %s (conflicting: %s)\n", f, strings.Join(suspects, ", "))
+		}
 	}
 	return errors.New(strings.TrimRight(b.String(), "\n"))
 }
@@ -107,55 +148,64 @@ func unstableError(stillUnstable []string, round1, round2 map[string][]string) e
 // and check again; if a diff still exists after that, the result is unstable -- return an error
 // naming which linters are responsible, rather than silently leaving oscillating output on disk.
 // A round whose real pass changes nothing skips its own dry-run check entirely (nothing was
-// written, so nothing needs verifying). env.DryRun is ignored on the way in -- this function
-// always starts with a real (writing) round; it derives its own dry-run passes internally. Callers
-// (fmtCmd.Run's non-Check branch, checkRunCmd.Run's --fix branch) pass the SAME env they'd
-// otherwise pass to a single engine.Run call.
+// written, so nothing needs verifying). skipped accumulates across every round this function runs
+// (real and dry-run alike), deduplicated, so an always-skipped linter is still reported even when
+// the "nothing written" early return means no dry-run round ever runs. Callers (fmtCmd.Run's
+// non-Check branch, checkRunCmd.Run's --fix branch) pass the SAME env they'd otherwise pass to a
+// single engine.Run call.
 func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr io.Writer) (changed []string, skipped []string, err error) {
+	// runStableFormat always starts with a real (writing) round -- reset any DryRun the caller's
+	// env might carry so this can never accidentally sandbox what's supposed to be a real write;
+	// its own two dry-run rounds set DryRun on a local copy (checkEnv) instead.
+	env.DryRun = false
 	formatterPredicate := func(cmd config.Command) bool { return cmd.Formatter }
 
 	round1Events, err := engine.Run(ctx, env, paths, formatterPredicate)
 	if err != nil {
 		return nil, nil, err
 	}
-	round1, failed1 := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, round1Events)
+	round1, skipped1, failed1 := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, round1Events)
+	skipped = skipped1
 	changed = dedupeSortedFiles(round1)
 	if failed1 != nil {
-		return changed, nil, failed1
+		return changed, skipped, failed1
 	}
 	if len(changed) == 0 {
-		return changed, nil, nil // nothing written, nothing to verify
+		return changed, skipped, nil // nothing written, nothing to verify
 	}
 
 	checkEnv := env
 	checkEnv.DryRun = true
 	check1Events, err := engine.Run(ctx, checkEnv, paths, formatterPredicate)
 	if err != nil {
-		return changed, nil, err
+		return changed, skipped, err
 	}
-	_, wouldChange1, skipped1, _ := drainRunEvents(func(ev engine.Event) {}, check1Events)
+	_, wouldChange1, checkSkipped1, _ := drainRunEvents(func(ev engine.Event) {}, check1Events)
+	skipped = mergeSortedUnique(skipped, checkSkipped1)
 	if len(wouldChange1) == 0 {
-		return changed, skipped1, nil // stable after 1 round
+		return changed, skipped, nil // stable after 1 round
 	}
 
 	round2Events, err := engine.Run(ctx, env, paths, formatterPredicate)
 	if err != nil {
-		return changed, nil, err
+		return changed, skipped, err
 	}
-	round2, failed2 := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, round2Events)
+	round2, skipped2, failed2 := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, round2Events)
+	skipped = mergeSortedUnique(skipped, skipped2)
 	changed = dedupeSortedFiles(mergeChangedByLinter(round1, round2))
 	if failed2 != nil {
-		return changed, nil, failed2
+		return changed, skipped, failed2
 	}
 
 	check2Events, err := engine.Run(ctx, checkEnv, paths, formatterPredicate)
 	if err != nil {
-		return changed, nil, err
+		return changed, skipped, err
 	}
-	_, wouldChange2, skipped2, _ := drainRunEvents(func(ev engine.Event) {}, check2Events)
+	_, wouldChange2, checkSkipped2, _ := drainRunEvents(func(ev engine.Event) {}, check2Events)
+	skipped = mergeSortedUnique(skipped, checkSkipped2)
 	if len(wouldChange2) == 0 {
-		return changed, skipped2, nil // stable after 2 rounds
+		return changed, skipped, nil // stable after 2 rounds
 	}
 
-	return changed, skipped2, unstableError(wouldChange2, round1, round2)
+	return changed, skipped, unstableError(wouldChange2, round1, round2)
 }
