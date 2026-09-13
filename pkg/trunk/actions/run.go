@@ -176,16 +176,19 @@ func notify(title, body string) {
 // themselves with the returned Result.
 func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunOptions, stdout, stderr io.Writer) (Result, error) {
 	result := Result{ActionID: action.ID, Hook: opts.Hook, StartedAt: time.Now()}
+	finish := func() Result {
+		result.Duration = time.Since(result.StartedAt)
+		_ = AppendHistory(opts.CacheDir, opts.RepoRoot, result) // best-effort: history must never fail the run it's recording
+		return result
+	}
 	fail := func(err error) (Result, error) {
 		result.Err = err.Error()
-		result.Duration = time.Since(result.StartedAt)
-		return result, err
+		return finish(), err
 	}
 
 	if action.Interactive == "true" && !isInteractive() {
 		result.Skipped = true
-		result.Duration = time.Since(result.StartedAt)
-		return result, nil
+		return finish(), nil
 	}
 
 	if v, ok := findUnsupportedActionVar(action.Run); ok {
@@ -279,12 +282,12 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 		}
 	}
 
-	result.Duration = time.Since(result.StartedAt)
+	res := finish()
 	if result.ExitCode != 0 {
 		if notifyOnError(action) {
 			notify(fmt.Sprintf("rtunk action %s failed", action.ID), fmt.Sprintf("exit code %d", result.ExitCode))
 		}
-		return result, fmt.Errorf("actions: %s: exit code %d", action.ID, result.ExitCode)
+		return res, fmt.Errorf("actions: %s: exit code %d", action.ID, result.ExitCode)
 	}
-	return result, nil
+	return res, nil
 }
