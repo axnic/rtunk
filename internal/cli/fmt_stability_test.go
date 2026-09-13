@@ -85,8 +85,13 @@ func TestFmtCmd_StableAfterOneRealRound(t *testing.T) {
 // worker picks up first can make this fixture stabilize after round 1 instead of round 2 (verified
 // by hand-tracing the reverse fmtB-then-fmtA order, which reaches the same final "BBB\nAAA\n"
 // content but via only 1 real round) -- so -j 1 pins WHICH round this test actually exercises, not
-// merely whether it's flaky. The stderr assertion below counts fmtA's own "done" lines to prove
-// this empirically (2 real rounds), rather than trusting the hand-trace alone.
+// merely whether it's flaky. The stderr assertion below counts fmtA's own "done ... 1 file(s)
+// changed" lines to prove this empirically rather than trusting the hand-trace alone -- expected
+// count is 3, not 2, since a dry-run check's own Running/Done/Skipped/Failed events are now
+// printed too (Finding 2's fix, so a dry-run check's own failure is never silently swallowed):
+// round 1's fmtA (1, real) + check 1's fmtA (1, dry-run: current file "BBB\n" still missing AAA,
+// forcing round 2) + round 2's fmtA (1, real) = 3; check 2's fmtA reports 0 (AAA already present),
+// so it doesn't add to this count.
 func TestFmtCmd_StableAfterSecondRound(t *testing.T) {
 	cfgPath, repoRoot := writeLinterFixture(t, []string{"fmtA", "fmtB"}, `    - name: fmtA
       description: Appends AAA only if the file doesn't already contain it
@@ -122,7 +127,7 @@ func TestFmtCmd_StableAfterSecondRound(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", "-j", "1", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Equal(t, "work/shared.txt\n\n1 file(s) reformatted\n", stdout)
-	assert.Equal(t, 2, strings.Count(stderr, "done fmtA: 1 file(s) changed"), "must take exactly 2 real rounds to stabilize; stderr: %s", stderr)
+	assert.Equal(t, 3, strings.Count(stderr, "done fmtA: 1 file(s) changed"), "must take exactly 2 real rounds to stabilize (plus 1 dry-run check that still found a residual diff); stderr: %s", stderr)
 
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
@@ -226,4 +231,32 @@ func TestFmtCmd_UnstableSingleSuspectWording(t *testing.T) {
 	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", filepath.Join(repoRoot, "work"))
 	require.Error(t, err, "stderr: %s", stderr)
 	assert.Equal(t, "fmt did not converge after 2 attempts. Still unstable:\n  work/a.txt (only fmtMarker reported changing this file -- likely a dry-run/real mismatch, e.g. it reads config the dry-run sandbox couldn't see)", err.Error())
+}
+
+// TestFmtCmd_DryRunCheckFailureIsVisibleButDoesNotAbort proves a dry-run check pass's own failure
+// is printed to stderr (not silently swallowed) while the loop still completes successfully --
+// fail-open, since the real files were already correctly written by the preceding real round; a
+// verification-only pass failing shouldn't undo that.
+func TestFmtCmd_DryRunCheckFailureIsVisibleButDoesNotAbort(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"cfgfmt"}, `    - name: cfgfmt
+      description: Errors only when run without a .fmtrc file present (as in the dry-run sandbox)
+      files: [ALL]
+      commands:
+        - name: format
+          run: test -f .fmtrc && printf 'formatted\n' > ${target} || exit 2
+          output: rewrite
+          success_codes: [0]
+          error_codes: [2]
+          in_place: true
+          formatter: true
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, ".fmtrc"), []byte(""), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "work"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "work", "a.txt"), []byte("messy\n"), 0o644))
+
+	cacheDir := t.TempDir()
+	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", filepath.Join(repoRoot, "work"))
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "1 file(s) reformatted")
+	assert.Contains(t, stderr, "failed:", "the dry-run check's own failure must be visible, not silently swallowed")
 }

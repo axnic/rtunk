@@ -17,7 +17,7 @@ func TestStageSandbox_CopyTargetsOnlyStagesGivenFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "target.txt"), []byte("t"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sibling.txt"), []byte("s"), 0o644))
 
-	sandboxDir, cleanup, err := StageSandbox("copy_targets", dir, []string{"target.txt"})
+	sandboxDir, cleanup, err := StageSandbox("copy_targets", dir, []string{"target.txt"}, "")
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -36,7 +36,7 @@ func TestStageSandbox_ExpandedCopiesWholeDirectoryNonRecursive(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "c.go"), []byte("c"), 0o644))
 
-	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"a.go"})
+	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"a.go"}, "")
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -57,7 +57,7 @@ func TestStageSandbox_ExpandedAlsoStagesNestedTarget(t *testing.T) {
 	// dir's own top-level entries don't include "sub/a.go" -- a RunFrom that resolved to an
 	// ancestor of the actual target (e.g. "${parent}"/"${root_or_parent_with*}") would otherwise
 	// silently drop the one file the invocation is meant to check.
-	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"sub/a.go"})
+	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"sub/a.go"}, "")
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -73,7 +73,7 @@ func TestStageSandbox_CleanupRemovesTempDir(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "target.txt"), []byte("t"), 0o644))
 
-	sandboxDir, cleanup, err := StageSandbox("copy_targets", dir, []string{"target.txt"})
+	sandboxDir, cleanup, err := StageSandbox("copy_targets", dir, []string{"target.txt"}, "")
 	require.NoError(t, err)
 	cleanup()
 
@@ -118,7 +118,7 @@ func TestStageSandbox_ExpandedHandlesManyFilesWithoutPathologicalBehavior(t *tes
 		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%03d.txt", i)), []byte("x"), 0o644))
 	}
 
-	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"f000.txt"})
+	sandboxDir, cleanup, err := StageSandbox("expanded", dir, []string{"f000.txt"}, "")
 	require.NoError(t, err)
 	defer cleanup()
 

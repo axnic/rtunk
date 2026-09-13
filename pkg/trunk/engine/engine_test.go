@@ -153,6 +153,31 @@ func main() {
 		for _, f := range args[1:] {
 			os.WriteFile(f, []byte("formatted\n"), 0o644)
 		}
+	case "findancestor":
+		// Walks up from its own cwd looking for a marker file named args[1], writing "v2\n" to
+		// args[2] if found (config discovered) or "default\n" if not (silently fell back to
+		// defaults) -- stands in for a real config-driven formatter's own ancestor-directory
+		// config resolution (e.g. real prettier looking for .prettierrc/.editorconfig).
+		markerName := args[1]
+		target := args[2]
+		dir, _ := os.Getwd()
+		found := false
+		for {
+			if _, err := os.Stat(filepath.Join(dir, markerName)); err == nil {
+				found = true
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+		if found {
+			os.WriteFile(target, []byte("v2\n"), 0o644)
+		} else {
+			os.WriteFile(target, []byte("default\n"), 0o644)
+		}
 	case "rewrite2":
 		// Same idea as "rewrite" but writes different content -- lets a test give two separate
 		// commands on the same linter each genuinely change the same file (rather than one
@@ -1923,4 +1948,94 @@ func TestRun_NonDryRunInPlaceStillWritesRealFile(t *testing.T) {
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
 	assert.Equal(t, "formatted\n", string(data), "a non-DryRun InPlace command must actually write the real file")
+}
+
+// TestRun_DryRunSandboxStagedInsideRepoRoot proves the dry-run sandbox for an InPlace command is
+// created inside repoRoot, not the OS default temp directory -- the fix for a real Critical found
+// by this feature's own final review: a config-driven formatter (real prettier, reproduced with
+// the actual binary) resolves its own config by walking UP from the file it's formatting, and a
+// sandbox with no path back to the real repo (the OS default /tmp) means that walk can never find
+// real project config, silently falling back to defaults and producing a phantom "still needs
+// reformatting" diff forever, even on an already-correctly-formatted file. This test proves the
+// mechanism (sandbox path is genuinely under repoRoot), not prettier's own specific behavior --
+// see the fake tool's "findancestor" case, which walks up from its own cwd looking for a marker
+// file the same way a real formatter would look for a config file.
+//
+// The real file starts already at "v2\n" -- the content a config-aware formatter would already
+// have produced -- specifically so the two branches diverge in ChangedFiles, not just in some
+// side channel: with the sandbox staged inside repoRoot (the fix), the ancestor walk from the
+// sandbox finds config.marker at repoRoot and writes "v2\n" back, matching the already-correct
+// real content, so NO change is reported. With the old OS-default-tmp staging (the bug), the walk
+// never finds config.marker, faketool falls back to "default\n", which differs from the real
+// "v2\n" -- a phantom change reported on an already-correctly-formatted file, exactly the bug
+// this fix closes. (Confirmed by temporarily reverting to unconditional tmpBase="" during
+// development: this assertion flips from empty to []string{"work/a.txt"}.)
+func TestRun_DryRunSandboxStagedInsideRepoRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	// A real repo-root-level "config" file -- stands in for real prettier's own .prettierrc or
+	// .editorconfig living at the repo root.
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "config.marker"), []byte("v2\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "work"), 0o755))
+	target := filepath.Join(repoRoot, "work", "a.txt")
+	// Already correctly formatted per the real config (config-aware output is "v2\n") -- a real
+	// run has nothing left to do here, so a correct dry-run check must report no change either.
+	require.NoError(t, os.WriteFile(target, []byte("v2\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Lint: config.LintConfig{
+			// Scoped to "txt" specifically (not "ALL") so config.marker itself is never picked up
+			// as a lint target and copied into the sandbox as a batch file -- that would let the
+			// sandbox "find" it trivially at its own top level regardless of staging location,
+			// defeating the point of this test (proving discovery via a genuine ancestor walk).
+			Files: map[string]config.FileType{"txt": {Name: "txt", Extensions: []string{"txt"}}},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakecfgfmt": {
+						Name: "fakecfgfmt", Files: []string{"txt"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							// Walks up from its own cwd looking for config.marker, the same way a
+							// real formatter's own config-resolution algorithm would look for a
+							// real config file -- writes "v2\n" if found (config-aware behavior),
+							// "default\n" if not (silent fallback to built-in defaults).
+							Name: "format", Run: "faketool findancestor config.marker ${target}", Output: "rewrite",
+							SuccessCodes: []int{0}, Batch: true, InPlace: true, Formatter: true,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1, DryRun: true}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakecfgfmt" && ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Empty(t, got.ChangedFiles,
+		"the sandbox's ancestor walk must find repoRoot's real config.marker and reproduce the "+
+			"already-correct content, not silently fall back to defaults and report a phantom change")
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "v2\n", string(data), "DryRun must never write the real file")
 }

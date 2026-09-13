@@ -21,8 +21,16 @@ import (
 // cleanup is always non-nil once sandboxDir was created, even when err != nil (e.g. a copy
 // failed partway) -- callers must always defer cleanup() immediately after a non-nil sandboxDir
 // is returned, to avoid leaking the temp directory.
-func StageSandbox(sandboxType, dir string, targets []string) (sandboxDir string, cleanup func(), err error) {
-	sandboxDir, err = os.MkdirTemp("", "rtunk-check-sandbox-*")
+//
+// tmpBase controls where the sandbox's own temp directory is created: "" uses the OS default
+// (os.MkdirTemp's own existing behavior, unchanged for check-time sandboxing), a non-empty path
+// creates it as a subdirectory of that path instead. A dry-run InPlace sandbox (see engine.go's
+// own runBatch) passes repoRoot here: staging inside the real repo tree means a genuine ancestor
+// directory walk from within the sandbox (e.g. real prettier's own config-resolution algorithm)
+// still passes through repoRoot itself and finds any real config file living there, rather than
+// hitting an isolated /tmp directory with no path back to the repo at all.
+func StageSandbox(sandboxType, dir string, targets []string, tmpBase string) (sandboxDir string, cleanup func(), err error) {
+	sandboxDir, err = os.MkdirTemp(tmpBase, "rtunk-check-sandbox-*")
 	if err != nil {
 		return "", nil, err
 	}

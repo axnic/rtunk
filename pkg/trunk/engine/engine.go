@@ -468,24 +468,31 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	// the exact same before/after hash comparison a real run already uses) still reports what
 	// would have changed.
 	//
-	// Known limitation: copy_targets stages only the batch's own target files, not any ancestor
-	// config file a real formatter discovers by walking up from its own cwd (e.g. prettier's
-	// .prettierrc, black's pyproject.toml, rustfmt's rustfmt.toml). A dry run's cwd is the isolated
-	// sandbox directory, with no ancestor chain back to the real repo -- a config-driven formatter
-	// could silently fall back to default settings here while the real (non-dry-run) passes, whose
-	// cwd is the true resolvedDir, correctly find the project's real config. For a formatter whose
-	// real config differs meaningfully from its defaults, this can make a dry-run check report "would
-	// still change" even when a real second pass would not. gofmt-style config-free formatters are
-	// unaffected. This is a known, disclosed tradeoff of reusing copy_targets rather than a new
-	// architecture decision made here -- a real fix would need to either stage the ancestor
-	// directory chain too, or keep cwd at the real resolvedDir while redirecting only the actual
-	// read/write target to a shadow file, both real design changes beyond this feature's scope.
+	// Known limitation: copy_targets stages only the batch's own target files, not any
+	// intermediate-directory config file living strictly between the file's own directory and
+	// repoRoot (e.g. a nested per-package .prettierrc override) -- staging inside repoRoot (see
+	// tmpBase above) recovers repoRoot-level config via a genuine ancestor walk, but a config file
+	// living in some directory between the target and repoRoot is still invisible to the sandbox.
+	// This is a narrower residual case than before; repoRoot-level config is the standard,
+	// near-universal convention for essentially every real formatter, so this is now expected to
+	// be rare in practice rather than the common case it was before this fix.
 	sandboxType := j.cmd.SandboxType
+	tmpBase := ""
 	if j.dryRun && j.cmd.InPlace {
 		sandboxType = "copy_targets"
+		// Stage inside repoRoot (not the OS default temp dir) so a config-driven formatter's own
+		// ancestor-directory config walk (e.g. real prettier's own algorithm, confirmed via direct
+		// reproduction with the real prettier binary) still finds real project config living at
+		// repoRoot -- staging in /tmp has no path back to the real repo tree at all, so ANY
+		// formatter whose config differs from its own built-in defaults would see a phantom diff
+		// forever, on every dry-run check, even for an already-correctly-formatted file. This does
+		// NOT recover a config file living strictly between the file's own directory and repoRoot
+		// (a narrower, real, but much less common case) -- repoRoot-level config is the standard,
+		// near-universal convention for essentially every real formatter.
+		tmpBase = repoRoot
 	}
 	if sandboxType != "" {
-		sandboxDir, cleanup, err := security.StageSandbox(sandboxType, j.resolvedDir, j.batch)
+		sandboxDir, cleanup, err := security.StageSandbox(sandboxType, j.resolvedDir, j.batch, tmpBase)
 		if cleanup != nil {
 			defer cleanup()
 		}

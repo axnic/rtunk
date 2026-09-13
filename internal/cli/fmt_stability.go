@@ -180,7 +180,10 @@ func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr
 	if err != nil {
 		return changed, skipped, err
 	}
-	_, wouldChange1, checkSkipped1, _ := drainRunEvents(func(ev engine.Event) {}, check1Events)
+	_, wouldChange1, checkSkipped1, checkFailed1 := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, check1Events)
+	_ = checkFailed1 // a dry-run check's own failure doesn't abort the loop (fail-open: the real
+	// write from the preceding round already succeeded) -- printFmtEvent above
+	// already surfaced it to the user via the Failed event's own stderr line.
 	skipped = mergeSortedUnique(skipped, checkSkipped1)
 	if len(wouldChange1) == 0 {
 		return changed, skipped, nil // stable after 1 round
@@ -201,7 +204,8 @@ func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr
 	if err != nil {
 		return changed, skipped, err
 	}
-	_, wouldChange2, checkSkipped2, _ := drainRunEvents(func(ev engine.Event) {}, check2Events)
+	_, wouldChange2, checkSkipped2, checkFailed2 := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, check2Events)
+	_ = checkFailed2 // same fail-open rationale as checkFailed1 above.
 	skipped = mergeSortedUnique(skipped, checkSkipped2)
 	if len(wouldChange2) == 0 {
 		return changed, skipped, nil // stable after 2 rounds
