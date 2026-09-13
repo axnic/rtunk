@@ -80,6 +80,15 @@ func main() {
 	case "emptyjson":
 		// Prints nothing: stands in for a clean run (or an OS-gated command variant) that
 		// produces genuinely empty stdout on a JSON-shaped Output format.
+	case "failonemptystdin":
+		// Stands in for a real converter script that can't handle empty input (e.g. Python's
+		// json.load(sys.stdin) raising on an empty stream) -- proves the parser is never invoked
+		// at all when the real command's own output was empty.
+		data, _ := io.ReadAll(os.Stdin)
+		if len(data) == 0 {
+			os.Exit(1)
+		}
+		fmt.Print("{\"runs\":[{\"results\":[]}]}")
 	case "sleep":
 		time.Sleep(250 * time.Millisecond)
 	case "alwaysfail":
@@ -239,6 +248,13 @@ func TestRun(t *testing.T) {
 							Parser: &config.Parser{Runtime: "python", Run: "convert.py"},
 						}},
 					},
+					"fakeskipparservar": {
+						Name: "fakeskipparservar", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif",
+							Parser: &config.Parser{Runtime: "python", Run: "faketool sarifconvert ${target,}"},
+						}},
+					},
 					"fakeskiprunfrom": {
 						Name: "fakeskiprunfrom", Files: []string{"ALL"}, Tools: []string{"faketool"},
 						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif", RunFrom: "apps"}},
@@ -338,6 +354,12 @@ func TestRun(t *testing.T) {
 	assert.Equal(t, Skipped, skipParserEv.Phase)
 	assert.Contains(t, skipParserEv.Note, `parser runtime "python" unavailable`)
 	assert.Contains(t, skipParserEv.Note, "not found in resolved config")
+
+	skipParserVarEv, ok := byLinter["fakeskipparservar"]
+	require.True(t, ok)
+	assert.Equal(t, Skipped, skipParserVarEv.Phase)
+	assert.Contains(t, skipParserVarEv.Note, `${target,}`)
+	assert.Contains(t, skipParserVarEv.Note, "in parser")
 
 	skipRunFromEv, ok := byLinter["fakeskiprunfrom"]
 	require.True(t, ok)
@@ -1111,7 +1133,7 @@ func TestRun_PluginAndCwdTemplateVarsResolveFromLinterSource(t *testing.T) {
 	target := filepath.Join(repoRoot, "target.txt")
 	require.NoError(t, os.WriteFile(target, []byte("content\n"), 0o644))
 
-	pluginRoot := filepath.Join(t.TempDir(), "plugin-source")
+	pluginRoot := filepath.Join(t.TempDir(), "plugin source")
 
 	cfg := config.Config{
 		Tools: map[string]config.Tool{
@@ -1145,4 +1167,67 @@ func TestRun_PluginAndCwdTemplateVarsResolveFromLinterSource(t *testing.T) {
 	require.Len(t, got.Findings, 1)
 	wantCwd := filepath.Join(pluginRoot, "linters", "fakevars")
 	assert.Equal(t, pluginRoot+"|"+wantCwd, got.Findings[0].Message)
+}
+
+// TestRun_ParserNotInvokedOnEmptyOutput proves the parser stage is skipped entirely when the real
+// command's own output is empty (a clean run) -- if it ran anyway, a converter script that can't
+// handle empty stdin (very real: json.load(sys.stdin) raises on empty input) would turn a clean
+// run into a spurious failure.
+func TestRun_ParserNotInvokedOnEmptyOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	toolShim := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(toolShim), 0o755))
+	require.NoError(t, download.WriteShim(toolShim, binPath))
+	runtimeShim := download.ShimPath(root, "runtimes", "python", "3.12.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(runtimeShim), 0o755))
+	require.NoError(t, download.WriteShim(runtimeShim, binPath))
+
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("content\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"python": {Type: "python", KnownGoodVersion: "3.12.0", Shims: config.ShimList{"faketool"}},
+			},
+		},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakeemptyparsed": {
+						Name: "fakeemptyparsed", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool emptyjson ${target}", Output: "sarif", Batch: true,
+							Parser: &config.Parser{Runtime: "python", Run: "faketool failonemptystdin"},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Linter == "fakeemptyparsed" {
+			got = ev
+		}
+	}
+	assert.Equal(t, Done, got.Phase, "the parser must never run on empty output, or a script that rejects empty stdin would spuriously fail a clean run")
+	assert.Empty(t, got.Findings)
 }

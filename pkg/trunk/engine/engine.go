@@ -240,6 +240,10 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 
 		var parserPathEnv string
 		if cmd.Parser != nil {
+			if v, ok := findUnsupportedVar(cmd.Parser.Run); ok {
+				events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q in parser", v)}
+				continue
+			}
 			dir, cached := parserPathEnvByRuntime[cmd.Parser.Runtime]
 			if !cached {
 				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime)
@@ -439,7 +443,11 @@ func runBatch(ctx context.Context, j job, repoRoot string) ([]output.Finding, er
 	// A Parser converts the real command's raw output into cmd.Output's expected shape (almost
 	// always SARIF) before any of the dispatch below runs -- everything from here on parses out
 	// exactly as if the real tool had produced it directly, whether or not a parser was involved.
-	if j.cmd.Parser != nil {
+	// Skipped when out is empty: a genuinely clean run (or an OS-gated command variant producing
+	// nothing) must fall through to the isJSONFormat empty-output guard below unparsed, not feed
+	// empty stdin to a converter script that may not tolerate it (e.g. Python's
+	// json.load(sys.stdin) raises on empty input).
+	if j.cmd.Parser != nil && strings.TrimSpace(out) != "" {
 		converted, err := runParser(ctx, j.cmd.Parser, workDir, j.parserPathEnv, out, j.batch, pluginDir, cwdDir)
 		if err != nil {
 			return nil, err
@@ -638,7 +646,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 
 	run := strings.NewReplacer(
 		"${target}", target, "${tmpfile}", tmpfile,
-		"${plugin}", pluginDir, "${cwd}", cwdDir,
+		"${plugin}", quoteOne(pluginDir), "${cwd}", quoteOne(cwdDir),
 	).Replace(cmd.Run)
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)
@@ -691,7 +699,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEnv, stdin string, batch []string, pluginDir, cwdDir string) (string, error) {
 	target := strings.Join(quoteAll(batch), " ")
 	run := strings.NewReplacer(
-		"${target}", target, "${plugin}", pluginDir, "${cwd}", cwdDir,
+		"${target}", target, "${plugin}", quoteOne(pluginDir), "${cwd}", quoteOne(cwdDir),
 	).Replace(parser.Run)
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)
@@ -723,4 +731,10 @@ func quoteAll(files []string) []string {
 		out[i] = "'" + strings.ReplaceAll(f, "'", `'\''`) + "'"
 	}
 	return out
+}
+
+// quoteOne is quoteAll for a single string -- used for ${plugin}/${cwd}, which (unlike ${target})
+// are one path each, not a list.
+func quoteOne(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
