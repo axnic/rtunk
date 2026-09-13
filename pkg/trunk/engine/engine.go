@@ -240,7 +240,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 
 		var parserPathEnv string
 		if cmd.Parser != nil {
-			if v, ok := findUnsupportedVar(cmd.Parser.Run); ok {
+			if v, ok := findUnsupportedParserVar(cmd.Parser.Run); ok {
 				events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q in parser", v)}
 				continue
 			}
@@ -358,6 +358,23 @@ func findUnsupportedVar(run string) (string, bool) {
 	for _, v := range templateVarRE.FindAllString(run, -1) {
 		switch v {
 		case "${target}", "${tmpfile}", "${plugin}", "${cwd}":
+			continue
+		}
+		return v, true
+	}
+	return "", false
+}
+
+// findUnsupportedParserVar is findUnsupportedVar for a Command.Parser.Run string specifically --
+// ${tmpfile} is valid in cmd.Run (findUnsupportedVar's own allowlist) but never substituted by
+// runParser: a parser script gets its data on stdin, not via a tmpfile, and runOneInvocation's own
+// `defer os.Remove(tmpfile)` has already fired by the time runParser starts, so even substituting
+// it would point at a file that's already gone. Screened out here, even though it's valid for
+// cmd.Run itself.
+func findUnsupportedParserVar(run string) (string, bool) {
+	for _, v := range templateVarRE.FindAllString(run, -1) {
+		switch v {
+		case "${target}", "${plugin}", "${cwd}":
 			continue
 		}
 		return v, true

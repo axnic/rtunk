@@ -255,6 +255,13 @@ func TestRun(t *testing.T) {
 							Parser: &config.Parser{Runtime: "python", Run: "faketool sarifconvert ${target,}"},
 						}},
 					},
+					"fakeskipparsertmpfile": {
+						Name: "fakeskipparsertmpfile", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif",
+							Parser: &config.Parser{Runtime: "python", Run: "faketool sarifconvert ${tmpfile}"},
+						}},
+					},
 					"fakeskiprunfrom": {
 						Name: "fakeskiprunfrom", Files: []string{"ALL"}, Tools: []string{"faketool"},
 						Commands: []config.Command{{Name: "unsupported", Run: "faketool sarif ${target}", Output: "sarif", RunFrom: "apps"}},
@@ -360,6 +367,12 @@ func TestRun(t *testing.T) {
 	assert.Equal(t, Skipped, skipParserVarEv.Phase)
 	assert.Contains(t, skipParserVarEv.Note, `${target,}`)
 	assert.Contains(t, skipParserVarEv.Note, "in parser")
+
+	skipParserTmpfileEv, ok := byLinter["fakeskipparsertmpfile"]
+	require.True(t, ok)
+	assert.Equal(t, Skipped, skipParserTmpfileEv.Phase)
+	assert.Contains(t, skipParserTmpfileEv.Note, "${tmpfile}")
+	assert.Contains(t, skipParserTmpfileEv.Note, "in parser")
 
 	skipRunFromEv, ok := byLinter["fakeskiprunfrom"]
 	require.True(t, ok)
