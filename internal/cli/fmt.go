@@ -13,14 +13,17 @@ import (
 
 // fmtCmd is `rtunk fmt [paths...]`: ROADMAP.md v0.4, running every enabled linter's Formatter
 // command(s) -- gofmt, prettier, black, and the rest -- against the given paths, or the whole
-// repository if none are given. Plain fmt automatically verifies its own result is stable (see
-// runStableFormat) -- real trunk's own fmt safety net, no flag needed. --check instead runs a
-// single, standalone dry-run pass that never writes to disk, matching real trunk's own `trunk fmt
-// --check`: a CI gate asking "would anything change," not "make it change."
+// repository if none are given. Plain fmt does a single pass, then warns on stderr (without
+// failing) if it re-touches a file the previous run for this repo also touched within the last 30s
+// (see warnIfRecentOverlap) -- a cheap heuristic for the same instability --verify-stable checks
+// rigorously. --check runs a single, standalone dry-run pass that never writes to disk, matching
+// real trunk's own `trunk fmt --check`: a CI gate asking "would anything change," not "make it
+// change."
 type fmtCmd struct {
-	Paths []string `arg:"" optional:"" help:"Paths to format (default: whole repository)."`
-	Jobs  int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
-	Check bool     `help:"Report files that would be reformatted, without writing them."`
+	Paths        []string `arg:"" optional:"" help:"Paths to format (default: whole repository)."`
+	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
+	Check        bool     `help:"Report files that would be reformatted, without writing them."`
+	VerifyStable bool     `help:"Verify the result is stable (write, dry-run check, write+check again if needed) instead of a single pass."`
 }
 
 func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
@@ -61,7 +64,13 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		return nil
 	}
 
-	changed, skipped, err := runStableFormat(context.Background(), env, c.Paths, stderr)
+	if c.VerifyStable {
+		changed, skipped, err := runStableFormat(context.Background(), env, c.Paths, stderr)
+		printFmtReport(stdout, changed, skipped)
+		return err
+	}
+
+	changed, skipped, err := runFormatOnce(context.Background(), env, c.Paths, repoRoot, stderr)
 	printFmtReport(stdout, changed, skipped)
 	return err
 }

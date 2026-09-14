@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/engine"
@@ -214,4 +215,72 @@ func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr
 	}
 
 	return changed, skipped, unstableError(wouldChange2, round1, round2)
+}
+
+// recentRunWindow bounds how long a previous run stays "recent" for runFormatOnce's own
+// instability heuristic below.
+const recentRunWindow = 30 * time.Second
+
+// runFormatOnce is plain fmt/check --fix's default (no --verify-stable): a single real (writing)
+// round, no dry-run re-check -- cheap, one pass, matching the command's pre-fmt-stability cost.
+// In place of --verify-stable's own immediate double-check, it compares this round's own changed
+// files against whatever the previous run for this repo (if any, and if recent) touched, and warns
+// on stderr about any overlap -- the same "is this actually converging" question, answered cheaply
+// across two separate invocations instead of rigorously within one.
+func runFormatOnce(ctx context.Context, env engine.Env, paths []string, repoRoot string, stderr io.Writer) (changed []string, skipped []string, err error) {
+	env.DryRun = false
+	formatterPredicate := func(cmd config.Command) bool { return cmd.Formatter }
+
+	events, err := engine.Run(ctx, env, paths, formatterPredicate)
+	if err != nil {
+		return nil, nil, err
+	}
+	byLinter, skipped, failed := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, events)
+	changed = dedupeSortedFiles(byLinter)
+
+	warnIfRecentOverlap(env.CacheDir, repoRoot, byLinter, stderr)
+	if saveErr := saveRecentFmtRun(env.CacheDir, repoRoot, recentFmtRun{Timestamp: time.Now(), Changed: byLinter}); saveErr != nil {
+		fmt.Fprintf(stderr, "fmt: failed to record this run for future instability checks: %v\n", saveErr)
+	}
+
+	return changed, skipped, failed
+}
+
+// warnIfRecentOverlap loads repoRoot's last recorded run and, if it's within recentRunWindow,
+// warns on stderr about every file byLinter (this run's own changes) shares with it -- the same
+// file being reformatted again within seconds of the previous run suggests either that run's fix
+// didn't actually stick, or two formatters are fighting over it. Best-effort: a load failure is
+// silently ignored (the same fail-open reasoning runStableFormat's dry-run checks already use --
+// this is a diagnostic, not part of fmt's own success/failure contract).
+func warnIfRecentOverlap(cacheDir, repoRoot string, byLinter map[string][]string, stderr io.Writer) {
+	prev, ok, err := loadRecentFmtRun(cacheDir, repoRoot)
+	if err != nil || !ok {
+		return
+	}
+	age := time.Since(prev.Timestamp)
+	if age > recentRunWindow {
+		return
+	}
+
+	for _, f := range dedupeSortedFiles(byLinter) {
+		prevLinters := lintersFor(prev.Changed, f)
+		if len(prevLinters) == 0 {
+			continue
+		}
+		thisLinters := lintersFor(byLinter, f)
+		fmt.Fprintf(stderr, "warning: %s was reformatted again %s after a previous run (then: %s; now: %s) -- possible formatter instability, rerun with --verify-stable to check\n",
+			f, age.Round(time.Second), strings.Join(prevLinters, ", "), strings.Join(thisLinters, ", "))
+	}
+}
+
+// lintersFor returns the sorted names of every linter byLinter records as having changed file.
+func lintersFor(byLinter map[string][]string, file string) []string {
+	var out []string
+	for linter, files := range byLinter {
+		if containsString(files, file) {
+			out = append(out, linter)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

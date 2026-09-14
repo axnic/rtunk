@@ -29,9 +29,10 @@ type checkCmd struct {
 
 // checkRunCmd is `rtunk check [paths...]`: given paths, or the whole repository if none.
 type checkRunCmd struct {
-	Paths []string `arg:"" optional:"" help:"Paths to check (default: whole repository)."`
-	Jobs  int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
-	Fix   bool     `help:"Apply automatic fixes (formatter commands) before reporting."`
+	Paths        []string `arg:"" optional:"" help:"Paths to check (default: whole repository)."`
+	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
+	Fix          bool     `help:"Apply automatic fixes (formatter commands) before reporting."`
+	VerifyStable bool     `help:"With --fix, verify the result is stable instead of a single pass."`
 }
 
 func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
@@ -66,7 +67,13 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	// has never stopped its siblings from running).
 	var fixFailed error
 	if c.Fix {
-		changed, fixSkipped, ffErr := runStableFormat(context.Background(), env, c.Paths, stderr)
+		var changed, fixSkipped []string
+		var ffErr error
+		if c.VerifyStable {
+			changed, fixSkipped, ffErr = runStableFormat(context.Background(), env, c.Paths, stderr)
+		} else {
+			changed, fixSkipped, ffErr = runFormatOnce(context.Background(), env, c.Paths, repoRoot, stderr)
+		}
 		fixFailed = ffErr
 		printFmtReport(stdout, changed, fixSkipped)
 	}
