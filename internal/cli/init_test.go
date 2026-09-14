@@ -92,3 +92,62 @@ func TestInitCmd_ScaffoldIsActuallyFoundByFindTrunkYAML(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(repo, ".rtunk", "rtunk.yaml"), found)
 }
+
+func TestDeinitCmd_RemovesRtunkDir(t *testing.T) {
+	repo := initGitRepo(t)
+	chdir(t, repo)
+	_, stderr, err := run2(t, "init")
+	require.NoError(t, err, "stderr: %s", stderr)
+
+	stdout, stderr, err := run2(t, "deinit")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "removed")
+	assert.NoDirExists(t, filepath.Join(repo, ".rtunk"))
+}
+
+// TestDeinitCmd_RemovesInstalledGitHooks writes its own minimal local-plugin-source trunk.yaml
+// directly (rather than via `rtunk init`, whose own scaffold points at the real
+// https://github.com/trunk-io/plugins -- never resolved in a test) so `git-hooks install` has a
+// real, local, enabled action with a git_hooks trigger to work from, matching
+// pkg/trunk/githooks' own established real-git-repo test pattern.
+func TestDeinitCmd_RemovesInstalledGitHooks(t *testing.T) {
+	repo := initGitRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".rtunk"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "pluginrepo", "actions", "greet"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "pluginrepo", "actions", "greet", "plugin.yaml"), []byte(`actions:
+  definitions:
+    - id: greet
+      run: echo hello
+      triggers:
+        - git_hooks: [pre-commit]
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".rtunk", "rtunk.yaml"), []byte(`version: "0.1"
+plugins:
+  sources:
+    - id: local
+      local: ../pluginrepo
+actions:
+  enabled:
+    - greet
+`), 0o644))
+	chdir(t, repo)
+
+	_, stderr, err := run2(t, "git-hooks", "install")
+	require.NoError(t, err, "stderr: %s", stderr)
+	require.FileExists(t, filepath.Join(repo, ".git", "hooks", "pre-commit"))
+
+	stdout, stderr, err := run2(t, "deinit")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "removed hook: pre-commit")
+	assert.NoFileExists(t, filepath.Join(repo, ".git", "hooks", "pre-commit"))
+	assert.NoDirExists(t, filepath.Join(repo, ".rtunk"))
+}
+
+func TestDeinitCmd_NothingToDeinit_IsNoOp(t *testing.T) {
+	repo := initGitRepo(t)
+	chdir(t, repo)
+
+	stdout, stderr, err := run2(t, "deinit")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "nothing to deinit")
+}

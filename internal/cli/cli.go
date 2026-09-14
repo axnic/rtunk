@@ -40,6 +40,7 @@ type CLI struct {
 	ActionsCmd  actionsCmd  `cmd:"" name:"actions" help:"Manage and run trunk actions."`
 	GitHooksCmd gitHooksCmd `cmd:"" name:"git-hooks" help:"Manage git hooks that trigger actions."`
 	InitCmd     initCmd     `cmd:"" name:"init" help:"Initialize rtunk in this repository."`
+	DeinitCmd   deinitCmd   `cmd:"" name:"deinit" help:"Remove rtunk's configuration and installed artifacts."`
 	UpgradeCmd  upgradeCmd  `cmd:"" name:"upgrade" help:"Check for and install a newer rtunk release."`
 }
 
