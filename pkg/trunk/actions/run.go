@@ -80,7 +80,18 @@ func quoteAll(ss []string) []string {
 // git-hook argv (branch/ref names an attacker controls), so ${1}..${9}/${@} MUST be quoted here:
 // an unquoted substitution lets a value like `a" ; id ; "b` break out of the Run string and
 // execute arbitrary shell.
+//
+// ${env.*} is expanded FIRST, against the original (trusted, plugin-authored) run string, before
+// any arg/positional substitution runs. Doing it in the other order would re-scan the fully
+// substituted string -- including whatever text got substituted in from args -- so an untrusted
+// arg containing the literal text "${env.NAME}" would get expanded into that env var's real
+// value, unquoted, after the fact.
 func substituteVars(run, hook, cwd, plugin, hookStdinPath string, args []string) string {
+	run = envVarRE.ReplaceAllStringFunc(run, func(m string) string {
+		name := envVarRE.FindStringSubmatch(m)[1]
+		return os.Getenv(name)
+	})
+
 	pairs := []string{
 		"${cwd}", quoteOne(cwd), "${plugin}", quoteOne(plugin),
 		"${hook}", hook, "${hook_stdin_path}", hookStdinPath,
@@ -92,11 +103,7 @@ func substituteVars(run, hook, cwd, plugin, hookStdinPath string, args []string)
 		}
 		pairs = append(pairs, fmt.Sprintf("${%d}", i+1), quoteOne(a))
 	}
-	run = strings.NewReplacer(pairs...).Replace(run)
-	return envVarRE.ReplaceAllStringFunc(run, func(m string) string {
-		name := envVarRE.FindStringSubmatch(m)[1]
-		return os.Getenv(name)
-	})
+	return strings.NewReplacer(pairs...).Replace(run)
 }
 
 // isInteractive reports whether os.Stdin is a real terminal -- the standard Go idiom (a pipe/file
@@ -134,16 +141,16 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) 
 	return filepath.Dir(shimPath), nil
 }
 
-// resolvePackagesFileBinDir installs action.PackagesFile (if not already cached, keyed by its own
-// content hash so identical manifests across actions/runs share one install) and returns its
-// node_modules/.bin dir for the PATH.
-func resolvePackagesFileBinDir(root string, rt config.Runtime, runtimeInstallDir, actionID, packagesFilePath string) (string, error) {
+// resolvePackagesFileBinDir installs action.PackagesFile (if not already cached, keyed purely by
+// its own content hash so identical manifests across different actions/runs share one install)
+// and returns its node_modules/.bin dir for the PATH.
+func resolvePackagesFileBinDir(root string, rt config.Runtime, runtimeInstallDir, packagesFilePath string) (string, error) {
 	data, err := os.ReadFile(packagesFilePath)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(data)
-	installDir := download.InstallDir(root, "action-packages", actionID, hex.EncodeToString(sum[:]))
+	installDir := download.InstallDir(root, "action-packages", hex.EncodeToString(sum[:]), "manifest")
 	if _, statErr := os.Stat(installDir); statErr != nil {
 		if err := download.InstallPackagesFile(rt, runtimeInstallDir, installDir, packagesFilePath); err != nil {
 			return "", err
@@ -171,9 +178,8 @@ func notify(title, body string) {
 }
 
 // Run executes action's Run string once: substituting template vars, resolving its Runtime/
-// PackagesFile if any, and exec'ing through sh -c. Does not persist history (see pkg/trunk/actions'
-// history.go, wired in by a later task) -- callers that need history call actions.AppendHistory
-// themselves with the returned Result.
+// PackagesFile if any, and exec'ing through sh -c. Persists a history entry via AppendHistory on
+// every exit path (success, non-zero exit, or launch failure) through its own finish() closure.
 func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunOptions, stdout, stderr io.Writer) (Result, error) {
 	result := Result{ActionID: action.ID, Hook: opts.Hook, StartedAt: time.Now()}
 	finish := func() Result {
@@ -226,7 +232,7 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 		if action.SourceRoot != "" {
 			packagesFilePath = filepath.Join(action.SourceRoot, action.SourceDir, action.PackagesFile)
 		}
-		binDir, err := resolvePackagesFileBinDir(root, rt, runtimeInstallDir, action.ID, packagesFilePath)
+		binDir, err := resolvePackagesFileBinDir(root, rt, runtimeInstallDir, packagesFilePath)
 		if err != nil {
 			return fail(err)
 		}
@@ -252,15 +258,15 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 	if action.SourceRoot != "" {
 		cwd = filepath.Join(action.SourceRoot, action.SourceDir)
 	}
-	workDir := opts.RepoRoot
-	if cwd != "" {
-		workDir = cwd
-	}
 
 	run := substituteVars(action.Run, opts.Hook, cwd, action.SourceRoot, hookStdinPath, opts.Args)
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)
-	c.Dir = workDir
+	// The process's own cwd is always the repo root: git hook argv (e.g. commit-msg's ${1}, a
+	// path to COMMIT_EDITMSG) is repo-root-relative, never relative to a plugin's own source dir.
+	// ${cwd}/${plugin} above still substitute to the plugin's absolute path for Run strings that
+	// need it explicitly (e.g. `bash ${cwd}/update_config.sh`).
+	c.Dir = opts.RepoRoot
 	path := os.Getenv("PATH")
 	if len(pathDirs) > 0 {
 		path = strings.Join(pathDirs, string(os.PathListSeparator)) + string(os.PathListSeparator) + path

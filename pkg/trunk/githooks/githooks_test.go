@@ -39,9 +39,12 @@ func TestInstall_WritesOneShimPerReferencedHook(t *testing.T) {
 	assert.ElementsMatch(t, []string{"commit-msg", "pre-commit"}, installed)
 	assert.Empty(t, skipped)
 
+	self, err := os.Executable()
+	require.NoError(t, err)
+
 	data, err := os.ReadFile(filepath.Join(repo, ".git", "hooks", "pre-commit"))
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "rtunk actions run --hook pre-commit")
+	assert.Contains(t, string(data), self+" actions run --hook pre-commit", "shim must exec the running binary's absolute path, not a bare `rtunk` that a minimal PATH (GUI git clients) can't resolve")
 	assert.Contains(t, string(data), "Installed by rtunk git-hooks install")
 }
 

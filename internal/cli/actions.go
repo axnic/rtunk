@@ -204,7 +204,10 @@ func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	if err != nil {
 		return err
 	}
-	repoRoot := filepath.Dir(filepath.Dir(configPath))
+	repoRoot, err := gitRepoRoot(filepath.Dir(configPath))
+	if err != nil {
+		return err
+	}
 
 	var matched []config.Action
 	if id != "" {
@@ -253,7 +256,10 @@ func (c *actionsHistoryCmd) Run(cli *CLI, stdout io.Writer) error {
 		}
 		configPath = found
 	}
-	repoRoot := filepath.Dir(filepath.Dir(configPath))
+	repoRoot, err := gitRepoRoot(filepath.Dir(configPath))
+	if err != nil {
+		return err
+	}
 
 	entries, err := actions.History(cli.CacheDir, repoRoot, c.ID, c.Limit)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,6 +53,23 @@ func TestRun_ArgsWithShellMetacharacters_AreNotInjected(t *testing.T) {
 	assert.Equal(t, evil+"\n"+evil+"\n", stdout.String())
 }
 
+func TestRun_ArgContainingEnvVarSyntax_IsNotReExpanded(t *testing.T) {
+	// ${env.*} must expand against the original (trusted) action.Run string BEFORE args are
+	// substituted in. If it ran afterwards over the fully-substituted string instead, an
+	// untrusted arg containing the literal text "${env.EVIL}" would get expanded into EVIL's
+	// real value post-quoting -- reopening injection even though ${1} itself was quoted.
+	t.Setenv("EVIL", "'; echo INJECTED; '")
+	action := config.Action{ID: "env-reexpand-test", Run: `printf '%s\n' ${1}`}
+	var stdout, stderr bytes.Buffer
+
+	res, err := actions.Run(context.Background(), config.Config{}, action,
+		actions.RunOptions{CacheDir: t.TempDir(), RepoRoot: t.TempDir(), Args: []string{"${env.EVIL}"}},
+		&stdout, &stderr)
+	require.NoError(t, err, "stderr: %s", stderr.String())
+	assert.Equal(t, 0, res.ExitCode)
+	assert.Equal(t, "${env.EVIL}\n", stdout.String(), "the arg's literal text must round-trip verbatim, not get expanded into $EVIL's value")
+}
+
 func TestRun_UnsupportedTemplateVar_IsAnError(t *testing.T) {
 	action := config.Action{ID: "bad", Run: "echo ${bogus}"}
 	var stdout, stderr bytes.Buffer
@@ -96,6 +114,27 @@ func TestRun_HookStdinPath_ReceivesStdinContent(t *testing.T) {
 	require.NoError(t, err, "stderr: %s", stderr.String())
 	assert.Equal(t, 0, res.ExitCode)
 	assert.Equal(t, "ref-data\n", stdout.String())
+}
+
+func TestRun_ExecCwdIsRepoRoot_NotPluginSourceRoot(t *testing.T) {
+	// The Critical regression: c.Dir must always be opts.RepoRoot, even for a plugin-sourced
+	// action (non-empty SourceRoot/SourceDir). Git hook argv (e.g. commit-msg's ${1}) is
+	// repo-root-relative, never relative to the plugin's own cache dir. marker.txt exists only
+	// under repoRoot, never under the plugin dir, so `cat ${1}` only succeeds if the process's
+	// actual cwd is repoRoot.
+	repoRoot := t.TempDir()
+	pluginDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "marker.txt"), []byte("repo-root-content\n"), 0o644))
+
+	action := config.Action{ID: "plugin-action", Run: "cat ${1}", SourceRoot: pluginDir}
+	var stdout, stderr bytes.Buffer
+
+	res, err := actions.Run(context.Background(), config.Config{}, action,
+		actions.RunOptions{CacheDir: t.TempDir(), RepoRoot: repoRoot, Args: []string{"marker.txt"}},
+		&stdout, &stderr)
+	require.NoError(t, err, "stderr: %s", stderr.String())
+	assert.Equal(t, 0, res.ExitCode)
+	assert.Equal(t, "repo-root-content\n", stdout.String())
 }
 
 func TestRun_EnvironmentEntries_AreInjected(t *testing.T) {

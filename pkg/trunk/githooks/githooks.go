@@ -31,6 +31,15 @@ func Install(repoRoot string, cfg config.Config, force bool) (installed, skipped
 		return nil, nil, err
 	}
 
+	// Resolve the running rtunk binary's own absolute path rather than embedding the bare
+	// "rtunk" name: GUI git clients (Tower, SourceTree, VS Code, JetBrains) often run hooks under
+	// a minimal PATH that excludes mise/asdf shims or Homebrew paths, so a bare `exec rtunk ...`
+	// fails with "exec: rtunk: not found" there.
+	self, err := os.Executable()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	for _, name := range hookNamesFor(cfg) {
 		path := filepath.Join(dir, name)
 		foreign, statErr := isForeignHook(path)
@@ -42,7 +51,7 @@ func Install(repoRoot string, cfg config.Config, force bool) (installed, skipped
 			continue
 		}
 		script := "#!/bin/sh\n" + marker + "\n# Run `rtunk git-hooks uninstall` to remove.\n" +
-			fmt.Sprintf("exec rtunk actions run --hook %s -- \"$@\"\n", name)
+			fmt.Sprintf("exec %s actions run --hook %s -- \"$@\"\n", self, name)
 		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 			return installed, skipped, err
 		}
@@ -85,21 +94,20 @@ func Uninstall(repoRoot string) (removed []string, err error) {
 	return removed, nil
 }
 
-// hooksDir returns where git hooks actually live for repoRoot: `git config core.hooksPath` if
-// set (resolved relative to repoRoot when relative, per git's own documented behavior), else
-// "<repoRoot>/.git/hooks".
+// hooksDir returns where git hooks actually live for repoRoot, via `git rev-parse --git-path
+// hooks`: this one command correctly resolves the real hooks directory whether repoRoot is a
+// normal repo, a worktree, a submodule (where ".git" is a file, not a directory -- a hand-rolled
+// "<repoRoot>/.git/hooks" join breaks there), or has core.hooksPath set (relative or absolute).
 func hooksDir(repoRoot string) (string, error) {
-	out, err := exec.Command("git", "-C", repoRoot, "config", "--get", "core.hooksPath").Output()
-	if err == nil {
-		p := strings.TrimSpace(string(out))
-		if p != "" {
-			if filepath.IsAbs(p) {
-				return p, nil
-			}
-			return filepath.Join(repoRoot, p), nil
-		}
+	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-path", "hooks").Output()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(repoRoot, ".git", "hooks"), nil
+	p := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(repoRoot, p)
+	}
+	return p, nil
 }
 
 // isForeignHook reports whether path exists and lacks rtunk's marker. A missing file is not

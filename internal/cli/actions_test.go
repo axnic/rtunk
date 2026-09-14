@@ -68,11 +68,11 @@ func TestActionsHistoryCmd_ReflectsPastRuns(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n")
 	cacheDir := t.TempDir()
 	// Seed history directly (this test's own concern is the CLI's rendering, not Run() itself).
-	// repoRoot must match actionsHistoryCmd.Run's own computation -- two directories up from
-	// configPath, mirroring the real .trunk/trunk.yaml layout findTrunkYAML expects -- not
-	// writeScratchTrunkYAML's flat tempDir/trunk.yaml layout (no .trunk/ subdir), or the seeded
-	// entry's key and the CLI's lookup key diverge and history reads back empty.
-	repoRoot := filepath.Dir(filepath.Dir(path))
+	// repoRoot must match actionsHistoryCmd.Run's own computation (gitRepoRoot, the real git
+	// toplevel) or the seeded entry's key and the CLI's lookup key diverge and history reads back
+	// empty.
+	repoRoot, err := gitRepoRoot(filepath.Dir(path))
+	require.NoError(t, err)
 	require.NoError(t, seedHistoryForTest(cacheDir, repoRoot))
 
 	stdout, stderr, err := run2(t, "--config", path, "--cache-dir", cacheDir, "actions", "history")

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,9 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// writeScratchTrunkYAML writes content into a fresh git repo's root (actions/git-hooks commands
+// resolve repoRoot via `git rev-parse --show-toplevel`, so callers exercising those code paths
+// need a real repo here, not a bare tempdir).
 func writeScratchTrunkYAML(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "trunk.yaml")
+	dir := t.TempDir()
+	require.NoError(t, exec.Command("git", "-C", dir, "init", "-q").Run())
+	path := filepath.Join(dir, "trunk.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 	return path
 }
