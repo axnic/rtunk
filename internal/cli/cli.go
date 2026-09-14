@@ -47,8 +47,10 @@ type CLI struct {
 type exitPanic int
 
 // Run parses args against CLI's grammar and executes the selected command's Run(), writing to
-// stdout/stderr. It does not call os.Exit itself -- cmd/rtunk/main.go owns the process exit code
-// -- except that Kong's own --help handling exits the process directly (kong.Exit's default).
+// stdout/stderr. It does not call os.Exit itself -- cmd/rtunk/main.go owns the process exit code.
+// Both --help and --version route through Kong's BeforeReset(app *Kong, ...) -> app.Exit(0), which
+// this function intercepts below (parser.Exit's panic/recover override) instead of letting either
+// exit the process directly.
 func Run(args []string, stdout, stderr io.Writer) error {
 	var cli CLI
 	parser, err := kong.New(&cli,

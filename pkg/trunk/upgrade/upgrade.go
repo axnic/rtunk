@@ -98,7 +98,14 @@ func Apply(cacheDir, assetURL, targetPath string) error {
 	}
 
 	tmpPath := targetPath + ".new"
+	defer os.Remove(tmpPath) // no-op once Rename below succeeds and moves tmpPath away
+
 	if err := os.WriteFile(tmpPath, data, 0o755); err != nil {
+		return err
+	}
+	// WriteFile's mode is masked by the process umask (e.g. umask 077 -> 0700 actual), so chmod
+	// explicitly -- chmod, unlike file creation, ignores umask.
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, targetPath)

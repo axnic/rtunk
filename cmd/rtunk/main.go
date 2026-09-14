@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/xunleii/rtunk/internal/cli"
 )
@@ -22,10 +23,18 @@ func resolveVersion() string {
 	if version != "dev" {
 		return version
 	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+	if info, ok := debug.ReadBuildInfo(); ok && !isUnresolvedVersion(info.Main.Version) {
 		return info.Main.Version
 	}
 	return "dev"
+}
+
+// isUnresolvedVersion reports whether v is a build-info version that doesn't identify a real
+// release: the empty string, Go's literal "(devel)" (a `go test`/`go run` build), or a Go VCS
+// pseudo-version (a plain `go build` in a module with no reachable semver tag, e.g.
+// "v0.0.0-20260914192836-83c4ff4b160c") -- all three should fall back to "dev".
+func isUnresolvedVersion(v string) bool {
+	return v == "" || v == "(devel)" || strings.HasPrefix(v, "v0.0.0-")
 }
 
 func main() {
