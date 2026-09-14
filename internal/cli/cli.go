@@ -16,11 +16,18 @@ import (
 // streams distinct so a shim's real stderr isn't merged into rtunk's stdout).
 type Stderr io.Writer
 
+// Version is rtunk's own version string, set by cmd/rtunk/main.go before calling Run (see that
+// file's own fallback chain: ldflags -X main.version=... -> debug.ReadBuildInfo() -> "dev").
+// pkg/trunk/upgrade's Available treats "dev" as "cannot determine current version" and never
+// reports an upgrade available against it.
+var Version = "dev"
+
 // CLI is Kong's grammar root: the two flags every subcommand needs to locate and resolve a
 // trunk.yaml, plus the config subcommand tree.
 type CLI struct {
-	Config   string `help:"Path to trunk.yaml (default: nearest .trunk/trunk.yaml)."`
-	CacheDir string `help:"Plugin cache directory (default: OS cache dir)." env:"RTUNK_CACHE_DIR"`
+	Config      string           `help:"Path to trunk.yaml (default: nearest .trunk/trunk.yaml)."`
+	CacheDir    string           `help:"Plugin cache directory (default: OS cache dir)." env:"RTUNK_CACHE_DIR"`
+	VersionFlag kong.VersionFlag `name:"version" help:"Print rtunk's own version and exit."`
 
 	ConfigCmd   configCmd   `cmd:"" name:"config" help:"Query the resolved trunk configuration."`
 	DownloadCmd downloadCmd `cmd:"" name:"download" help:"Download enabled tools/runtimes into the local cache."`
@@ -34,6 +41,10 @@ type CLI struct {
 	GitHooksCmd gitHooksCmd `cmd:"" name:"git-hooks" help:"Manage git hooks that trigger actions."`
 }
 
+// exitPanic is a sentinel panic type used to signal that Kong called os.Exit without actually
+// exiting the process (used for testing).
+type exitPanic int
+
 // Run parses args against CLI's grammar and executes the selected command's Run(), writing to
 // stdout/stderr. It does not call os.Exit itself -- cmd/rtunk/main.go owns the process exit code
 // -- except that Kong's own --help handling exits the process directly (kong.Exit's default).
@@ -43,12 +54,31 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		kong.Name("rtunk"),
 		kong.Description("Query and act on trunk-style repo configuration."),
 		kong.Writers(stdout, stderr),
+		kong.Vars{"version": Version},
 		kong.BindFor[io.Writer](stdout),
 		kong.BindFor[Stderr](stderr),
 	)
 	if err != nil {
 		return err
 	}
+
+	// Replace Kong's default Exit handler with one that uses panic instead of os.Exit, so that
+	// tests can verify version output without actually exiting the process.
+	parser.Exit = func(code int) {
+		panic(exitPanic(code))
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			if code, ok := r.(exitPanic); ok && int(code) == 0 {
+				// Recovered from a successful exit (e.g., --version, --help). These are normal
+				// exits and we return without error.
+				return
+			}
+			// Re-panic any other panic value.
+			panic(r)
+		}
+	}()
 
 	kctx, err := parser.Parse(args)
 	if err != nil {

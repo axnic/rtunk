@@ -100,3 +100,13 @@ func TestUnknownCommand(t *testing.T) {
 	_, _, err := run2(t, "bogus")
 	assert.Error(t, err)
 }
+
+func TestVersionFlag_PrintsCliVersion(t *testing.T) {
+	old := Version
+	Version = "v9.9.9"
+	t.Cleanup(func() { Version = old })
+
+	stdout, _, err := run2(t, "--version")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "v9.9.9")
+}
