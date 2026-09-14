@@ -159,14 +159,14 @@ type VersionCommand struct {
 
 // Action is a git-hook or file-change-triggered automation (ARCHITECTURE.md `actions:`).
 type Action struct {
-	ID            string             `yaml:"id"`
-	DisplayName   string             `yaml:"display_name,omitempty"`
-	Description   string             `yaml:"description,omitempty"`
-	Runtime       string             `yaml:"runtime,omitempty"`
-	PackagesFile  string             `yaml:"packages_file,omitempty"`
-	Run           string             `yaml:"run,omitempty"`
-	Triggers      []Trigger          `yaml:"triggers,omitempty"`
-	Interactive   Interactivity      `yaml:"interactive,omitempty"`
+	ID           string        `yaml:"id"`
+	DisplayName  string        `yaml:"display_name,omitempty"`
+	Description  string        `yaml:"description,omitempty"`
+	Runtime      string        `yaml:"runtime,omitempty"`
+	PackagesFile string        `yaml:"packages_file,omitempty"`
+	Run          string        `yaml:"run,omitempty"`
+	Triggers     []Trigger     `yaml:"triggers,omitempty"`
+	Interactive  Interactivity `yaml:"interactive,omitempty"`
 	// NotifyOnError is nil when the plugin.yaml omits it -- every real trunk-io/plugins action
 	// that sets it explicitly sets it to false (to suppress the implied default), so nil is
 	// treated as "true" by pkg/trunk/actions.Run, mirroring Command.Enabled's own *bool

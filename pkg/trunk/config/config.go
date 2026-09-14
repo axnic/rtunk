@@ -40,8 +40,8 @@ type PluginSource struct {
 // plus the merged Definitions resolved from plugin sources (never present in trunk.yaml itself),
 // keyed by each definition's own id/name.
 type CategoryConfig[T any] struct {
-	Enabled  []string
-	Disabled []string // only trunkFile.Actions parses this today (see resolve.go) -- advisory only, never read by filterEnabled
+	Enabled     []string
+	Disabled    []string // only trunkFile.Actions parses this today (see resolve.go) -- advisory only, never read by filterEnabled
 	Definitions map[string]T
 }
 
