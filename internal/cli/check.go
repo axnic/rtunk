@@ -48,8 +48,8 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	if err != nil {
 		return err
 	}
-	// configPath is <repoRoot>/.trunk/trunk.yaml (findTrunkYAML's only supported layout) --
-	// repoRoot is two directories up.
+	// configPath is <repoRoot>/.rtunk/rtunk.yaml or <repoRoot>/.trunk/trunk.yaml (findTrunkYAML's
+	// only supported layouts) -- repoRoot is two directories up either way.
 	repoRoot := filepath.Dir(filepath.Dir(configPath))
 
 	jobs := c.Jobs

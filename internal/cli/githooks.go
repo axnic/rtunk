@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -23,7 +24,11 @@ type gitHooksCmd struct {
 func gitRepoRoot(dir string) (string, error) {
 	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
-		return "", fmt.Errorf("rtunk: resolve git repo root: %w", err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return "", errors.New(strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", fmt.Errorf("resolve git repo root: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

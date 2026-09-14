@@ -29,6 +29,20 @@ func pluginRepoLocalFor(t *testing.T, trunkDir string) string {
 	return rel
 }
 
+// TestGitRepoRoot_OutsideGitRepo_SurfacesGitError proves gitRepoRoot surfaces git's own real
+// stderr message (e.g. "fatal: not a git repository...") instead of a generic "exit status 128",
+// and doesn't prefix its own "rtunk:" on top of the one cmd/rtunk/main.go already adds -- this
+// path is newly reachable as a brand new user's very first command (`rtunk init` outside a git
+// repo) since this branch added init/deinit.
+func TestGitRepoRoot_OutsideGitRepo_SurfacesGitError(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := gitRepoRoot(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a git repository")
+	assert.NotContains(t, err.Error(), "rtunk: rtunk:")
+}
+
 func TestGitHooksInstallCmd_WritesHooksForEnabledActions(t *testing.T) {
 	repo := t.TempDir()
 	require.NoError(t, exec.Command("git", "-C", repo, "init", "-q").Run())

@@ -25,7 +25,7 @@ var Version = "dev"
 // CLI is Kong's grammar root: the two flags every subcommand needs to locate and resolve a
 // trunk.yaml, plus the config subcommand tree.
 type CLI struct {
-	Config      string           `help:"Path to trunk.yaml (default: nearest .trunk/trunk.yaml)."`
+	Config      string           `help:"Path to trunk.yaml (default: nearest .rtunk/rtunk.yaml or .trunk/trunk.yaml)."`
 	CacheDir    string           `help:"Plugin cache directory (default: OS cache dir)." env:"RTUNK_CACHE_DIR"`
 	VersionFlag kong.VersionFlag `name:"version" help:"Print rtunk's own version and exit."`
 

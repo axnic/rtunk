@@ -29,7 +29,7 @@ type initCmd struct {
 	Force bool `help:"Overwrite an existing .rtunk/rtunk.yaml."`
 }
 
-func (c *initCmd) Run(stdout io.Writer) error {
+func (c *initCmd) Run(stdout io.Writer, stderr Stderr) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -46,6 +46,14 @@ func (c *initCmd) Run(stdout io.Writer) error {
 		if _, statErr := os.Stat(configPath); statErr == nil {
 			return fmt.Errorf("rtunk: %s already exists; use --force to overwrite", configPath)
 		}
+	}
+
+	// Task 1 made findTrunkYAML prefer .rtunk/rtunk.yaml over .trunk/trunk.yaml -- so writing the
+	// scaffold here would silently shadow a real, already-in-use .trunk/trunk.yaml for every other
+	// command from this point on. Warn (not fail: init still succeeds) so that isn't silent.
+	trunkYAMLPath := filepath.Join(repoRoot, ".trunk", "trunk.yaml")
+	if _, statErr := os.Stat(trunkYAMLPath); statErr == nil {
+		fmt.Fprintf(stderr, "warning: %s already exists -- %s now takes precedence for this repo\n", trunkYAMLPath, configPath)
 	}
 
 	if err := os.MkdirAll(rtunkDir, 0o755); err != nil {
@@ -76,23 +84,35 @@ func (c *deinitCmd) Run(stdout io.Writer) error {
 		return err
 	}
 
-	rtunkDir := filepath.Join(repoRoot, ".rtunk")
-	if _, statErr := os.Stat(rtunkDir); os.IsNotExist(statErr) {
-		fmt.Fprintln(stdout, "nothing to deinit")
-		return nil
-	}
-
-	if err := os.RemoveAll(rtunkDir); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "removed %s\n", rtunkDir)
-
+	// githooks.Uninstall always runs, regardless of whether .rtunk/ exists -- a repo that only
+	// ever used .trunk/trunk.yaml (rtunk's own primary drop-in-to-an-existing-trunk-repo use case)
+	// can still have an installed hook, and it must not be left behind. It also runs BEFORE
+	// removing .rtunk/: if Uninstall fails partway, the user keeps .rtunk/ rather than being left
+	// with neither the config nor a working hook (every subsequent `git commit` would then fail to
+	// find any config at all).
 	removed, err := githooks.Uninstall(repoRoot)
 	if err != nil {
 		return err
 	}
+
+	rtunkDir := filepath.Join(repoRoot, ".rtunk")
+	dirExisted := false
+	if _, statErr := os.Stat(rtunkDir); statErr == nil {
+		dirExisted = true
+		if err := os.RemoveAll(rtunkDir); err != nil {
+			return err
+		}
+	}
+
+	if !dirExisted && len(removed) == 0 {
+		fmt.Fprintln(stdout, "nothing to deinit")
+		return nil
+	}
 	for _, name := range removed {
 		fmt.Fprintf(stdout, "removed hook: %s\n", name)
+	}
+	if dirExisted {
+		fmt.Fprintf(stdout, "removed %s\n", rtunkDir)
 	}
 	return nil
 }

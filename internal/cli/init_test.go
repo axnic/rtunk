@@ -93,6 +93,27 @@ func TestInitCmd_ScaffoldIsActuallyFoundByFindTrunkYAML(t *testing.T) {
 	assert.Equal(t, filepath.Join(repo, ".rtunk", "rtunk.yaml"), found)
 }
 
+func TestInitCmd_WarnsWhenShadowingExistingTrunkYAML(t *testing.T) {
+	repo := initGitRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".trunk"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".trunk", "trunk.yaml"), []byte("version: \"0.1\"\n"), 0o644))
+	chdir(t, repo)
+
+	_, stderr, err := run2(t, "init")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stderr, filepath.Join(repo, ".trunk", "trunk.yaml"))
+	assert.Contains(t, stderr, "already exists")
+}
+
+func TestInitCmd_NoWarningWhenNoExistingTrunkYAML(t *testing.T) {
+	repo := initGitRepo(t)
+	chdir(t, repo)
+
+	_, stderr, err := run2(t, "init")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.NotContains(t, stderr, "already exists")
+}
+
 func TestDeinitCmd_RemovesRtunkDir(t *testing.T) {
 	repo := initGitRepo(t)
 	chdir(t, repo)
@@ -141,6 +162,44 @@ actions:
 	assert.Contains(t, stdout, "removed hook: pre-commit")
 	assert.NoFileExists(t, filepath.Join(repo, ".git", "hooks", "pre-commit"))
 	assert.NoDirExists(t, filepath.Join(repo, ".rtunk"))
+}
+
+// TestDeinitCmd_RemovesHookWithoutRtunkDir is the direct proof of the bug the final reviewer
+// reproduced live: a repo that only ever used .trunk/trunk.yaml (rtunk's own primary
+// drop-in-to-an-existing-trunk-repo use case, never running `rtunk init` at all) and ran
+// `rtunk git-hooks install` must still have its hook removed by `rtunk deinit`, and must NOT be
+// told "nothing to deinit" -- deinit must not gate hook removal on .rtunk/ existing.
+func TestDeinitCmd_RemovesHookWithoutRtunkDir(t *testing.T) {
+	repo := initGitRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".trunk"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "pluginrepo", "actions", "greet"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "pluginrepo", "actions", "greet", "plugin.yaml"), []byte(`actions:
+  definitions:
+    - id: greet
+      run: echo hello
+      triggers:
+        - git_hooks: [pre-commit]
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".trunk", "trunk.yaml"), []byte(`version: "0.1"
+plugins:
+  sources:
+    - id: local
+      local: ../pluginrepo
+actions:
+  enabled:
+    - greet
+`), 0o644))
+	chdir(t, repo)
+
+	_, stderr, err := run2(t, "git-hooks", "install")
+	require.NoError(t, err, "stderr: %s", stderr)
+	require.FileExists(t, filepath.Join(repo, ".git", "hooks", "pre-commit"))
+
+	stdout, stderr, err := run2(t, "deinit")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "removed hook: pre-commit")
+	assert.NotContains(t, stdout, "nothing to deinit")
+	assert.NoFileExists(t, filepath.Join(repo, ".git", "hooks", "pre-commit"))
 }
 
 func TestDeinitCmd_NothingToDeinit_IsNoOp(t *testing.T) {
