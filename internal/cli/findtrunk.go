@@ -8,12 +8,14 @@ import (
 	"strings"
 )
 
-// findTrunkYAML walks up from the working directory looking for .trunk/trunk.yaml, the same way
-// git locates .git -- the nearest match wins. The walk is bounded by the git repository root (if
-// any): trunk.yaml belongs to the repo you're in, so a miss must not fall through to an unrelated
-// .trunk/trunk.yaml sitting further up the filesystem, e.g. in a parent repo or the home dir.
-// Outside a git repo, it falls back to walking to the filesystem root. rtunk's own
-// .rtunk/rtunk.yaml is not read yet (see pkg/trunk/config's package doc).
+// findTrunkYAML walks up from the working directory looking for .rtunk/rtunk.yaml (preferred) or
+// .trunk/trunk.yaml (fallback, for compat with a repo that hasn't run `rtunk init` yet) at each
+// level, the same way git locates .git -- the nearest directory that has either file wins, and
+// .rtunk/rtunk.yaml is preferred over .trunk/trunk.yaml when a single directory has both (the
+// common case once `rtunk init` has run in an existing trunk repo). The walk is bounded by the git
+// repository root (if any): a miss must not fall through to an unrelated config file sitting
+// further up the filesystem, e.g. in a parent repo or the home dir. Outside a git repo, it falls
+// back to walking to the filesystem root.
 func findTrunkYAML() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -27,8 +29,10 @@ func findTrunkYAML() (string, error) {
 	}
 
 	for {
-		candidate := filepath.Join(dir, ".trunk", "trunk.yaml")
-		if _, err := os.Stat(candidate); err == nil {
+		if candidate := filepath.Join(dir, ".rtunk", "rtunk.yaml"); fileExists(candidate) {
+			return candidate, nil
+		}
+		if candidate := filepath.Join(dir, ".trunk", "trunk.yaml"); fileExists(candidate) {
 			return candidate, nil
 		}
 		if dir == gitRoot {
@@ -40,5 +44,12 @@ func findTrunkYAML() (string, error) {
 		}
 		dir = parent
 	}
-	return "", fmt.Errorf("no .trunk/trunk.yaml found (searched from %s upward); use --config to specify one", start)
+	return "", fmt.Errorf("no .rtunk/rtunk.yaml or .trunk/trunk.yaml found (searched from %s upward); use --config to specify one", start)
+}
+
+// fileExists is findTrunkYAML's own os.Stat-based existence check, factored out since it's now
+// called twice per directory level instead of once.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

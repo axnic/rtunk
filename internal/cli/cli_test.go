@@ -96,6 +96,56 @@ func TestFindTrunkYAML_NotFound(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestFindTrunkYAML_PrefersRtunkYAMLOverTrunkYAML(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rtunk"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".trunk"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".rtunk", "rtunk.yaml"), []byte("version: \"0.1\"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".trunk", "trunk.yaml"), []byte("version: \"0.1\"\n"), 0o644))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
+	require.NoError(t, os.Chdir(root))
+
+	found, err := findTrunkYAML()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, ".rtunk", "rtunk.yaml"), found)
+}
+
+func TestFindTrunkYAML_FindsRtunkYAMLAlone(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rtunk"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".rtunk", "rtunk.yaml"), []byte("version: \"0.1\"\n"), 0o644))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
+	require.NoError(t, os.Chdir(root))
+
+	found, err := findTrunkYAML()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, ".rtunk", "rtunk.yaml"), found)
+}
+
+func TestFindTrunkYAML_FallsBackToTrunkYAMLWhenNoRtunkYAML(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".trunk"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".trunk", "trunk.yaml"), []byte("version: \"0.1\"\n"), 0o644))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
+	require.NoError(t, os.Chdir(root))
+
+	found, err := findTrunkYAML()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, ".trunk", "trunk.yaml"), found)
+}
+
 func TestUnknownCommand(t *testing.T) {
 	_, _, err := run2(t, "bogus")
 	assert.Error(t, err)
