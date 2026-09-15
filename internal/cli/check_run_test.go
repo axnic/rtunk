@@ -295,3 +295,62 @@ func TestCheckRunCmd_Fix_AppliesFixesBeforeReporting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "formatted\n", string(data))
 }
+
+// TestCheckRunCmd_Filter_OnlyRunsAllowedLinter reuses writeLinterFixture's own zero-network-call
+// pattern (echo-based commands, no Tools reference) -- --filter keep-me must mean drop-me's
+// commands never run at all, not merely that drop-me's findings are suppressed after the fact.
+func TestCheckRunCmd_Filter_OnlyRunsAllowedLinter(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, []string{"keep-me", "drop-me"}, `    - name: keep-me
+      description: Should run
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+    - name: drop-me
+      description: Should not run
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+`)
+	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--filter", "keep-me")
+	assert.Contains(t, stderr, "keep-me")
+	assert.NotContains(t, stderr, "drop-me")
+}
+
+func TestCheckRunCmd_Exclude_SkipsExcludedLinter(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, []string{"keep-me", "drop-me"}, `    - name: keep-me
+      description: Should run
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+    - name: drop-me
+      description: Should not run
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+`)
+	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--exclude", "drop-me")
+	assert.Contains(t, stderr, "keep-me")
+	assert.NotContains(t, stderr, "drop-me")
+}
+
+func TestCheckRunCmd_Filter_UnknownLinter_ReturnsUsageError(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, []string{"keep-me"}, `    - name: keep-me
+      description: Should run
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+`)
+	_, _, err := run2(t, "--config", cfgPath, "check", "--filter", "nope")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"nope"`)
+}

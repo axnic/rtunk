@@ -31,8 +31,10 @@ type checkCmd struct {
 type checkRunCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to check (default: whole repository)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
-	Fix          bool     `help:"Apply automatic fixes (formatter commands) before reporting."`
+	Fix          bool     `short:"y" help:"Apply automatic fixes (formatter commands) before reporting."`
 	VerifyStable bool     `help:"With --fix, verify the result is stable instead of a single pass."`
+	Filter       string   `help:"Comma-separated linter id allow-list, or -id,-id... deny-list (trunk compatibility)."`
+	Exclude      string   `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
 }
 
 func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
@@ -45,6 +47,10 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		configPath = found
 	}
 	cfg, err := resolveConfig(configPath, cli.CacheDir, false)
+	if err != nil {
+		return err
+	}
+	cfg, err = filterLinters(cfg, c.Filter, c.Exclude)
 	if err != nil {
 		return err
 	}
