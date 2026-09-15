@@ -51,6 +51,11 @@ type CLI struct {
 	InitCmd     initCmd     `cmd:"" name:"init" help:"Initialize rtunk in this repository."`
 	DeinitCmd   deinitCmd   `cmd:"" name:"deinit" help:"Remove rtunk's configuration and installed artifacts."`
 	UpgradeCmd  upgradeCmd  `cmd:"" name:"upgrade" help:"Check for and install a newer rtunk release."`
+	// RunCmd is `rtunk run <id>`: real trunk's own top-level shortcut for `trunk actions run
+	// <id>` (see trunk --help's own subcommand list). Registered as the same actionsRunCmd type
+	// used by CLI.ActionsCmd.Run -- both paths share one Run method, so there is nothing to keep
+	// in sync between them.
+	RunCmd actionsRunCmd `cmd:"" name:"run" help:"Run a specified action (shortcut for 'actions run')."`
 }
 
 // exitPanic is a sentinel panic type used to signal that Kong called os.Exit without actually
