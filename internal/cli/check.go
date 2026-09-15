@@ -35,6 +35,12 @@ type checkRunCmd struct {
 	VerifyStable bool     `help:"With --fix, verify the result is stable instead of a single pass."`
 	Filter       string   `help:"Comma-separated linter id allow-list, or -id,-id... deny-list (trunk compatibility)."`
 	Exclude      string   `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
+	// NoFix is accepted for trunk compatibility and has no effect: check already never applies
+	// fixes unless --fix/-y is given, so --no-fix asks for check's existing default.
+	NoFix bool `short:"n" help:"Accepted for trunk compatibility; check never auto-fixes without --fix, this has no effect."`
+	// PrintFailures is accepted for trunk compatibility and has no effect: check already always
+	// prints Failed events to stderr unconditionally (see printEvent).
+	PrintFailures bool `help:"Accepted for trunk compatibility; check already always prints failures, this has no effect."`
 }
 
 func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {

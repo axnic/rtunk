@@ -341,6 +341,34 @@ func TestCheckRunCmd_Exclude_SkipsExcludedLinter(t *testing.T) {
 	assert.NotContains(t, stderr, "drop-me")
 }
 
+func TestCheckRunCmd_ShortFixFlag_MatchesLongForm(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, nil, "")
+	longOut, longStderr, longErr := run2(t, "--config", cfgPath, "check", "--fix")
+	shortOut, shortStderr, shortErr := run2(t, "--config", cfgPath, "check", "-y")
+	assert.Equal(t, longErr, shortErr)
+	assert.Equal(t, longOut, shortOut)
+	assert.Equal(t, longStderr, shortStderr)
+}
+
+// TestCheckRunCmd_NoFix_Accepted: check already never auto-fixes unless --fix is given, so
+// --no-fix asks for check's existing default -- this is a documented no-op accepted for scripts
+// that pass it defensively, not a behavior change.
+func TestCheckRunCmd_NoFix_Accepted(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, nil, "")
+	_, _, err := run2(t, "--config", cfgPath, "check", "-n")
+	require.NoError(t, err)
+	_, _, err = run2(t, "--config", cfgPath, "check", "--no-fix")
+	require.NoError(t, err)
+}
+
+// TestCheckRunCmd_PrintFailures_Accepted: check already always prints Failed events to stderr
+// unconditionally -- this is a documented no-op.
+func TestCheckRunCmd_PrintFailures_Accepted(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, nil, "")
+	_, _, err := run2(t, "--config", cfgPath, "check", "--print-failures")
+	require.NoError(t, err)
+}
+
 func TestCheckRunCmd_Filter_UnknownLinter_ReturnsUsageError(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, []string{"keep-me"}, `    - name: keep-me
       description: Should run

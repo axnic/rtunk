@@ -151,6 +151,24 @@ func TestUnknownCommand(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestGlobalCI_Accepted: --ci is a documented no-op (rtunk is already always CI-safe: no daemon,
+// no interactive prompts, deterministic output) -- this test's only claim is that Kong parses it
+// and behavior is identical to the flag being absent, not that anything changes.
+func TestGlobalCI_Accepted(t *testing.T) {
+	withFlag, _, errWith := run2(t, "--ci", "--config", trunkYAML, "config", "print")
+	without, _, errWithout := run2(t, "--config", trunkYAML, "config", "print")
+	require.NoError(t, errWith)
+	require.NoError(t, errWithout)
+	assert.Equal(t, without, withFlag)
+}
+
+// TestGlobalVerbose_Accepted: -v/--verbose is a documented no-op -- rtunk already unconditionally
+// streams per-file progress to stderr regardless of this flag.
+func TestGlobalVerbose_Accepted(t *testing.T) {
+	_, _, err := run2(t, "-v", "--config", trunkYAML, "config", "print")
+	require.NoError(t, err)
+}
+
 func TestVersionFlag_PrintsCliVersion(t *testing.T) {
 	old := Version
 	Version = "v9.9.9"

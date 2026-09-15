@@ -244,7 +244,7 @@ func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 
 type actionsHistoryCmd struct {
 	ID    string `help:"Restrict to one action id."`
-	Limit int    `help:"Maximum entries to show." default:"20"`
+	Limit int    `aliases:"count" help:"Maximum entries to show." default:"20"`
 }
 
 func (c *actionsHistoryCmd) Run(cli *CLI, stdout io.Writer) error {

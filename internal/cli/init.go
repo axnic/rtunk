@@ -71,8 +71,12 @@ func (c *initCmd) Run(stdout io.Writer, stderr Stderr) error {
 // deinitCmd is `rtunk deinit`: ROADMAP.md v0.7, reversing `rtunk init` -- removes .rtunk/ and any
 // git hooks `rtunk git-hooks install` (a separate, already-shipped command any real init'd repo
 // would have run) could have added, since "reversing init" means undoing everything rtunk itself
-// could have set up, not just the config file alone.
-type deinitCmd struct{}
+// could have set up, not just the config file alone. Yes is accepted for trunk compatibility and
+// has no effect: rtunk's deinit never prompts (an established non-goal since v0.7's own design),
+// so -y/--yes asks for behavior deinit already has.
+type deinitCmd struct {
+	Yes bool `short:"y" help:"Accepted for trunk compatibility; deinit never prompts, this has no effect."`
+}
 
 func (c *deinitCmd) Run(stdout io.Writer) error {
 	cwd, err := os.Getwd()

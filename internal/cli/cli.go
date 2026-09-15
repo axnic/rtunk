@@ -28,6 +28,15 @@ type CLI struct {
 	Config      string           `help:"Path to trunk.yaml (default: nearest .rtunk/rtunk.yaml or .trunk/trunk.yaml)."`
 	CacheDir    string           `help:"Plugin cache directory (default: OS cache dir)." env:"RTUNK_CACHE_DIR"`
 	VersionFlag kong.VersionFlag `name:"version" help:"Print rtunk's own version and exit."`
+	// CI is accepted for trunk compatibility and has no effect: rtunk has no daemon, no
+	// interactive prompts, and always produces deterministic output, so there is no
+	// "CI mode" to switch into -- it is already the only mode.
+	CI bool `help:"Accepted for trunk compatibility; rtunk is always CI-safe, this has no effect."`
+	// Verbose is accepted for trunk compatibility and has no effect: rtunk already
+	// unconditionally streams per-file running/done progress to stderr for every check/fmt run
+	// (see internal/cli/check.go's printEvent) -- there is no quieter default this flag would
+	// make louder.
+	Verbose bool `short:"v" help:"Accepted for trunk compatibility; rtunk already prints this detail, this has no effect."`
 
 	ConfigCmd   configCmd   `cmd:"" name:"config" help:"Query the resolved trunk configuration."`
 	DownloadCmd downloadCmd `cmd:"" name:"download" help:"Download enabled tools/runtimes into the local cache."`

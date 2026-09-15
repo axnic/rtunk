@@ -79,3 +79,22 @@ func TestActionsHistoryCmd_ReflectsPastRuns(t *testing.T) {
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "seeded-action")
 }
+
+// TestActionsHistoryCmd_CountAlias_MatchesLimitFlag: --count is real trunk's own flag name for
+// the same "how many entries" concept as rtunk's existing --limit.
+func TestActionsHistoryCmd_CountAlias_MatchesLimitFlag(t *testing.T) {
+	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n")
+	cacheDir := t.TempDir()
+	repoRoot, err := gitRepoRoot(filepath.Dir(path))
+	require.NoError(t, err)
+	require.NoError(t, actions.AppendHistory(cacheDir, repoRoot, actions.Result{ActionID: "first-action", StartedAt: time.Now()}))
+	require.NoError(t, actions.AppendHistory(cacheDir, repoRoot, actions.Result{ActionID: "second-action", StartedAt: time.Now()}))
+
+	limitOut, limitStderr, limitErr := run2(t, "--config", path, "--cache-dir", cacheDir, "actions", "history", "--limit", "1")
+	countOut, countStderr, countErr := run2(t, "--config", path, "--cache-dir", cacheDir, "actions", "history", "--count", "1")
+	require.NoError(t, limitErr, "stderr: %s", limitStderr)
+	require.NoError(t, countErr, "stderr: %s", countStderr)
+	assert.Equal(t, limitOut, countOut)
+	assert.Contains(t, limitOut, "second-action")
+	assert.NotContains(t, limitOut, "first-action")
+}

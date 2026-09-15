@@ -61,6 +61,26 @@ func TestUpgradeCmd_Check_AvailableExitsNonZero(t *testing.T) {
 	assert.Contains(t, stdout+err.Error(), "v2.0.0")
 }
 
+// TestUpgradeCmd_DryRunAlias_MatchesCheckFlag: --dry-run is an alias for the existing --check
+// field (identical real-trunk semantics: "detect available upgrades, but do not apply changes").
+func TestUpgradeCmd_DryRunAlias_MatchesCheckFlag(t *testing.T) {
+	srv := releaseServer(t, "v2.0.0", nil)
+	defer srv.Close()
+
+	old := Version
+	Version = "v1.0.0"
+	oldBase := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { Version = old; githubAPIBase = oldBase })
+
+	checkOut, _, checkErr := run2(t, "upgrade", "--check")
+	dryRunOut, _, dryRunErr := run2(t, "upgrade", "--dry-run")
+	require.Error(t, checkErr)
+	require.Error(t, dryRunErr)
+	assert.Equal(t, checkErr, dryRunErr)
+	assert.Equal(t, checkOut, dryRunOut)
+}
+
 func TestUpgradeCmd_AppliesAndReports(t *testing.T) {
 	assetBody := []byte("new-binary-bytes")
 	srv := releaseServer(t, "v2.0.0", assetBody)

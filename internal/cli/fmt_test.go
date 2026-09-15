@@ -81,6 +81,27 @@ func TestFmtCmd_DedupesFilesChangedByMultipleLinters(t *testing.T) {
 	assert.Equal(t, want, stdout, "the same file changed by two different linters must be listed once, not twice")
 }
 
+func TestFmtCmd_NoFixAlias_MatchesCheckFlag(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, nil, "")
+	longOut, longStderr, longErr := run2(t, "--config", cfgPath, "fmt", "--check")
+	aliasOut, aliasStderr, aliasErr := run2(t, "--config", cfgPath, "fmt", "--no-fix")
+	shortOut, shortStderr, shortErr := run2(t, "--config", cfgPath, "fmt", "-n")
+	assert.Equal(t, longErr, aliasErr)
+	assert.Equal(t, longOut, aliasOut)
+	assert.Equal(t, longStderr, aliasStderr)
+	assert.Equal(t, longErr, shortErr)
+	assert.Equal(t, longOut, shortOut)
+	assert.Equal(t, longStderr, shortStderr)
+}
+
+// TestFmtCmd_PrintFailures_Accepted: fmt already always prints Failed events unconditionally --
+// this is a documented no-op.
+func TestFmtCmd_PrintFailures_Accepted(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, nil, "")
+	_, _, err := run2(t, "--config", cfgPath, "fmt", "--print-failures")
+	require.NoError(t, err)
+}
+
 func TestFmtCmd_Filter_OnlyRunsAllowedFormatter(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, []string{"keep-me", "drop-me"}, `    - name: keep-me
       description: Should run

@@ -21,7 +21,7 @@ var selfExecutablePath = os.Executable
 // upgradeCmd is `rtunk upgrade`: ROADMAP.md v0.6, checking rtunk's own GitHub Releases (never
 // linters/tools/runtimes/plugins -- those stay reproducibly pinned via trunk.yaml).
 type upgradeCmd struct {
-	Check bool `help:"Report whether a newer release is available, without installing it."`
+	Check bool `aliases:"dry-run" help:"Report whether a newer release is available, without installing it."`
 }
 
 func (c *upgradeCmd) Run(cli *CLI, stdout io.Writer) error {

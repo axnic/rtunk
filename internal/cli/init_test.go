@@ -210,3 +210,19 @@ func TestDeinitCmd_NothingToDeinit_IsNoOp(t *testing.T) {
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "nothing to deinit")
 }
+
+// TestDeinitCmd_YesFlag_Accepted: deinit never prompts (an established non-goal since v0.7), so
+// -y/--yes asks for behavior deinit already has -- a documented no-op, accepted so scripts that
+// defensively pass it (the common case for any automated deinit) don't fail.
+func TestDeinitCmd_YesFlag_Accepted(t *testing.T) {
+	repo := initGitRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".rtunk"), 0o755))
+	chdir(t, repo)
+
+	_, _, err := run2(t, "deinit", "-y")
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".rtunk"), 0o755))
+	_, _, err = run2(t, "deinit", "--yes")
+	require.NoError(t, err)
+}
