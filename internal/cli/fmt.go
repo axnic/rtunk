@@ -22,8 +22,10 @@ import (
 type fmtCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to format (default: whole repository)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
-	Check        bool     `help:"Report files that would be reformatted, without writing them."`
+	Check        bool     `aliases:"no-fix" short:"n" help:"Report files that would be reformatted, without writing them."`
 	VerifyStable bool     `help:"Verify the result is stable (write, dry-run check, write+check again if needed) instead of a single pass."`
+	Filter       string   `help:"Comma-separated linter id allow-list, or -id,-id... deny-list (trunk compatibility)."`
+	Exclude      string   `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
 }
 
 func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
@@ -36,6 +38,10 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		configPath = found
 	}
 	cfg, err := resolveConfig(configPath, cli.CacheDir, false)
+	if err != nil {
+		return err
+	}
+	cfg, err = filterLinters(cfg, c.Filter, c.Exclude)
 	if err != nil {
 		return err
 	}
