@@ -60,23 +60,17 @@ func TestActionsRunCmd_ByID(t *testing.T) {
 // TestRunCmd_TopLevelAlias_MatchesActionsRun: real trunk's own top-level `trunk run <id>` is a
 // documented shortcut for `trunk actions run <id>` (see trunk --help's own subcommand list,
 // which lists "run" alongside "actions"). rtunk's CLI.RunCmd reuses the exact same actionsRunCmd
-// struct/Run method, registered a second time under the name "run".
+// struct/Run method, registered a second time under the name "run" -- this verifies both
+// invocation paths produce identical stdout, stderr, and error.
 func TestRunCmd_TopLevelAlias_MatchesActionsRun(t *testing.T) {
-	// Mirror the "actions run <id>" test immediately above this one: same fixture config/action,
-	// invoked once as `actions run <id>` and once as `run <id>`, asserting identical
-	// stdout/stderr/error between the two invocations.
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nactions:\n  enabled: [greet]\nplugins:\n  sources: []\n")
 
-	actionsOut, actionsSterr, actionsErr := run2(t, "--config", path, "actions", "run", "greet")
+	actionsOut, actionsStderr, actionsErr := run2(t, "--config", path, "actions", "run", "greet")
 	topLevelOut, topLevelStderr, topLevelErr := run2(t, "--config", path, "run", "greet")
 
 	assert.Equal(t, actionsOut, topLevelOut)
-	assert.Equal(t, actionsSterr, topLevelStderr)
-	if actionsErr != nil || topLevelErr != nil {
-		assert.Equal(t, actionsErr.Error(), topLevelErr.Error())
-	} else {
-		assert.Nil(t, topLevelErr)
-	}
+	assert.Equal(t, actionsStderr, topLevelStderr)
+	assert.Equal(t, actionsErr, topLevelErr)
 }
 
 func TestActionsRunCmd_RequiresIDOrHook(t *testing.T) {

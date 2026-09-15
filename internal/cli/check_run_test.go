@@ -320,6 +320,31 @@ func TestCheckRunCmd_Filter_OnlyRunsAllowedLinter(t *testing.T) {
 	assert.NotContains(t, stderr, "drop-me")
 }
 
+// TestCheckRunCmd_FilterDenyList_SkipsDeniedLinter proves the deny-list form of --filter is
+// reachable through the real CLI as --filter=-id (Kong parses a bare "-id" as an unknown short
+// flag, so the "=" is required, not merely idiomatic -- see the reworded help text on
+// checkRunCmd.Filter).
+func TestCheckRunCmd_FilterDenyList_SkipsDeniedLinter(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, []string{"keep-me", "drop-me"}, `    - name: keep-me
+      description: Should run
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+    - name: drop-me
+      description: Should not run
+      files: [ALL]
+      commands:
+        - name: lint
+          run: echo unused
+          output: xml
+`)
+	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--filter=-drop-me")
+	assert.Contains(t, stderr, "keep-me")
+	assert.NotContains(t, stderr, "drop-me")
+}
+
 func TestCheckRunCmd_Exclude_SkipsExcludedLinter(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, []string{"keep-me", "drop-me"}, `    - name: keep-me
       description: Should run

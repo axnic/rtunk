@@ -33,11 +33,11 @@ type checkRunCmd struct {
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
 	Fix          bool     `short:"y" help:"Apply automatic fixes (formatter commands) before reporting."`
 	VerifyStable bool     `help:"With --fix, verify the result is stable instead of a single pass."`
-	Filter       string   `help:"Comma-separated linter id allow-list, or -id,-id... deny-list (trunk compatibility)."`
+	Filter       string   `help:"Comma-separated linter id allow-list, or --filter=-id,-id... deny-list (trunk compatibility)."`
 	Exclude      string   `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
 	// NoFix is accepted for trunk compatibility and has no effect: check already never applies
 	// fixes unless --fix/-y is given, so --no-fix asks for check's existing default.
-	NoFix bool `short:"n" help:"Accepted for trunk compatibility; check never auto-fixes without --fix, this has no effect."`
+	NoFix bool `short:"n" help:"Accepted for trunk compatibility; check never auto-fixes without --fix, this has no effect. Note: --fix always wins if both are given."`
 	// PrintFailures is accepted for trunk compatibility and has no effect: check already always
 	// prints Failed events to stderr unconditionally (see printEvent).
 	PrintFailures bool `help:"Accepted for trunk compatibility; check already always prints failures, this has no effect."`

@@ -126,3 +126,28 @@ func TestFmtCmd_Filter_OnlyRunsAllowedFormatter(t *testing.T) {
 	assert.Contains(t, stderr, "keep-me")
 	assert.NotContains(t, stderr, "drop-me")
 }
+
+func TestFmtCmd_Exclude_SkipsExcludedFormatter(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, []string{"keep-me", "drop-me"}, `    - name: keep-me
+      description: Should run
+      files: [ALL]
+      commands:
+        - name: fmt
+          run: echo unused
+          output: rewrite
+          formatter: true
+          in_place: true
+    - name: drop-me
+      description: Should not run
+      files: [ALL]
+      commands:
+        - name: fmt
+          run: echo unused
+          output: rewrite
+          formatter: true
+          in_place: true
+`)
+	_, stderr, _ := run2(t, "--config", cfgPath, "fmt", "--exclude", "drop-me")
+	assert.Contains(t, stderr, "keep-me")
+	assert.NotContains(t, stderr, "drop-me")
+}

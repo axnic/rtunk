@@ -22,9 +22,9 @@ import (
 type fmtCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to format (default: whole repository)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
-	Check        bool     `aliases:"no-fix" short:"n" help:"Report files that would be reformatted, without writing them."`
+	Check        bool     `aliases:"no-fix" short:"n" help:"Report files that would be reformatted, without writing them. (alias: --no-fix)"`
 	VerifyStable bool     `help:"Verify the result is stable (write, dry-run check, write+check again if needed) instead of a single pass."`
-	Filter       string   `help:"Comma-separated linter id allow-list, or -id,-id... deny-list (trunk compatibility)."`
+	Filter       string   `help:"Comma-separated linter id allow-list, or --filter=-id,-id... deny-list (trunk compatibility)."`
 	Exclude      string   `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
 	// PrintFailures is accepted for trunk compatibility and has no effect: fmt already always
 	// prints Failed events to stderr unconditionally.
