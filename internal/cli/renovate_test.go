@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -106,6 +107,60 @@ func TestRenovateAnnotate_UnresolvableLinter_LeftUntouched(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(got), "phantom\n")
 	assert.NotContains(t, string(got), "phantom@")
+}
+
+// TestRenovateAnnotate_PreExistingNonRenovateComment_LeftUntouched guards against bug 3 from the
+// whole-branch review: annotate must never clobber a user's own hand-written comment above an
+// entry -- it only overwrites a comment that's empty or already a "# renovate:" one.
+func TestRenovateAnnotate_PreExistingNonRenovateComment_LeftUntouched(t *testing.T) {
+	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"}, "fixture", "acme", "widget", "1.2.3")
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	withComment := strings.Replace(string(data), "    - fixture\n",
+		"    # IMPORTANT: pinned by hand, do not bump -- breaks CI\n    - fixture\n", 1)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(withComment), 0o644))
+
+	stdout, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "lint/fixture: has a pre-existing non-renovate comment, left untouched")
+
+	got, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "# IMPORTANT: pinned by hand, do not bump -- breaks CI\n    - fixture\n")
+	assert.NotContains(t, string(got), "# renovate:")
+}
+
+// TestRenovateAnnotate_StaleAnnotation_ClearedWhenNoLongerResolvable guards against bug 4 from the
+// whole-branch review: annotate must clear a previously-written "# renovate:" comment once its
+// entry is no longer confidently resolvable, instead of leaving Renovate tracking a dependency
+// rtunk can no longer confirm.
+func TestRenovateAnnotate_StaleAnnotation_ClearedWhenNoLongerResolvable(t *testing.T) {
+	cfgPath, repoRoot := writeToolLinterFixture(t, []string{"fixture"}, "fixture", "acme", "widget", "1.2.3")
+	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	require.NoError(t, err, "stderr: %s", stderr)
+
+	before, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.Contains(t, string(before), "# renovate: datasource=github-releases depName=acme/widget\n    - fixture@1.2.3\n")
+
+	// Change the tool's download recipe to a non-GitHub URL, simulating a linter definition
+	// change that makes it no longer confidently resolvable.
+	pluginPath := filepath.Join(repoRoot, "pluginrepo", "linters", "fixture", "plugin.yaml")
+	pluginData, err := os.ReadFile(pluginPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(pluginPath,
+		[]byte(strings.ReplaceAll(string(pluginData), "https://github.com/acme/widget", "https://example.com/acme/widget")),
+		0o644))
+
+	stdout, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "lint/fixture: no longer resolvable, stale annotation removed")
+
+	after, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(after), "# renovate:")
+	assert.Contains(t, string(after), "- fixture@1.2.3\n")
 }
 
 func TestAnnotateDoc_PluginSourceRef_GetsCommentOnKeyNode(t *testing.T) {

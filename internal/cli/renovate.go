@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -13,7 +14,7 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/renovate"
 )
 
-// renovateCmd is `rtunk renovate`: ROADMAP.md's post-v1.0 addition, generating Renovate
+// renovateCmd is `rtunk renovate`: ROADMAP.md's v1.1 addition, generating Renovate
 // annotations for trunk.yaml's version pins (see
 // docs/superpowers/specs/2026-09-17-renovate-annotations-design.md).
 type renovateCmd struct {
@@ -47,6 +48,11 @@ func (c *renovateAnnotateCmd) Run(cli *CLI, stdout io.Writer) error {
 	}
 
 	report := annotateDoc(&doc, cfg)
+
+	if len(doc.Content) == 0 {
+		printRenovateReport(stdout, report)
+		return nil
+	}
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -170,10 +176,19 @@ func annotateEnabledSeq(root *yaml.Node, category string, report *renovateReport
 
 	for _, entry := range enabledNode.Content {
 		id, _, pinned := cutVersion(entry.Value)
-		ann, knownGoodVersion, ok := resolve(id)
 		label := category + "/" + id
+		ann, knownGoodVersion, ok := resolve(id)
 		if !ok {
-			report.Skipped = append(report.Skipped, label+": no confident datasource")
+			if strings.HasPrefix(strings.TrimSpace(entry.HeadComment), "# renovate:") {
+				entry.HeadComment = ""
+				report.Skipped = append(report.Skipped, label+": no longer resolvable, stale annotation removed")
+			} else {
+				report.Skipped = append(report.Skipped, label+": no confident datasource")
+			}
+			continue
+		}
+		if existing := strings.TrimSpace(entry.HeadComment); existing != "" && !strings.HasPrefix(existing, "# renovate:") {
+			report.Skipped = append(report.Skipped, label+": has a pre-existing non-renovate comment, left untouched")
 			continue
 		}
 		if !pinned {
@@ -214,14 +229,23 @@ func annotatePluginSources(root *yaml.Node, cfg config.Config, report *renovateR
 			report.Skipped = append(report.Skipped, label+": not found in resolved config")
 			continue
 		}
+		refKey, _, hasRef := findMapKey(entry, "ref")
 		ann, ok := renovate.ForPluginSource(src)
 		if !ok {
-			report.Skipped = append(report.Skipped, label+": no confident datasource (local source or non-GitHub URI)")
+			if hasRef && strings.HasPrefix(strings.TrimSpace(refKey.HeadComment), "# renovate:") {
+				refKey.HeadComment = ""
+				report.Skipped = append(report.Skipped, label+": no longer resolvable, stale annotation removed")
+			} else {
+				report.Skipped = append(report.Skipped, label+": no confident datasource (local source or non-GitHub URI)")
+			}
 			continue
 		}
-		refKey, _, ok := findMapKey(entry, "ref")
-		if !ok {
+		if !hasRef {
 			report.Skipped = append(report.Skipped, label+": no ref: to annotate")
+			continue
+		}
+		if existing := strings.TrimSpace(refKey.HeadComment); existing != "" && !strings.HasPrefix(existing, "# renovate:") {
+			report.Skipped = append(report.Skipped, label+": has a pre-existing non-renovate comment, left untouched")
 			continue
 		}
 		refKey.HeadComment = "# renovate: datasource=" + ann.Datasource + " depName=" + ann.DepName
