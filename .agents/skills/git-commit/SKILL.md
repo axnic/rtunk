@@ -76,22 +76,23 @@ Scope is mandatory and bracketed: `type[scope]: Subject`. rtunk is a single
 Go CLI, not a monorepo, so the scope list stays flat rather than namespaced
 like `project:*`/`catalog:*` would be.
 
-| Scope     | Covers                                                                             |
-| --------- | ---------------------------------------------------------------------------------- |
-| `config`  | `trunk.yaml`/`rtunk.yaml` parsing, schema, config resolution                       |
-| `plugin`  | Plugin definitions, discovery, linter/runtime/tool resolution                      |
-| `cache`   | Download, content-addressed cache, shims                                           |
-| `check`   | Check command policy: which commands run (`Formatter: false`), read-only reporting |
-| `engine`  | Shared job-queue engine: file matching, `RunFrom`/`SandboxType`, execution         |
-| `output`  | Linter output-format parsers (SARIF, per-tool JSON schemas, `parse_regex`)         |
-| `fmt`     | Formatters command                                                                 |
-| `actions` | Actions and git-hooks                                                              |
-| `upgrade` | Self-upgrade command                                                               |
-| `init`    | `init`/`deinit` command                                                            |
-| `cli`     | Top-level CLI wiring, flag compatibility, entrypoints                              |
-| `deps`    | Go module or tool version bumps                                                    |
-| `ci`      | `.github/` workflows, `.trunk/` dogfood config, `mise.toml`                        |
-| `docs`    | README, AGENTS.md, ROADMAP.md, ADRs                                                |
+| Scope      | Covers                                                                             |
+| ---------- | ---------------------------------------------------------------------------------- |
+| `config`   | `trunk.yaml`/`rtunk.yaml` parsing, schema, config resolution                       |
+| `plugin`   | Plugin definitions, discovery, linter/runtime/tool resolution                      |
+| `cache`    | Download, content-addressed cache, shims                                           |
+| `check`    | Check command policy: which commands run (`Formatter: false`), read-only reporting |
+| `engine`   | Shared job-queue engine: file matching, `RunFrom`/`SandboxType`, execution         |
+| `output`   | Linter output-format parsers (SARIF, per-tool JSON schemas, `parse_regex`)         |
+| `fmt`      | Formatters command                                                                 |
+| `actions`  | Actions and git-hooks                                                              |
+| `upgrade`  | Self-upgrade command                                                               |
+| `init`     | `init`/`deinit` command                                                            |
+| `renovate` | Renovate annotation generation (`rtunk renovate`)                                  |
+| `cli`      | Top-level CLI wiring, flag compatibility, entrypoints                              |
+| `deps`     | Go module or tool version bumps                                                    |
+| `ci`       | `.github/` workflows, `.trunk/` dogfood config, `mise.toml`                        |
+| `docs`     | README, AGENTS.md, ROADMAP.md, ADRs                                                |
 
 Decision tree: which files did the change touch?
 
