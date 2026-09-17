@@ -100,3 +100,14 @@ lifecycle events (for example, on commit or push). This milestone brings that co
 Be compatible with most of trunk's CLI flags across the commands implemented in the milestones
 above, so that scripts, CI pipelines, and muscle memory built around `trunk` carry over to `rtunk`
 with minimal changes.
+
+## v1.1 — Renovate integration
+
+rtunk deliberately never checks or applies upstream version updates itself (see
+docs/superpowers/specs/2026-09-17-renovate-annotations-design.md for why) — instead, it generates
+the annotations [Renovate](https://docs.renovatebot.com/)'s regex manager needs to do that job on
+its own.
+
+- **`rtunk renovate annotate`** — Annotate `trunk.yaml`'s version-pinned entries with Renovate
+  regex-manager comments, wherever a datasource can be confidently named.
+- **`rtunk renovate config`** — Print the Renovate `regexManagers` config snippet to add.

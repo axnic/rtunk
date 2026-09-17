@@ -83,6 +83,7 @@ const scopes = [
   { value: "actions", name: "actions   — actions and git-hooks" },
   { value: "upgrade", name: "upgrade   — self-upgrade command" },
   { value: "init", name: "init      — init/deinit command" },
+  { value: "renovate", name: "renovate  — Renovate annotation generation" },
   {
     value: "cli",
     name: "cli       — top-level CLI wiring, flag compatibility, entrypoints",
