@@ -142,3 +142,9 @@ func TestRenovateAnnotate_PrintsSummary(t *testing.T) {
 	assert.Contains(t, stdout, "skipped plugins.sources/local")
 	assert.Contains(t, stdout, "2 annotated, 1 skipped")
 }
+
+func TestRenovateConfig_PrintsSnippet(t *testing.T) {
+	stdout, stderr, err := run2(t, "renovate", "config")
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Equal(t, renovateConfigSnippet, stdout)
+}

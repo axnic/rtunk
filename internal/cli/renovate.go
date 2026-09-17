@@ -85,6 +85,31 @@ func printRenovateReport(w io.Writer, r renovateReport) {
 	fmt.Fprintf(w, "\n%d annotated, %d skipped\n", len(r.Annotated), len(r.Skipped))
 }
 
+// renovateConfigSnippet is the static regexManagers block to add to the user's own
+// renovate.json5 -- static because it matches the generic "# renovate: ..." comment shape Task
+// 2's annotate command produces, not any specific tool, so it never needs regenerating as
+// enabled linters/tools/runtimes change. Verified directly against real annotated output (both
+// the flat "- id@version" sequence-entry shape and the "ref: <value>" mapping-entry shape) in
+// Node.js (the engine Renovate actually runs), not just eyeballed.
+const renovateConfigSnippet = `{
+  "regexManagers": [
+    {
+      "fileMatch": ["(^|/)\\.trunk/trunk\\.yaml$", "(^|/)\\.rtunk/rtunk\\.yaml$"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s*(?:-\\s*\\S+@|ref:\\s*)(?<currentValue>\\S+)"
+      ]
+    }
+  ]
+}
+`
+
+type renovateConfigCmd struct{}
+
+func (c *renovateConfigCmd) Run(stdout io.Writer) error {
+	_, err := io.WriteString(stdout, renovateConfigSnippet)
+	return err
+}
+
 // findMapKey returns mapping's key and value nodes for key, or ok=false if key is absent or
 // mapping isn't a mapping -- a read-only counterpart to check.go's findOrCreateMapKey (which
 // creates missing keys); annotateDoc must never author a new section a file didn't already have.
