@@ -174,6 +174,32 @@ func TestCheckEnableCmd_AnnotatedSurvivor_KeepsExactComment(t *testing.T) {
 	assert.Contains(t, string(after), "# renovate: datasource=github-releases depName=acme/widget\n    - fixture@1.0.0\n")
 }
 
+// TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood guards against bug 1
+// from the whole-branch review: the old survivor-shortcut restored an already-annotated entry's
+// prior HeadComment verbatim but never re-applied the version-pin rule, so re-enabling an
+// already-annotated, already-pinned entry bare (no @version) produced an entry that was annotated
+// but unpinned -- a dead annotation Renovate's regex manager can't capture a version from. The
+// fixed loop always re-resolves via renovate.ForLint, so a bare re-enable must come back both
+// annotated AND re-pinned to the known_good_version.
+func TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood(t *testing.T) {
+	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@9.9.9"}, "fixture", "acme", "widget", "1.2.3")
+	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	require.NoError(t, err, "stderr: %s", stderr)
+
+	before, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.Contains(t, string(before), "# renovate: datasource=github-releases depName=acme/widget\n    - fixture@9.9.9\n")
+
+	// Re-enable bare, with no @version -- the old code kept the stale comment and the stale
+	// (missing) pin; the fix must re-pin to known_good_version and keep the annotation.
+	_, stderr, err = run2(t, "--config", cfgPath, "check", "enable", "fixture")
+	require.NoError(t, err, "stderr: %s", stderr)
+
+	got, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "# renovate: datasource=github-releases depName=acme/widget\n    - fixture@1.2.3\n")
+}
+
 func TestCheckEnableCmd_NewEntryInAnnotatedCategory_GetsFreshComment(t *testing.T) {
 	cfgPath, repoRoot := writeToolLinterFixture(t, []string{"fixture"}, "fixture", "acme", "widget", "1.2.3")
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")

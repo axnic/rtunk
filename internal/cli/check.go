@@ -385,14 +385,11 @@ func editEnabled(cli *CLI, category string, edit func([]string) []string) error 
 	}
 
 	existing := make([]string, len(enabledNode.Content))
-	priorComments := map[string]string{} // bare id -> its exact HeadComment, only populated below
 	hadAnnotations := false
 	for i, n := range enabledNode.Content {
 		existing[i] = n.Value
-		if trimmed := strings.TrimSpace(n.HeadComment); strings.HasPrefix(trimmed, "# renovate:") {
+		if strings.HasPrefix(strings.TrimSpace(n.HeadComment), "# renovate:") {
 			hadAnnotations = true
-			bareID, _, _ := cutVersion(n.Value)
-			priorComments[bareID] = n.HeadComment
 		}
 	}
 
@@ -409,15 +406,15 @@ func editEnabled(cli *CLI, category string, edit func([]string) []string) error 
 	enabledNode.Content = make([]*yaml.Node, len(updated))
 	for i, v := range updated {
 		node := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v}
-		if hadAnnotations {
+		if hadAnnotations && category == "lint" {
 			bareID, _, pinned := cutVersion(v)
-			if comment, ok := priorComments[bareID]; ok {
-				node.HeadComment = comment
-			} else if category == "lint" {
-				if ann, knownGoodVersion, ok := renovate.ForLint(cfg, bareID); ok {
-					if !pinned && knownGoodVersion != "" {
+			if ann, knownGoodVersion, ok := renovate.ForLint(cfg, bareID); ok {
+				if !pinned {
+					if knownGoodVersion != "" {
 						node.Value = bareID + "@" + knownGoodVersion
+						node.HeadComment = "# renovate: datasource=" + ann.Datasource + " depName=" + ann.DepName
 					}
+				} else {
 					node.HeadComment = "# renovate: datasource=" + ann.Datasource + " depName=" + ann.DepName
 				}
 			}
