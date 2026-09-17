@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
+	"github.com/xunleii/rtunk/pkg/trunk/config"
 )
 
 // writeToolLinterFixture is writeLinterFixture's (check_run_test.go) tools+lint extension: it
@@ -15,11 +19,13 @@ import (
 // see pkg/trunk/config/testdata/pluginrepo/linters/shellcheck/plugin.yaml -- a flat list, NOT
 // nested under definitions:), a tools.definitions[] entry referencing it via download:, and a
 // lint.definitions[] entry referencing that tool via tools: [<toolName>] -- the minimal real
-// shape renovate.ForLint's Linter->Tools[0]->Tool bridge needs. Also writes a second
-// plugins.sources[] entry (git-shaped: uri+ref, no local) purely as *yaml.Node content for
-// annotateDoc to walk -- it is never resolved by config.ResolveAll (Local is the only source
-// config.Resolve actually reads in this repo's test fixtures; see the shape below), so this
-// stays hermetic (no network fetch).
+// shape renovate.ForLint's Linter->Tools[0]->Tool bridge needs. plugins.sources[] declares only
+// the local source (like writeLinterFixture in check_run_test.go): config.ResolveAll genuinely
+// fetches every declared git-shaped source, so a fake origin: entry here would break hermetic
+// testing by hitting the network. The owner/repo/knownGoodVersion params still feed the
+// downloads: URL and known_good_version below. Plugin-source-ref annotation coverage lives in
+// TestAnnotateDoc_PluginSourceRef_GetsCommentOnKeyNode / TestAnnotateDoc_LocalPluginSource_
+// NeverAnnotated instead, calling annotateDoc directly in-memory.
 func writeToolLinterFixture(t *testing.T, enabled []string, toolName, owner, repo, knownGoodVersion string) (cfgPath, repoRoot string) {
 	t.Helper()
 	repoRoot = t.TempDir()
@@ -35,9 +41,6 @@ plugins:
   sources:
     - id: local
       local: ../pluginrepo
-    - id: origin
-      uri: https://github.com/`+owner+`/`+repo+`
-      ref: v1.0.0
 lint:
   enabled:
 `+enabledYAML), 0o644))
@@ -105,26 +108,59 @@ func TestRenovateAnnotate_UnresolvableLinter_LeftUntouched(t *testing.T) {
 	assert.NotContains(t, string(got), "phantom@")
 }
 
-func TestRenovateAnnotate_PluginSourceRef_GetsCommentOnKeyLine(t *testing.T) {
-	cfgPath, _ := writeToolLinterFixture(t, nil, "fixture", "acme", "widget", "1.2.3")
+func TestAnnotateDoc_PluginSourceRef_GetsCommentOnKeyNode(t *testing.T) {
+	data := []byte(`plugins:
+  sources:
+    - id: origin
+      uri: https://github.com/acme/widget
+      ref: v1.0.0
+`)
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal(data, &doc))
 
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
-	require.NoError(t, err, "stderr: %s", stderr)
+	cfg := config.Config{
+		Plugins: struct {
+			Sources map[string]config.PluginSource
+		}{
+			Sources: map[string]config.PluginSource{
+				"origin": {ID: "origin", URI: "https://github.com/acme/widget", Ref: "v1.0.0"},
+			},
+		},
+	}
 
-	got, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(got), "# renovate: datasource=github-tags depName=acme/widget\n      ref: v1.0.0\n")
+	report := annotateDoc(&doc, cfg)
+	assert.Equal(t, []string{"plugins.sources/origin"}, report.Annotated)
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	require.NoError(t, enc.Encode(&doc))
+	require.NoError(t, enc.Close())
+	assert.Contains(t, buf.String(), "# renovate: datasource=github-tags depName=acme/widget\n      ref: v1.0.0\n")
 }
 
-func TestRenovateAnnotate_LocalPluginSource_NeverAnnotated(t *testing.T) {
-	cfgPath, _ := writeToolLinterFixture(t, nil, "fixture", "acme", "widget", "1.2.3")
+func TestAnnotateDoc_LocalPluginSource_NeverAnnotated(t *testing.T) {
+	data := []byte(`plugins:
+  sources:
+    - id: local
+      local: ../pluginrepo
+`)
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal(data, &doc))
 
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
-	require.NoError(t, err, "stderr: %s", stderr)
+	cfg := config.Config{
+		Plugins: struct {
+			Sources map[string]config.PluginSource
+		}{
+			Sources: map[string]config.PluginSource{
+				"local": {ID: "local", Local: "../pluginrepo"},
+			},
+		},
+	}
 
-	got, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	assert.NotContains(t, string(got), "depName=local")
+	report := annotateDoc(&doc, cfg)
+	assert.Empty(t, report.Annotated)
+	assert.Equal(t, []string{"plugins.sources/local: no confident datasource (local source or non-GitHub URI)"}, report.Skipped)
 }
 
 func TestRenovateAnnotate_PrintsSummary(t *testing.T) {
@@ -133,14 +169,8 @@ func TestRenovateAnnotate_PrintsSummary(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "annotated lint/fixture")
-	assert.Contains(t, stdout, "annotated plugins.sources/origin")
-	// writeToolLinterFixture always declares a second plugins.sources[] entry, "local" (a Local
-	// source, per its own doc comment) -- that one is always skipped (renovate.ForPluginSource
-	// reports ok=false for any Local source), so the fixture used by this whole file always
-	// produces 2 annotated (lint/fixture, plugins.sources/origin) + 1 skipped
-	// (plugins.sources/local), never 0 skipped.
 	assert.Contains(t, stdout, "skipped plugins.sources/local")
-	assert.Contains(t, stdout, "2 annotated, 1 skipped")
+	assert.Contains(t, stdout, "1 annotated, 1 skipped")
 }
 
 func TestRenovateConfig_PrintsSnippet(t *testing.T) {
