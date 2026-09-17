@@ -56,6 +56,9 @@ type CLI struct {
 	// used by CLI.ActionsCmd.Run -- both paths share one Run method, so there is nothing to keep
 	// in sync between them.
 	RunCmd actionsRunCmd `cmd:"" name:"run" help:"Run a specified action (shortcut for 'actions run')."`
+	// RenovateCmd is `rtunk renovate`: generates Renovate annotations for trunk.yaml's version
+	// pins (see docs/superpowers/specs/2026-09-17-renovate-annotations-design.md).
+	RenovateCmd renovateCmd `cmd:"" name:"renovate" help:"Generate Renovate annotations for trunk.yaml's version pins."`
 }
 
 // exitPanic is a sentinel panic type used to signal that Kong called os.Exit without actually
