@@ -57,7 +57,7 @@ func fetchGitSource(cacheDir string, src PluginSource) (defs sourceDefs, dupErrs
 	}
 	_ = os.Remove(cacheFile) // missing is fine; corrupt/stale/orphaned is dropped so it regenerates below
 
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
 		return sourceDefs{}, nil, &FetchError{SourceID: src.ID, URI: src.URI, Ref: src.Ref, Err: err}
 	}
 	// MkdirTemp'd inside cacheDir (not the OS temp dir) so the persist step below is a same-
@@ -69,7 +69,7 @@ func fetchGitSource(cacheDir string, src PluginSource) (defs sourceDefs, dupErrs
 	persisted := false
 	defer func() {
 		if !persisted {
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 		}
 	}()
 
@@ -92,7 +92,7 @@ func fetchGitSource(cacheDir string, src PluginSource) (defs sourceDefs, dupErrs
 	}
 
 	checkoutParentDir := filepath.Dir(checkoutDir)
-	if err := os.MkdirAll(checkoutParentDir, 0o755); err != nil {
+	if err := os.MkdirAll(checkoutParentDir, 0o750); err != nil {
 		return sourceDefs{}, nil, &FetchError{SourceID: src.ID, URI: src.URI, Ref: src.Ref, Err: err}
 	}
 	// checkoutDir's content is immutable once fetched (keyed by src's own pinned uri+ref, per

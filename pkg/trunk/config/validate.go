@@ -10,7 +10,7 @@ import (
 // merged into cfg, returning every problem joined together via errors.Join. It is a separate
 // step from Resolve, not run by it — callers that only need what was actually read can skip it.
 func (cfg *Config) Validate() error {
-	var errs []error
+	var errs []error //nolint:prealloc // each append's length depends on cfg's contents, no cheap upper bound to size against
 	errs = append(errs, checkEnabled("runtime", cfg.Runtimes.Enabled, cfg.Runtimes.Definitions)...)
 	errs = append(errs, checkEnabled("lint", cfg.Lint.Enabled, cfg.Lint.Definitions)...)
 	errs = append(errs, checkEnabled("action", cfg.Actions.Enabled, cfg.Actions.Definitions)...)

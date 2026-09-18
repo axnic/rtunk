@@ -184,7 +184,8 @@ func parseSourceDir(dir string) (defs sourceDefs, dupErrs []error, err error) {
 	// The repo-root plugin.yaml (environments:) and each category's own root plugin.yaml (e.g.
 	// linters/plugin.yaml's lint.comment_formats:) are optional global config, not per-resource
 	// definitions (ARCHITECTURE.md "Built-in / global config") — read whichever are present.
-	globalFiles := []string{filepath.Join(dir, "plugin.yaml")}
+	globalFiles := make([]string, 0, 1+len(pluginCategories))
+	globalFiles = append(globalFiles, filepath.Join(dir, "plugin.yaml"))
 	for _, category := range pluginCategories {
 		globalFiles = append(globalFiles, filepath.Join(dir, category, "plugin.yaml"))
 	}

@@ -98,7 +98,7 @@ func loadSourceCache(path string) (sourceDefs, error) {
 // half-written file behind to be mistaken for a valid cache hit.
 func saveSourceCache(path string, defs sourceDefs) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 
@@ -111,10 +111,10 @@ func saveSourceCache(path string, defs sourceDefs) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name()) // no-op once renamed below
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed below
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

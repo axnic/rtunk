@@ -32,6 +32,8 @@ type DownloadEntry struct {
 // to a single key mapping to itself.
 type OSSpec map[string]string
 
+// UnmarshalYAML decodes either form of an os/cpu selector: a bare scalar name, which becomes a
+// single key mapping to itself, or a full trunk-vocabulary-to-upstream-naming map.
 func (s *OSSpec) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		*s = OSSpec{node.Value: node.Value}
@@ -61,6 +63,8 @@ type Tool struct {
 // aliasing the exposed shim name to a different underlying binary; only the exposed name is kept.
 type ShimList []string
 
+// UnmarshalYAML decodes a shims: sequence whose entries are either bare names or {name, target}
+// objects, keeping only the exposed shim name in both cases.
 func (s *ShimList) UnmarshalYAML(node *yaml.Node) error {
 	var raw []yaml.Node
 	if err := node.Decode(&raw); err != nil {
@@ -186,6 +190,8 @@ type Action struct {
 // Interactivity is Action.Interactive: bare `true`, or the literal string "optional".
 type Interactivity string
 
+// UnmarshalYAML decodes Action.Interactive's scalar node verbatim, so both bare `true` and the
+// literal string "optional" survive as-is.
 func (i *Interactivity) UnmarshalYAML(node *yaml.Node) error {
 	*i = Interactivity(node.Value)
 	return nil
@@ -206,6 +212,8 @@ type Schedule struct {
 	Delay    string `yaml:"delay,omitempty"`
 }
 
+// UnmarshalYAML decodes a schedule written either as a bare interval scalar or as a full
+// mapping of the Schedule fields.
 func (s *Schedule) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		s.Interval = node.Value
