@@ -285,8 +285,7 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 
 	runErr := c.Run()
 	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			result.ExitCode = exitErr.ExitCode()
 		} else {
 			return fail(runErr)

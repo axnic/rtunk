@@ -5,6 +5,7 @@
 package actions
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
@@ -29,20 +30,11 @@ func Resolve(cfg config.Config, hookName string) []config.Action {
 			continue
 		}
 		for _, trig := range a.Triggers {
-			if containsString(trig.GitHooks, hookName) {
+			if slices.Contains(trig.GitHooks, hookName) {
 				out = append(out, a)
 				break
 			}
 		}
 	}
 	return out
-}
-
-func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

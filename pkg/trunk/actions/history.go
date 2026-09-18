@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/xunleii/rtunk/pkg/trunk/download"
@@ -57,11 +58,11 @@ func History(cacheDir, repoRoot, actionID string, limit int) ([]Result, error) {
 		return nil, err
 	}
 	var out []Result
-	for i := len(entries) - 1; i >= 0; i-- {
-		if actionID != "" && entries[i].ActionID != actionID {
+	for _, entrie := range slices.Backward(entries) {
+		if actionID != "" && entrie.ActionID != actionID {
 			continue
 		}
-		out = append(out, entries[i])
+		out = append(out, entrie)
 		if limit > 0 && len(out) >= limit {
 			break
 		}
@@ -78,7 +79,7 @@ func readHistory(path string) ([]Result, error) {
 		return nil, err
 	}
 	var out []Result
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
 		if line == "" {
 			continue
 		}

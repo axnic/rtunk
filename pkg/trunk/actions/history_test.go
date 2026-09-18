@@ -41,7 +41,7 @@ func TestHistory_FilterByActionID(t *testing.T) {
 func TestHistory_BoundedTo200Entries(t *testing.T) {
 	cacheDir := t.TempDir()
 	repoRoot := "/repo/three"
-	for i := 0; i < 205; i++ {
+	for i := range 205 {
 		require.NoError(t, actions.AppendHistory(cacheDir, repoRoot, actions.Result{ActionID: "x", ExitCode: i, StartedAt: time.Now()}))
 	}
 	got, err := actions.History(cacheDir, repoRoot, "", 0)
