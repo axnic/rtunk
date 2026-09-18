@@ -35,11 +35,12 @@ func LatestRelease(apiBase, owner, repo string) (Release, error) {
 		apiBase = "https://api.github.com"
 	}
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", apiBase, owner, repo)
-	resp, err := http.Get(url) //nolint:noctx // matches pkg/trunk/download.FetchBlob's own v0.2-era choice, no context plumbing yet
+	// url is built from a fixed api.github.com template; only owner/repo/apiBase vary.
+	resp, err := http.Get(url) //nolint:gosec,noctx // matches pkg/trunk/download.FetchBlob's own v0.2-era choice, no context plumbing yet
 	if err != nil {
 		return Release{}, fmt.Errorf("upgrade: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return Release{}, fmt.Errorf("upgrade: %s: unexpected status %s", url, resp.Status)
@@ -98,14 +99,15 @@ func Apply(cacheDir, assetURL, targetPath string) error {
 	}
 
 	tmpPath := targetPath + ".new"
-	defer os.Remove(tmpPath) // no-op once Rename below succeeds and moves tmpPath away
+	defer func() { _ = os.Remove(tmpPath) }() // no-op once Rename below succeeds and moves tmpPath away
 
+	//nolint:gosec // this is the replacement rtunk binary; it must be executable
 	if err := os.WriteFile(tmpPath, data, 0o755); err != nil {
 		return err
 	}
 	// WriteFile's mode is masked by the process umask (e.g. umask 077 -> 0700 actual), so chmod
 	// explicitly -- chmod, unlike file creation, ignores umask.
-	if err := os.Chmod(tmpPath, 0o755); err != nil {
+	if err := os.Chmod(tmpPath, 0o755); err != nil { //nolint:gosec // see above: the upgraded binary must be executable
 		return err
 	}
 	return os.Rename(tmpPath, targetPath)

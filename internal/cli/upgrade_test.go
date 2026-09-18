@@ -20,10 +20,10 @@ func releaseServer(t *testing.T, tagName string, assetBody []byte) *httptest.Ser
 		switch r.URL.Path {
 		case "/repos/xunleii/rtunk/releases/latest":
 			assetName := fmt.Sprintf("rtunk_%s_%s", runtime.GOOS, runtime.GOARCH)
-			fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":%q,"browser_download_url":%q}]}`,
+			_, _ = fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":%q,"browser_download_url":%q}]}`,
 				tagName, assetName, srv.URL+"/"+assetName)
 		default:
-			w.Write(assetBody)
+			_, _ = w.Write(assetBody)
 		}
 	}))
 	return srv

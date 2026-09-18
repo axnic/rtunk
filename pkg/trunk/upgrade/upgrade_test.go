@@ -20,7 +20,7 @@ func TestLatestRelease_ParsesTagAndAssets(t *testing.T) {
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/repos/xunleii/rtunk/releases/latest", r.URL.Path)
-		fmt.Fprint(w, `{"tag_name":"v0.6.0","assets":[{"name":"rtunk_darwin_arm64","browser_download_url":"`+srv.URL+`/rtunk_darwin_arm64"}]}`)
+		_, _ = fmt.Fprint(w, `{"tag_name":"v0.6.0","assets":[{"name":"rtunk_darwin_arm64","browser_download_url":"`+srv.URL+`/rtunk_darwin_arm64"}]}`)
 	}))
 	defer srv.Close()
 
@@ -32,7 +32,7 @@ func TestLatestRelease_ParsesTagAndAssets(t *testing.T) {
 }
 
 func TestLatestRelease_HTTPErrorIsReported(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -89,7 +89,7 @@ func main() { fmt.Println("new-binary-v2") }
 	binData, err := os.ReadFile(binPath)
 	require.NoError(t, err)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(binData)
 	}))
 	defer srv.Close()

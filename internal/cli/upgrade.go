@@ -26,7 +26,7 @@ type upgradeCmd struct {
 
 func (c *upgradeCmd) Run(cli *CLI, stdout io.Writer) error {
 	if Version == "dev" {
-		fmt.Fprintln(stdout, "rtunk: cannot determine current version, skipping")
+		_, _ = fmt.Fprintln(stdout, "rtunk: cannot determine current version, skipping")
 		return nil
 	}
 
@@ -37,12 +37,12 @@ func (c *upgradeCmd) Run(cli *CLI, stdout io.Writer) error {
 
 	newVersion, available := upgrade.Available(rel, Version)
 	if !available {
-		fmt.Fprintf(stdout, "rtunk is up to date (%s)\n", Version)
+		_, _ = fmt.Fprintf(stdout, "rtunk is up to date (%s)\n", Version)
 		return nil
 	}
 
 	if c.Check {
-		fmt.Fprintf(stdout, "a newer release is available: %s -> %s\n", Version, newVersion)
+		_, _ = fmt.Fprintf(stdout, "a newer release is available: %s -> %s\n", Version, newVersion)
 		return fmt.Errorf("rtunk: upgrade available (%s -> %s)", Version, newVersion)
 	}
 
@@ -66,6 +66,6 @@ func (c *upgradeCmd) Run(cli *CLI, stdout io.Writer) error {
 	if err := upgrade.Apply(cli.CacheDir, assetURL, targetPath); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "upgraded %s -> %s\n", Version, newVersion)
+	_, _ = fmt.Fprintf(stdout, "upgraded %s -> %s\n", Version, newVersion)
 	return nil
 }
