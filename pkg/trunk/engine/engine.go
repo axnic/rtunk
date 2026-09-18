@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -166,10 +167,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 		}
 	}
 
-	concurrency := env.Concurrency
-	if concurrency < 1 {
-		concurrency = 1
-	}
+	concurrency := max(env.Concurrency, 1)
 
 	events := make(chan Event)
 	go func() {
@@ -201,16 +199,14 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 		var inPlaceMu sync.Mutex
 		var wg sync.WaitGroup
 		for i := 0; i < concurrency; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for j := range jobCh {
 					if ctx.Err() != nil {
 						return
 					}
 					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, events)
 				}
-			}()
+			})
 		}
 		wg.Wait()
 	}()
@@ -528,7 +524,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	if err != nil {
 		return nil, nil, err
 	}
-	if containsInt(j.cmd.ErrorCodes, exitCode) {
+	if slices.Contains(j.cmd.ErrorCodes, exitCode) {
 		msg := strings.TrimSpace(out)
 		if errText := strings.TrimSpace(stderr); errText != "" {
 			if msg == "" {
@@ -545,7 +541,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	// failure completely swallowed (stderr included). Other Output formats already have their own
 	// separate failure signal (pass_fail turns a nonzero exit into a finding; sarif/json formats
 	// fail to parse on garbage output), so this is scoped to rewrite/shfmt only.
-	if (j.cmd.Output == "rewrite" || j.cmd.Output == "shfmt") && len(j.cmd.SuccessCodes) > 0 && !containsInt(j.cmd.SuccessCodes, exitCode) {
+	if (j.cmd.Output == "rewrite" || j.cmd.Output == "shfmt") && len(j.cmd.SuccessCodes) > 0 && !slices.Contains(j.cmd.SuccessCodes, exitCode) {
 		msg := strings.TrimSpace(out)
 		if errText := strings.TrimSpace(stderr); errText != "" {
 			if msg == "" {
@@ -686,15 +682,6 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	security.RemapFindings(findings, j.resolvedDir, repoRoot)
 	output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
 	return findings, changedFiles, nil
-}
-
-func containsInt(codes []int, code int) bool {
-	for _, c := range codes {
-		if c == code {
-			return true
-		}
-	}
-	return false
 }
 
 // dedupeStrings returns ss with duplicates removed, preserving first-occurrence order -- used for
@@ -860,8 +847,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 	runErr := c.Run()
 	code := 0
 	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			code = exitErr.ExitCode()
 		} else {
 			return "", "", 0, runErr

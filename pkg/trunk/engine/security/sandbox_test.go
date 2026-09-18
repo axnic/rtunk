@@ -114,7 +114,7 @@ func TestCopySandboxFile_RefusesPathOutsideSandbox(t *testing.T) {
 func TestStageSandbox_ExpandedHandlesManyFilesWithoutPathologicalBehavior(t *testing.T) {
 	dir := t.TempDir()
 	const n = 500
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%03d.txt", i)), []byte("x"), 0o644))
 	}
 

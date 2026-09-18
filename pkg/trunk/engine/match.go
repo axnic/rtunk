@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
@@ -123,7 +124,7 @@ func filterGitignored(repoRoot string, files []string) []string {
 	}
 
 	ignored := map[string]bool{}
-	for _, p := range strings.Split(strings.TrimSuffix(out.String(), "\x00"), "\x00") {
+	for p := range strings.SplitSeq(strings.TrimSuffix(out.String(), "\x00"), "\x00") {
 		if p != "" {
 			ignored[p] = true
 		}
@@ -204,12 +205,7 @@ func matchesExtension(extensions []string, path string) bool {
 
 func matchesFilename(filenames []string, path string) bool {
 	base := filepath.Base(path)
-	for _, n := range filenames {
-		if base == n {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(filenames, base)
 }
 
 func matchesRegex(patterns []string, path string) bool {
@@ -248,12 +244,7 @@ func matchesShebang(shebangs []string, path string) bool {
 	}
 	// "/usr/bin/env bash" -> last field "bash"; "/bin/bash" -> one field, Base gives "bash".
 	last := filepath.Base(fields[len(fields)-1])
-	for _, sb := range shebangs {
-		if last == sb {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(shebangs, last)
 }
 
 // matchesRequiredYAMLKeys reports whether path parses as YAML and its top-level mapping contains
