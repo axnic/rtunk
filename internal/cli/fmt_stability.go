@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -97,16 +98,6 @@ func mergeChangedByLinter(a, b map[string][]string) map[string][]string {
 	return out
 }
 
-// containsString reports whether ss contains s.
-func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 // unstableError builds the final error when fmt fails to converge: for each file still unstable
 // after both real rounds, names every linter whose own round-1 or round-2 ChangedFiles included
 // it -- the "suspects," without attempting to determine which one is actually at fault (either
@@ -124,12 +115,12 @@ func unstableError(stillUnstable []string, round1, round2 map[string][]string) e
 	for _, f := range stillUnstable {
 		var suspects []string
 		for linter, files := range round1 {
-			if containsString(files, f) {
+			if slices.Contains(files, f) {
 				suspects = append(suspects, linter)
 			}
 		}
 		for linter, files := range round2 {
-			if containsString(files, f) && !containsString(suspects, linter) {
+			if slices.Contains(files, f) && !slices.Contains(suspects, linter) {
 				suspects = append(suspects, linter)
 			}
 		}
@@ -277,7 +268,7 @@ func warnIfRecentOverlap(cacheDir, repoRoot string, byLinter map[string][]string
 func lintersFor(byLinter map[string][]string, file string) []string {
 	var out []string
 	for linter, files := range byLinter {
-		if containsString(files, file) {
+		if slices.Contains(files, file) {
 			out = append(out, linter)
 		}
 	}

@@ -439,7 +439,7 @@ func editEnabled(cli *CLI, category string, edit func([]string) []string) error 
 // data, defaulting to 2 (trunk.yaml's own convention, and yaml.v3's most common real-world
 // input) when no indented line is found -- e.g. an empty or single-top-level-key file.
 func detectIndentWidth(data []byte) int {
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		trimmed := strings.TrimLeft(line, " ")
 		if n := len(line) - len(trimmed); n > 0 && trimmed != "" {
 			return n

@@ -61,7 +61,7 @@ func filterLinters(cfg config.Config, filter, exclude string) (config.Config, er
 		}
 	} else {
 		drop = map[string]bool{}
-		for _, id := range strings.Split(exclude, ",") {
+		for id := range strings.SplitSeq(exclude, ",") {
 			if _, ok := cfg.Lint.Definitions[id]; !ok {
 				return config.Config{}, fmt.Errorf("rtunk: --exclude: unknown linter %q", id)
 			}
