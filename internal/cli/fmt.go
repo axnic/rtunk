@@ -18,7 +18,7 @@ import (
 // (see warnIfRecentOverlap) -- a cheap heuristic for the same instability --verify-stable checks
 // rigorously. --check runs a single, standalone dry-run pass that never writes to disk, matching
 // real trunk's own `trunk fmt --check`: a CI gate asking "would anything change," not "make it
-// change."
+// change.
 type fmtCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to format (default: whole repository)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`

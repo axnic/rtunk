@@ -63,7 +63,7 @@ func saveRecentFmtRun(cacheDir, repoRoot string, r recentFmtRun) error {
 		return err
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 
@@ -76,9 +76,9 @@ func saveRecentFmtRun(cacheDir, repoRoot string, r recentFmtRun) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name()) // no-op once renamed below
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed below
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

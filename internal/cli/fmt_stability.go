@@ -120,7 +120,7 @@ func containsString(ss []string, s string) bool {
 // "conflicting" label.
 func unstableError(stillUnstable []string, round1, round2 map[string][]string) error {
 	var b strings.Builder
-	fmt.Fprintln(&b, "fmt did not converge after 2 attempts. Still unstable:")
+	_, _ = fmt.Fprintln(&b, "fmt did not converge after 2 attempts. Still unstable:")
 	for _, f := range stillUnstable {
 		var suspects []string
 		for linter, files := range round1 {
@@ -136,11 +136,11 @@ func unstableError(stillUnstable []string, round1, round2 map[string][]string) e
 		sort.Strings(suspects)
 		switch len(suspects) {
 		case 0:
-			fmt.Fprintf(&b, "  %s (no formatter reported changing this file in either real round -- likely a dry-run/real mismatch, e.g. a formatter reading config the dry-run sandbox couldn't see)\n", f)
+			_, _ = fmt.Fprintf(&b, "  %s (no formatter reported changing this file in either real round -- likely a dry-run/real mismatch, e.g. a formatter reading config the dry-run sandbox couldn't see)\n", f)
 		case 1:
-			fmt.Fprintf(&b, "  %s (only %s reported changing this file -- likely a dry-run/real mismatch, e.g. it reads config the dry-run sandbox couldn't see)\n", f, suspects[0])
+			_, _ = fmt.Fprintf(&b, "  %s (only %s reported changing this file -- likely a dry-run/real mismatch, e.g. it reads config the dry-run sandbox couldn't see)\n", f, suspects[0])
 		default:
-			fmt.Fprintf(&b, "  %s (conflicting: %s)\n", f, strings.Join(suspects, ", "))
+			_, _ = fmt.Fprintf(&b, "  %s (conflicting: %s)\n", f, strings.Join(suspects, ", "))
 		}
 	}
 	return errors.New(strings.TrimRight(b.String(), "\n"))
@@ -240,7 +240,7 @@ func runFormatOnce(ctx context.Context, env engine.Env, paths []string, repoRoot
 
 	warnIfRecentOverlap(env.CacheDir, repoRoot, byLinter, stderr)
 	if saveErr := saveRecentFmtRun(env.CacheDir, repoRoot, recentFmtRun{Timestamp: time.Now(), Changed: byLinter}); saveErr != nil {
-		fmt.Fprintf(stderr, "fmt: failed to record this run for future instability checks: %v\n", saveErr)
+		_, _ = fmt.Fprintf(stderr, "fmt: failed to record this run for future instability checks: %v\n", saveErr)
 	}
 
 	return changed, skipped, failed
@@ -268,7 +268,7 @@ func warnIfRecentOverlap(cacheDir, repoRoot string, byLinter map[string][]string
 			continue
 		}
 		thisLinters := lintersFor(byLinter, f)
-		fmt.Fprintf(stderr, "warning: %s was reformatted again %s after a previous run (then: %s; now: %s) -- possible formatter instability, rerun with --verify-stable to check\n",
+		_, _ = fmt.Fprintf(stderr, "warning: %s was reformatted again %s after a previous run (then: %s; now: %s) -- possible formatter instability, rerun with --verify-stable to check\n",
 			f, age.Round(time.Second), strings.Join(prevLinters, ", "), strings.Join(thisLinters, ", "))
 	}
 }
