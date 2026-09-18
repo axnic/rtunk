@@ -160,13 +160,13 @@ func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (fin
 func printEvent(w io.Writer, ev engine.Event) {
 	switch ev.Phase {
 	case engine.Running:
-		fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
+		_, _ = fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
 	case engine.Done:
-		fmt.Fprintf(w, "done %s: %d issue(s)\n", ev.Linter, len(ev.Findings))
+		_, _ = fmt.Fprintf(w, "done %s: %d issue(s)\n", ev.Linter, len(ev.Findings))
 	case engine.Skipped:
-		fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
+		_, _ = fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
 	case engine.Failed:
-		fmt.Fprintf(w, "failed: %v\n", ev.Err)
+		_, _ = fmt.Fprintf(w, "failed: %v\n", ev.Err)
 	}
 }
 
@@ -176,13 +176,13 @@ func printEvent(w io.Writer, ev engine.Event) {
 func printFmtEvent(w io.Writer, ev engine.Event) {
 	switch ev.Phase {
 	case engine.Running:
-		fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
+		_, _ = fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
 	case engine.Done:
-		fmt.Fprintf(w, "done %s: %d file(s) changed\n", ev.Linter, len(ev.ChangedFiles))
+		_, _ = fmt.Fprintf(w, "done %s: %d file(s) changed\n", ev.Linter, len(ev.ChangedFiles))
 	case engine.Skipped:
-		fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
+		_, _ = fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
 	case engine.Failed:
-		fmt.Fprintf(w, "failed: %v\n", ev.Err)
+		_, _ = fmt.Fprintf(w, "failed: %v\n", ev.Err)
 	}
 }
 
@@ -201,7 +201,7 @@ func printReport(w io.Writer, findings []output.Finding, skipped []string) {
 	})
 
 	for _, f := range findings {
-		fmt.Fprintln(w, formatFinding(f))
+		_, _ = fmt.Fprintln(w, formatFinding(f))
 	}
 
 	files := map[string]bool{}
@@ -215,8 +215,8 @@ func printReport(w io.Writer, findings []output.Finding, skipped []string) {
 		sort.Strings(sorted)
 		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sorted), strings.Join(sorted, ", "))
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, summary)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, summary)
 }
 
 // printFmtReport is printReport's fmt/--fix-pass equivalent: lists which files were actually
@@ -228,7 +228,7 @@ func printFmtReport(w io.Writer, changed []string, skipped []string) {
 	sorted := append([]string(nil), changed...)
 	sort.Strings(sorted)
 	for _, f := range sorted {
-		fmt.Fprintln(w, f)
+		_, _ = fmt.Fprintln(w, f)
 	}
 
 	summary := fmt.Sprintf("%d file(s) reformatted", len(sorted))
@@ -237,8 +237,8 @@ func printFmtReport(w io.Writer, changed []string, skipped []string) {
 		sort.Strings(sortedSkipped)
 		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sortedSkipped), strings.Join(sortedSkipped, ", "))
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, summary)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, summary)
 }
 
 // printFmtCheckReport is printFmtReport's standalone-dry-run equivalent: same shape (one file per
@@ -248,7 +248,7 @@ func printFmtCheckReport(w io.Writer, wouldChange []string, skipped []string) {
 	sorted := append([]string(nil), wouldChange...)
 	sort.Strings(sorted)
 	for _, f := range sorted {
-		fmt.Fprintln(w, f)
+		_, _ = fmt.Fprintln(w, f)
 	}
 
 	summary := fmt.Sprintf("%d file(s) would be reformatted", len(sorted))
@@ -257,8 +257,8 @@ func printFmtCheckReport(w io.Writer, wouldChange []string, skipped []string) {
 		sort.Strings(sortedSkipped)
 		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sortedSkipped), strings.Join(sortedSkipped, ", "))
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, summary)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, summary)
 }
 
 func formatFinding(f output.Finding) string {
@@ -290,7 +290,7 @@ func (c *checkListCmd) Run(cli *CLI, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(stdout, formatLintList(cfg))
+	_, _ = fmt.Fprint(stdout, formatLintList(cfg))
 	return nil
 }
 
@@ -316,7 +316,7 @@ func formatLintList(cfg config.Config) string {
 		if enabled[name] {
 			marker = "*"
 		}
-		fmt.Fprintf(&b, "%s %s  %s\n", marker, name, cfg.Lint.Definitions[name].Description)
+		_, _ = fmt.Fprintf(&b, "%s %s  %s\n", marker, name, cfg.Lint.Definitions[name].Description)
 	}
 	return b.String()
 }
@@ -431,6 +431,7 @@ func editEnabled(cli *CLI, category string, edit func([]string) []string) error 
 	if err := enc.Close(); err != nil {
 		return err
 	}
+	//nolint:gosec // trunk.yaml is a repo-tracked config file, readable like every other tracked file
 	return os.WriteFile(configPath, buf.Bytes(), 0o644)
 }
 
