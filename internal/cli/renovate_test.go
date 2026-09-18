@@ -27,7 +27,7 @@ import (
 // downloads: URL and known_good_version below. Plugin-source-ref annotation coverage lives in
 // TestAnnotateDoc_PluginSourceRef_GetsCommentOnKeyNode / TestAnnotateDoc_LocalPluginSource_
 // NeverAnnotated instead, calling annotateDoc directly in-memory.
-func writeToolLinterFixture(t *testing.T, enabled []string, toolName, owner, repo, knownGoodVersion string) (cfgPath, repoRoot string) {
+func writeToolLinterFixture(t *testing.T, enabled []string) (cfgPath, repoRoot string) {
 	t.Helper()
 	repoRoot = t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".trunk"), 0o755))
@@ -68,13 +68,13 @@ lint:
         - name: lint
           run: echo unused
           output: xml
-`, toolName, owner, repo, knownGoodVersion)
+`, "fixture", "acme", "widget", "1.2.3")
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "pluginrepo", "linters", "fixture", "plugin.yaml"), []byte(pluginYAML), 0o644))
 	return filepath.Join(repoRoot, ".trunk", "trunk.yaml"), repoRoot
 }
 
 func TestRenovateAnnotate_UnpinnedResolvableEntry_GetsCommentAndPin(t *testing.T) {
-	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"}, "fixture", "acme", "widget", "1.2.3")
+	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"})
 
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
 	require.NoError(t, err, "stderr: %s", stderr)
@@ -85,7 +85,7 @@ func TestRenovateAnnotate_UnpinnedResolvableEntry_GetsCommentAndPin(t *testing.T
 }
 
 func TestRenovateAnnotate_AlreadyPinnedEntry_GetsCommentKeepsVersion(t *testing.T) {
-	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@9.9.9"}, "fixture", "acme", "widget", "1.2.3")
+	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@9.9.9"})
 
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
 	require.NoError(t, err, "stderr: %s", stderr)
@@ -98,7 +98,7 @@ func TestRenovateAnnotate_AlreadyPinnedEntry_GetsCommentKeepsVersion(t *testing.
 func TestRenovateAnnotate_UnresolvableLinter_LeftUntouched(t *testing.T) {
 	// A linter enabled with no matching definition at all is never resolvable (no Tools[]
 	// bridge exists) -- must be left exactly as-is, no comment, no forced pin.
-	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture", "phantom"}, "fixture", "acme", "widget", "1.2.3")
+	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture", "phantom"})
 
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
 	require.NoError(t, err, "stderr: %s", stderr)
@@ -113,7 +113,7 @@ func TestRenovateAnnotate_UnresolvableLinter_LeftUntouched(t *testing.T) {
 // whole-branch review: annotate must never clobber a user's own hand-written comment above an
 // entry -- it only overwrites a comment that's empty or already a "# renovate:" one.
 func TestRenovateAnnotate_PreExistingNonRenovateComment_LeftUntouched(t *testing.T) {
-	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"}, "fixture", "acme", "widget", "1.2.3")
+	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"})
 
 	data, err := os.ReadFile(cfgPath)
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestRenovateAnnotate_PreExistingNonRenovateComment_LeftUntouched(t *testing
 // entry is no longer confidently resolvable, instead of leaving Renovate tracking a dependency
 // rtunk can no longer confirm.
 func TestRenovateAnnotate_StaleAnnotation_ClearedWhenNoLongerResolvable(t *testing.T) {
-	cfgPath, repoRoot := writeToolLinterFixture(t, []string{"fixture"}, "fixture", "acme", "widget", "1.2.3")
+	cfgPath, repoRoot := writeToolLinterFixture(t, []string{"fixture"})
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
 	require.NoError(t, err, "stderr: %s", stderr)
 
@@ -219,7 +219,7 @@ func TestAnnotateDoc_LocalPluginSource_NeverAnnotated(t *testing.T) {
 }
 
 func TestRenovateAnnotate_PrintsSummary(t *testing.T) {
-	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"}, "fixture", "acme", "widget", "1.2.3")
+	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"})
 
 	stdout, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
 	require.NoError(t, err, "stderr: %s", stderr)

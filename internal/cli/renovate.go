@@ -63,6 +63,7 @@ func (c *renovateAnnotateCmd) Run(cli *CLI, stdout io.Writer) error {
 	if err := enc.Close(); err != nil {
 		return err
 	}
+	//nolint:gosec // trunk.yaml is a repo-tracked config file, readable like every other tracked file
 	if err := os.WriteFile(configPath, buf.Bytes(), 0o644); err != nil {
 		return err
 	}
@@ -81,14 +82,14 @@ func printRenovateReport(w io.Writer, r renovateReport) {
 	sorted := append([]string(nil), r.Annotated...)
 	sort.Strings(sorted)
 	for _, a := range sorted {
-		fmt.Fprintln(w, "annotated", a)
+		_, _ = fmt.Fprintln(w, "annotated", a)
 	}
 	sortedSkipped := append([]string(nil), r.Skipped...)
 	sort.Strings(sortedSkipped)
 	for _, s := range sortedSkipped {
-		fmt.Fprintln(w, "skipped", s)
+		_, _ = fmt.Fprintln(w, "skipped", s)
 	}
-	fmt.Fprintf(w, "\n%d annotated, %d skipped\n", len(r.Annotated), len(r.Skipped))
+	_, _ = fmt.Fprintf(w, "\n%d annotated, %d skipped\n", len(r.Annotated), len(r.Skipped))
 }
 
 // renovateConfigSnippet is the static regexManagers block to add to the user's own
