@@ -37,6 +37,6 @@ func (c *whereCmd) Run(cli *CLI, stdout io.Writer) error {
 	if _, err := os.Stat(shimPath); err != nil {
 		return fmt.Errorf("rtunk: %s %s@%s not downloaded, run `rtunk download %s %s` first", c.Category, id, version, c.Category, c.ID)
 	}
-	fmt.Fprintln(stdout, shimPath)
+	_, _ = fmt.Fprintln(stdout, shimPath)
 	return nil
 }

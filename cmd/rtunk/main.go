@@ -40,7 +40,7 @@ func isUnresolvedVersion(v string) bool {
 func main() {
 	cli.Version = resolveVersion()
 	if err := cli.Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "rtunk:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "rtunk:", err)
 		os.Exit(1)
 	}
 }
