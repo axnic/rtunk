@@ -20,6 +20,7 @@ type Ref struct {
 // Phase is one Event's point in an item's fetch lifecycle.
 type Phase int
 
+// The phases a Ref moves through, in the order a successful fetch reports them.
 const (
 	Started  Phase = iota // fetch beginning for this ref
 	Progress              // bytes received so far (HTTP fetches only; npm installs skip straight to Done)
@@ -53,7 +54,7 @@ func Download(cfg config.Config, cacheDir string, refs ...Ref) (<-chan Event, er
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		return nil, err
 	}
 
@@ -97,7 +98,7 @@ func allRefs(cfg config.Config) []Ref {
 func fetchOne(cfg config.Config, root string, ref Ref, events chan<- Event) {
 	switch ref.Category {
 	case "runtimes":
-		fetchRuntimeRef(cfg, root, ref, events)
+		_ = fetchRuntimeRef(cfg, root, ref, events) // failure already emitted as a Failed event
 	case "tools":
 		fetchToolRef(cfg, root, ref, events)
 	case "lint":
@@ -316,7 +317,7 @@ func fetchActionRef(cfg config.Config, root string, ref Ref, events chan<- Event
 		events <- Event{Ref: ref, Phase: Cached}
 		return
 	}
-	fetchRuntimeRef(cfg, root, Ref{Category: "runtimes", ID: a.Runtime}, events)
+	_ = fetchRuntimeRef(cfg, root, Ref{Category: "runtimes", ID: a.Runtime}, events) // failure already emitted as a Failed event
 }
 
 // fetchPluginRef reports a "plugins" ref as always Cached: by the time cfg exists, resolving it

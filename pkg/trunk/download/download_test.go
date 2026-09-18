@@ -35,7 +35,7 @@ func tarGzBytes(t *testing.T, topDir, name, content string) []byte {
 
 func TestDownload_Runtime(t *testing.T) {
 	archive := tarGzBytes(t, "tool-1.0.0", "shellcheck", "#!/bin/sh\n")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(archive)
 	}))
 	defer srv.Close()
@@ -124,7 +124,7 @@ func TestDownload_UnknownRef(t *testing.T) {
 
 func TestDownload_LintRef_ExpandsToTools(t *testing.T) {
 	archive := tarGzBytes(t, "tool-1.0.0", "actionlint", "#!/bin/sh\n")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(archive)
 	}))
 	defer srv.Close()
@@ -236,7 +236,7 @@ EOS
 chmod +x "$3/node_modules/.bin/eslint"
 `
 	archive := tarGzBytes(t, "node-18.0.0", "bin/npm", npmScript)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(archive)
 	}))
 	defer srv.Close()
@@ -362,7 +362,7 @@ EOS
 chmod +x "$prefix/bin/black"
 `
 	archive := tarGzBytes(t, "python-3.11.0", "bin/pip", pipScript)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(archive)
 	}))
 	defer srv.Close()
@@ -402,7 +402,7 @@ chmod +x "$prefix/bin/black"
 // downstream symptom of proceeding to InstallPackage anyway with no runtime on disk ("npm not
 // found").
 func TestDownload_ToolRuntimePackage_RuntimeFetchFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -434,7 +434,7 @@ func TestDownload_ToolRuntimePackage_RuntimeFetchFailure(t *testing.T) {
 func TestDownload_Runtime_FailedInstallNotPoisoned(t *testing.T) {
 	good := tarGzBytes(t, "tool-1.0.0", "shellcheck", "#!/bin/sh\n")
 	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if atomic.AddInt32(&calls, 1) == 1 {
 			_, _ = w.Write([]byte("not a valid gzip stream"))
 			return

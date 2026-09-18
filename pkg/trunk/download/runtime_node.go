@@ -22,15 +22,16 @@ func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	if _, err := os.Stat(npm); err != nil {
 		return fmt.Errorf("download: npm not found at %s: %w", npm, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir) // no-op once finalizeInstall renames it into pkgInstallDir
+	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once finalizeInstall renames it into pkgInstallDir
 
+	//nolint:gosec // npm is rtunk's own installed runtime; pkg/version come from the pinned plugin catalog
 	cmd := exec.Command(npm, "install", "--prefix", tmpDir, pkg+"@"+version)
 	cmd.Env = append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
@@ -50,23 +51,24 @@ func installNodePackagesFile(runtimeInstallDir, pkgInstallDir, packagesFilePath 
 	if _, err := os.Stat(npm); err != nil {
 		return fmt.Errorf("download: npm not found at %s: %w", npm, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	data, err := os.ReadFile(packagesFilePath)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), data, 0o600); err != nil {
 		return err
 	}
 
+	//nolint:gosec // npm is rtunk's own installed runtime
 	cmd := exec.Command(npm, "install")
 	cmd.Dir = tmpDir
 	cmd.Env = append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))

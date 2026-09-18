@@ -10,7 +10,8 @@ import (
 // (ARCHITECTURE.md "downloads: url") with resolved values, plus any extra template variables a
 // Download's own args: recipe derived (see ResolveArgs) -- extra may be nil.
 func TemplateURL(url, version, os, cpu string, extra map[string]string) string {
-	pairs := []string{"${version}", version, "${os}", os, "${cpu}", cpu}
+	pairs := make([]string, 0, 6+2*len(extra))
+	pairs = append(pairs, "${version}", version, "${os}", os, "${cpu}", cpu)
 	for name, value := range extra {
 		pairs = append(pairs, "${"+name+"}", value)
 	}

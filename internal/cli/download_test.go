@@ -78,7 +78,7 @@ runtimes:
 // test network-dependent and unreliable in a sandboxed/offline run.
 func TestDownloadCmd_Targeted(t *testing.T) {
 	archive := nodeTarGz(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(archive)
 	}))
 	defer srv.Close()

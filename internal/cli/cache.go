@@ -17,7 +17,7 @@ type cacheCmd struct {
 
 type cacheCleanCmd struct{}
 
-func (c *cacheCleanCmd) Run(cli *CLI, stdout io.Writer) error {
+func (c *cacheCleanCmd) Run(cli *CLI, _ io.Writer) error {
 	root, err := download.Root(cli.CacheDir)
 	if err != nil {
 		return err
@@ -27,7 +27,7 @@ func (c *cacheCleanCmd) Run(cli *CLI, stdout io.Writer) error {
 
 type cachePruneCmd struct{}
 
-func (c *cachePruneCmd) Run(cli *CLI, stdout io.Writer) error {
+func (c *cachePruneCmd) Run(cli *CLI, _ io.Writer) error {
 	cfg, err := resolveConfig(cli.Config, cli.CacheDir, false)
 	if err != nil {
 		return err

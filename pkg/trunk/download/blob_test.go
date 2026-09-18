@@ -15,7 +15,7 @@ import (
 
 func TestFetchBlob(t *testing.T) {
 	const body = "hello world"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", "11")
 		_, _ = w.Write([]byte(body))
 	}))
@@ -49,7 +49,7 @@ func TestFetchBlob_RejectsNonHTTPS(t *testing.T) {
 }
 
 func TestFetchBlob_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()

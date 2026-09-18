@@ -20,14 +20,14 @@ func installPhpPackage(pkgInstallDir, pkg, version string) error {
 	if err != nil {
 		return fmt.Errorf("download: composer not found on PATH: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cmd := exec.Command(composer, "require", "--working-dir="+tmpDir, "--no-interaction", pkg+":"+version)
 	out, err := cmd.CombinedOutput()

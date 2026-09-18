@@ -47,24 +47,26 @@ func FetchBlob(root, blobURL string, progress ProgressFunc) (string, error) {
 	if err := requireSecureScheme(blobURL); err != nil {
 		return "", err
 	}
-	resp, err := http.Get(blobURL) //nolint:noctx // v0.2 has no per-fetch context/cancellation yet
+	// blobURL is a catalog-supplied release URL, already forced to https (or loopback) by
+	// requireSecureScheme above.
+	resp, err := http.Get(blobURL) //nolint:gosec,noctx // v0.2 has no per-fetch context/cancellation yet
 	if err != nil {
 		return "", fmt.Errorf("download: fetch %s: %w", blobURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download: fetch %s: unexpected status %s", blobURL, resp.Status)
 	}
 
 	blobsDir := filepath.Join(root, "blobs", "sha256")
-	if err := os.MkdirAll(blobsDir, 0o755); err != nil {
+	if err := os.MkdirAll(blobsDir, 0o750); err != nil {
 		return "", err
 	}
 	tmp, err := os.CreateTemp(blobsDir, ".tmp-*")
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(tmp.Name()) // no-op once renamed below
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed below
 
 	hasher := sha256.New()
 	var written int64
@@ -73,7 +75,7 @@ func FetchBlob(root, blobURL string, progress ProgressFunc) (string, error) {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, err := tmp.Write(buf[:n]); err != nil {
-				tmp.Close()
+				_ = tmp.Close()
 				return "", err
 			}
 			hasher.Write(buf[:n])
@@ -86,7 +88,7 @@ func FetchBlob(root, blobURL string, progress ProgressFunc) (string, error) {
 			break
 		}
 		if readErr != nil {
-			tmp.Close()
+			_ = tmp.Close()
 			return "", fmt.Errorf("download: fetch %s: %w", blobURL, readErr)
 		}
 	}

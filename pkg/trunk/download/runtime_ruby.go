@@ -16,14 +16,14 @@ func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	if _, err := os.Stat(gem); err != nil {
 		return fmt.Errorf("download: gem not found at %s: %w", gem, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cmd := exec.Command(gem, "install", "--no-document",
 		"--install-dir", tmpDir, "--bindir", filepath.Join(tmpDir, "bin"),

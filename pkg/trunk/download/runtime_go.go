@@ -25,17 +25,17 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) err
 	if _, err := os.Stat(goBin); err != nil {
 		return fmt.Errorf("download: go not found at %s: %w", goBin, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	binDir := filepath.Join(tmpDir, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o750); err != nil {
 		return err
 	}
 
@@ -43,8 +43,9 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) err
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(buildDir)
+	defer func() { _ = os.RemoveAll(buildDir) }()
 
+	//nolint:gosec // goBin is rtunk's own installed toolchain; pkg/version come from the pinned plugin catalog
 	cmd := exec.Command(goBin, "install", pkg+"@"+version)
 	cmd.Env = append(os.Environ(),
 		"PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),

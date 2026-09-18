@@ -35,7 +35,7 @@ func (c *downloadCmd) Run(cli *CLI, stdout io.Writer) error {
 	}
 	var failed error
 	for ev := range events {
-		fmt.Fprintln(stdout, formatEvent(ev))
+		_, _ = fmt.Fprintln(stdout, formatEvent(ev))
 		if ev.Phase == download.Failed {
 			failed = ev.Err
 		}

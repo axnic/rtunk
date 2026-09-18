@@ -22,20 +22,20 @@ func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	if _, err := os.Stat(cargo); err != nil {
 		return fmt.Errorf("download: cargo not found at %s: %w", cargo, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	buildDir, err := os.MkdirTemp(filepath.Dir(pkgInstallDir), ".rustbuild-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(buildDir)
+	defer func() { _ = os.RemoveAll(buildDir) }()
 
 	cmd := exec.Command(cargo, "install", "--root", tmpDir, "--version", version, pkg)
 	cmd.Env = append(os.Environ(),
