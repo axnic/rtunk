@@ -1,3 +1,6 @@
+// Package security resolves where a linter command runs: ResolveRunFrom turns a Command.RunFrom
+// expression into a concrete directory, and StageSandbox builds the isolated directory tree a
+// sandboxed command is pointed at instead of the repository itself.
 package security
 
 import (
@@ -23,15 +26,15 @@ var runFromWithRegexRE = regexp.MustCompile(`^\$\{root_or_parent_with_regex\((.+
 // See docs/superpowers/specs/2026-09-12-check-v0.3.2-runfrom-sandbox-design.md for the real
 // trunk-io catalog data and reasoning behind each form, especially "${parent}" (below).
 func ResolveRunFrom(runFrom, target, repoRoot string, directConfigs []string) (dir string, ok bool) {
-	switch {
-	case runFrom == "" || runFrom == "${parent}":
+	switch runFrom {
+	case "", "${parent}":
 		// rtunk has no nested-workspace model (one trunk.yaml resolves to one flat config), so
 		// "the parent workspace" ${parent} most plausibly refers to degenerates to repoRoot --
 		// see the design spec's reasoning. This is also already today's default.
 		return repoRoot, true
-	case runFrom == "${target_directory}":
+	case "${target_directory}":
 		return filepath.Dir(target), true
-	case runFrom == "${root_or_parent_with_any_config}":
+	case "${root_or_parent_with_any_config}":
 		return walkUpFor(filepath.Dir(target), repoRoot, func(candidate string) bool {
 			return anyFileExists(candidate, directConfigs)
 		}), true

@@ -38,6 +38,7 @@ type Env struct {
 // Phase is one linter's point in the run lifecycle.
 type Phase int
 
+// The phases a linter run reports: Running is a progress update, the rest are terminal.
 const (
 	Running Phase = iota // File is set; a progress update, not a terminal outcome
 	Done                 // Findings is set (possibly empty -- the command ran clean)
@@ -835,8 +836,8 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 			return "", "", 0, err
 		}
 		tmpfile = f.Name()
-		f.Close()
-		defer os.Remove(tmpfile)
+		_ = f.Close() // only the name is used; the child process writes the contents
+		defer func() { _ = os.Remove(tmpfile) }()
 	}
 
 	run := strings.NewReplacer(

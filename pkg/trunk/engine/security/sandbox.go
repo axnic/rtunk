@@ -34,7 +34,7 @@ func StageSandbox(sandboxType, dir string, targets []string, tmpBase string) (sa
 	if err != nil {
 		return "", nil, err
 	}
-	cleanup = func() { os.RemoveAll(sandboxDir) }
+	cleanup = func() { _ = os.RemoveAll(sandboxDir) }
 
 	var relFiles []string
 	switch sandboxType {
@@ -87,7 +87,7 @@ func copySandboxFile(sandboxDir, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return err
 	}
 
@@ -95,16 +95,18 @@ func copySandboxFile(sandboxDir, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	// out is a write target: report a failed flush instead of silently staging a truncated copy.
+	return out.Close()
 }
 
 // RemapFindings rewrites every finding's File from a path relative to base (the resolved RunFrom

@@ -559,7 +559,7 @@ func TestRun_ParallelWorkersRunConcurrently(t *testing.T) {
 		start := time.Now()
 		events, err := Run(context.Background(), Env{Cfg: newCfg(), RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: concurrency}, nil, notFormatter)
 		require.NoError(t, err)
-		for range events {
+		for range events { //nolint:revive // draining the channel is the whole point; there is nothing to do per event
 		}
 		return time.Since(start)
 	}
@@ -1108,7 +1108,7 @@ func TestRun_ContextCancellationStopsNewWorkAndKillsInFlight(t *testing.T) {
 
 	start := time.Now()
 	cancel()
-	for range events {
+	for range events { //nolint:revive // empty on purpose
 		// drain fully -- Run must still close the channel promptly after cancellation
 	}
 	elapsed := time.Since(start)
@@ -1477,7 +1477,7 @@ func TestRun_InPlaceWithSandboxIsSkipped(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return true })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(_ config.Command) bool { return true })
 	require.NoError(t, err)
 
 	var got Event
@@ -1511,7 +1511,7 @@ func TestRun_DisabledCommandIsSkipped(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return true })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(_ config.Command) bool { return true })
 	require.NoError(t, err)
 
 	var got Event
@@ -1719,7 +1719,7 @@ func TestRun_ConcurrentInPlaceCommandsAreSerialized(t *testing.T) {
 
 	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 2}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
-	for range events {
+	for range events { //nolint:revive // draining the channel is the whole point; there is nothing to do per event
 	}
 
 	data, err := os.ReadFile(probe)

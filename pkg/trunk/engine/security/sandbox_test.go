@@ -129,11 +129,11 @@ func TestStageSandbox_ExpandedHandlesManyFilesWithoutPathologicalBehavior(t *tes
 
 func TestCopySandboxFile_SymlinkedTargetCopiesContentNotLinkItself(t *testing.T) {
 	dir := t.TempDir()
-	real := filepath.Join(dir, "real.txt")
-	require.NoError(t, os.WriteFile(real, []byte("real content"), 0o644))
+	realFile := filepath.Join(dir, "real.txt")
+	require.NoError(t, os.WriteFile(realFile, []byte("real content"), 0o644))
 	linkDir := t.TempDir()
 	link := filepath.Join(linkDir, "link.txt")
-	require.NoError(t, os.Symlink(real, link))
+	require.NoError(t, os.Symlink(realFile, link))
 
 	sandboxDir := t.TempDir()
 	dst := filepath.Join(sandboxDir, "link.txt")

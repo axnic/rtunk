@@ -143,15 +143,15 @@ func TestFiles_SkipsDotGit(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".git"), 0o755))
 	mustWrite(t, filepath.Join(dir, ".git", "config.go"), "not real source\n")
-	real := filepath.Join(dir, "main.go")
-	mustWrite(t, real, "package main\n")
+	realFile := filepath.Join(dir, "main.go")
+	mustWrite(t, realFile, "package main\n")
 
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
 		"go": {Name: "go", Extensions: []string{"go"}},
 	}}}
 	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
 	require.NoError(t, err)
-	require.Equal(t, []string{real}, got)
+	require.Equal(t, []string{realFile}, got)
 }
 
 // TestFiles_RespectsGitignore covers files ignored by a real .gitignore: git-ignored files must
@@ -162,8 +162,8 @@ func TestFiles_RespectsGitignore(t *testing.T) {
 	runGit(t, dir, "init", "-q")
 
 	mustWrite(t, filepath.Join(dir, ".gitignore"), "generated.go\n")
-	real := filepath.Join(dir, "main.go")
-	mustWrite(t, real, "package main\n")
+	realFile := filepath.Join(dir, "main.go")
+	mustWrite(t, realFile, "package main\n")
 	mustWrite(t, filepath.Join(dir, "generated.go"), "package main\n")
 
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
@@ -171,7 +171,7 @@ func TestFiles_RespectsGitignore(t *testing.T) {
 	}}}
 	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
 	require.NoError(t, err)
-	require.Equal(t, []string{real}, got, "generated.go is gitignored and must be excluded")
+	require.Equal(t, []string{realFile}, got, "generated.go is gitignored and must be excluded")
 }
 
 // TestFiles_GitignoreNoOpOutsideGitRepo covers a directory with no .git anywhere above it (e.g.
@@ -180,15 +180,15 @@ func TestFiles_RespectsGitignore(t *testing.T) {
 // that error as "everything is ignored" or failing the whole call.
 func TestFiles_GitignoreNoOpOutsideGitRepo(t *testing.T) {
 	dir := t.TempDir()
-	real := filepath.Join(dir, "main.go")
-	mustWrite(t, real, "package main\n")
+	realFile := filepath.Join(dir, "main.go")
+	mustWrite(t, realFile, "package main\n")
 
 	cfg := config.Config{Lint: config.LintConfig{Files: map[string]config.FileType{
 		"go": {Name: "go", Extensions: []string{"go"}},
 	}}}
 	got, err := Files(cfg, config.Linter{Files: []string{"go"}}, dir, []string{dir})
 	require.NoError(t, err)
-	require.Equal(t, []string{real}, got)
+	require.Equal(t, []string{realFile}, got)
 }
 
 // TestFiles_RejectsPathOutsideRepoRoot covers the path-traversal boundary check: a path in paths
