@@ -433,9 +433,9 @@ func TestDownload_ToolRuntimePackage_RuntimeFetchFailure(t *testing.T) {
 // retry for real.
 func TestDownload_Runtime_FailedInstallNotPoisoned(t *testing.T) {
 	good := tarGzBytes(t, "tool-1.0.0", "shellcheck", "#!/bin/sh\n")
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if atomic.AddInt32(&calls, 1) == 1 {
+		if calls.Add(1) == 1 {
 			_, _ = w.Write([]byte("not a valid gzip stream"))
 			return
 		}
