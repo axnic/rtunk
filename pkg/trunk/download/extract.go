@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,30 @@ import (
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 )
+
+// maxExtractedEntrySize bounds how much data one archive entry (or a bare .gz) may decompress to.
+// FetchBlob is TOFU over HTTPS with no pinned size or checksum, so nothing upstream limits how
+// large a "small" download can inflate to; this is the decompression-bomb guard for all three
+// extraction paths below. 4 GiB is generous for any real tool binary or shared library this
+// catalog installs.
+const maxExtractedEntrySize = 4 << 30
+
+// copyLimited copies src into dst, failing once more than limit bytes have been read rather than
+// after the fact: io.CopyN caps the read itself, so an oversized entry never gets fully
+// decompressed to disk before being rejected. limit is a parameter (not baked in as
+// maxExtractedEntrySize directly) so tests can exercise the failure path without generating
+// gigabytes of fixture data.
+func copyLimited(dst io.Writer, src io.Reader, limit int64) error {
+	_, err := io.CopyN(dst, src, limit+1)
+	switch {
+	case err == nil:
+		return fmt.Errorf("extract: entry exceeds %d byte size limit (decompression bomb guard)", limit)
+	case errors.Is(err, io.EOF):
+		return nil
+	default:
+		return err
+	}
+}
 
 // InstallDownload materializes one fetched blob into destDir: a straight copy (chmod +x) for a
 // bare-binary download (entry.Executable), or an extracted archive otherwise, format inferred
@@ -37,14 +62,14 @@ import (
 // "already cached" check) would then wrongly report a failed or interrupted install as Cached
 // forever, with no error and no way to detect it short of `rtunk cache clean`.
 func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, singleFileName string) error {
-	if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destDir), 0o750); err != nil {
 		return err
 	}
 	tmpDir, err := os.MkdirTemp(filepath.Dir(destDir), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir) // no-op once finalizeInstall renames it into destDir
+	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once finalizeInstall renames it into destDir
 
 	if entry.Executable {
 		name := filepath.Base(strings.SplitN(url, "?", 2)[0])
@@ -54,11 +79,12 @@ func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, 
 		return finalizeInstall(tmpDir, destDir)
 	}
 
+	//nolint:gosec // blobPath is content-addressed: FetchBlob names it after its own SHA256
 	f, err := os.Open(blobPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	switch {
 	case strings.HasSuffix(url, ".tar.gz") || strings.HasSuffix(url, ".tgz"):
@@ -66,7 +92,7 @@ func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, 
 		if err != nil {
 			return err
 		}
-		defer gz.Close()
+		defer func() { _ = gz.Close() }()
 		if err := extractTar(gz, tmpDir, entry.StripComponents); err != nil {
 			return err
 		}
@@ -98,13 +124,14 @@ func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, 
 		if err != nil {
 			return err
 		}
-		defer gz.Close()
+		defer func() { _ = gz.Close() }()
+		//nolint:gosec // a bare .gz ships one tool binary; the install is worthless unless it is executable
 		out, err := os.OpenFile(filepath.Join(tmpDir, singleFileName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(out, gz); err != nil {
-			out.Close()
+		if err := copyLimited(out, gz, maxExtractedEntrySize); err != nil {
+			_ = out.Close()
 			return err
 		}
 		if err := out.Close(); err != nil {
@@ -159,15 +186,16 @@ func extractTar(r io.Reader, destDir string, strip int) error {
 			if err := verifyWithinDest(destDir, dst, hdr.Name); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 				return err
 			}
+			//nolint:gosec // dst is checked by verifyWithinDest above; the mode is the archive entry's own
 			out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
+			if err := copyLimited(out, tr, maxExtractedEntrySize); err != nil {
+				_ = out.Close()
 				return err
 			}
 			if err := out.Close(); err != nil {
@@ -181,7 +209,7 @@ func extractTar(r io.Reader, destDir string, strip int) error {
 			if err := verifySymlinkWithinDest(destDir, dst, hdr.Linkname, hdr.Name); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 				return err
 			}
 			if err := os.Symlink(hdr.Linkname, dst); err != nil {
@@ -207,25 +235,31 @@ func extractZip(zr *zip.Reader, destDir string, strip int) error {
 		if err := verifyWithinDest(destDir, dst, f.Name); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 			return err
 		}
 		rc, err := f.Open()
 		if err != nil {
 			return err
 		}
+		//nolint:gosec // dst is checked by verifyWithinDest above; the mode is the archive entry's own
 		out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
 		if err != nil {
-			rc.Close()
+			_ = rc.Close()
 			return err
 		}
-		if _, err := io.Copy(out, rc); err != nil {
-			out.Close()
-			rc.Close()
+		if err := copyLimited(out, rc, maxExtractedEntrySize); err != nil {
+			_ = out.Close()
+			_ = rc.Close()
 			return err
 		}
-		out.Close()
-		rc.Close()
+		// out is a write target: a dropped flush on Close silently truncates the extracted
+		// file, so this error is returned, unlike rc's read-side Close.
+		closeErr := out.Close()
+		_ = rc.Close()
+		if closeErr != nil {
+			return closeErr
+		}
 	}
 	return nil
 }
@@ -277,13 +311,13 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	return out.Close()
