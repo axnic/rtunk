@@ -1,0 +1,42 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gosec
+    - revive
+    - unconvert
+    - unparam
+    - misspell
+    - prealloc
+    - godot
+  exclusions:
+    rules:
+      # Test fixtures don't warrant the same scrutiny as shipped code, and gosec's file/subprocess
+      # findings are dominated by test helpers building throwaway fixtures.
+      - path: _test\.go
+        linters:
+          - gosec
+
+      # G304 (file inclusion via variable): rtunk's entire job is reading and writing files at
+      # paths it computes itself (config lookups, cache entries, archive extraction, shims) -- that
+      # is the tool, not a vulnerability. Each risky call site is already scoped by its own
+      # containment check (e.g. verifyWithinDest in pkg/trunk/download/extract.go) or reads a
+      # content-addressed path.
+      - linters:
+          - gosec
+        text: "G304:"
+
+      # G204 (subprocess launched with variable): rtunk's job is exec'ing linters, package
+      # managers, and git -- all discovered/configured by trunk.yaml or its own download catalog,
+      # not attacker-controlled input.
+      - linters:
+          - gosec
+        text: "G204:"
+
+      # G703 (path traversal via taint analysis): false positive on os.Stat/os.Open calls whose
+      # path components are a literal plus a content hash (e.g. a SHA256 blob name), which cannot
+      # contain path separators.
+      - linters:
+          - gosec
+        text: "G703:"
