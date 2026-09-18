@@ -27,7 +27,7 @@ func ParseTaplo(data []byte, linter string) ([]Finding, error) {
 	var pendingSeverity, pendingMessage string
 	havePending := false
 
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
 
 		if m := taploMessageRE.FindStringSubmatch(trimmed); m != nil {
