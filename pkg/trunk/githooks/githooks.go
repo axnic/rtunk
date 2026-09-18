@@ -27,6 +27,7 @@ func Install(repoRoot string, cfg config.Config, force bool) (installed, skipped
 	if err != nil {
 		return nil, nil, err
 	}
+	//nolint:gosec // .git/hooks keeps git's own conventional mode
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, nil, err
 	}
@@ -52,6 +53,7 @@ func Install(repoRoot string, cfg config.Config, force bool) (installed, skipped
 		}
 		script := "#!/bin/sh\n" + marker + "\n# Run `rtunk git-hooks uninstall` to remove.\n" +
 			fmt.Sprintf("exec %s actions run --hook %s -- \"$@\"\n", self, name)
+		//nolint:gosec // git only runs a hook that is executable
 		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 			return installed, skipped, err
 		}

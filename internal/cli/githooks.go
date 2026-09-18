@@ -64,10 +64,10 @@ func (c *gitHooksInstallCmd) Run(cli *CLI, stdout io.Writer) error {
 		return err
 	}
 	for _, name := range installed {
-		fmt.Fprintf(stdout, "installed: %s\n", name)
+		_, _ = fmt.Fprintf(stdout, "installed: %s\n", name)
 	}
 	for _, name := range skipped {
-		fmt.Fprintf(stdout, "skipped (foreign hook, use --force): %s\n", name)
+		_, _ = fmt.Fprintf(stdout, "skipped (foreign hook, use --force): %s\n", name)
 	}
 	return nil
 }
@@ -93,7 +93,7 @@ func (c *gitHooksUninstallCmd) Run(cli *CLI, stdout io.Writer) error {
 		return err
 	}
 	for _, name := range removed {
-		fmt.Fprintf(stdout, "removed: %s\n", name)
+		_, _ = fmt.Fprintf(stdout, "removed: %s\n", name)
 	}
 	return nil
 }

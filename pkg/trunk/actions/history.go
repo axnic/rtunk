@@ -95,7 +95,7 @@ func readHistory(path string) ([]Result, error) {
 // pkg/trunk/config/cache.go's saveSourceCache) -- simplest correct approach at this file size.
 func writeHistory(path string, entries []Result) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	var b strings.Builder
@@ -111,9 +111,9 @@ func writeHistory(path string, entries []Result) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err := tmp.WriteString(b.String()); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

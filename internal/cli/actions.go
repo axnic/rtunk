@@ -33,7 +33,7 @@ func (c *actionsListCmd) Run(cli *CLI, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(stdout, formatActionsList(cfg))
+	_, _ = fmt.Fprint(stdout, formatActionsList(cfg))
 	return nil
 }
 
@@ -58,7 +58,7 @@ func formatActionsList(cfg config.Config) string {
 		if enabled[name] {
 			marker = "*"
 		}
-		fmt.Fprintf(&b, "%s %s  %s\n", marker, name, cfg.Actions.Definitions[name].Description)
+		_, _ = fmt.Fprintf(&b, "%s %s  %s\n", marker, name, cfg.Actions.Definitions[name].Description)
 	}
 	return b.String()
 }
@@ -136,6 +136,7 @@ func editActionsEnabled(cli *CLI, ids []string, enable bool) error {
 	if err := enc.Close(); err != nil {
 		return err
 	}
+	//nolint:gosec // trunk.yaml is a repo-tracked config file, readable like every other tracked file
 	return os.WriteFile(configPath, buf.Bytes(), 0o644)
 }
 
@@ -232,7 +233,7 @@ func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		opts := actions.RunOptions{CacheDir: cli.CacheDir, RepoRoot: repoRoot, Hook: c.Hook, Args: args, Stdin: stdin}
 		result, runErr := actions.Run(context.Background(), cfg, a, opts, stdout, stderr)
 		if result.Skipped {
-			fmt.Fprintf(stderr, "skipped %s: non-interactive context\n", a.ID)
+			_, _ = fmt.Fprintf(stderr, "skipped %s: non-interactive context\n", a.ID)
 			continue
 		}
 		if runErr != nil {
@@ -274,7 +275,7 @@ func (c *actionsHistoryCmd) Run(cli *CLI, stdout io.Writer) error {
 		if hook == "" {
 			hook = "manual"
 		}
-		fmt.Fprintf(stdout, "%s  %s  %s  %s  %s\n",
+		_, _ = fmt.Fprintf(stdout, "%s  %s  %s  %s  %s\n",
 			e.StartedAt.Format(time.RFC3339), e.ActionID, hook, status, e.Duration.Round(time.Millisecond))
 	}
 	return nil

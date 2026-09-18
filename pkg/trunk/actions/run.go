@@ -151,7 +151,8 @@ func resolvePackagesFileBinDir(root string, rt config.Runtime, runtimeInstallDir
 	}
 	sum := sha256.Sum256(data)
 	installDir := download.InstallDir(root, "action-packages", hex.EncodeToString(sum[:]), "manifest")
-	if _, statErr := os.Stat(installDir); statErr != nil {
+	// installDir cannot escape root: every component after it is a literal or a hex SHA256.
+	if _, statErr := os.Stat(installDir); statErr != nil { //nolint:gosec // see above
 		if err := download.InstallPackagesFile(rt, runtimeInstallDir, installDir, packagesFilePath); err != nil {
 			return "", err
 		}
@@ -245,12 +246,16 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 		if err != nil {
 			return fail(err)
 		}
-		defer os.Remove(f.Name())
+		defer func() { _ = os.Remove(f.Name()) }()
 		if _, err := io.Copy(f, opts.Stdin); err != nil {
-			f.Close()
+			_ = f.Close()
 			return fail(err)
 		}
-		f.Close()
+		// Close error matters: the child process reads this file back, so a dropped flush
+		// would silently hand it truncated stdin.
+		if err := f.Close(); err != nil {
+			return fail(err)
+		}
 		hookStdinPath = f.Name()
 	}
 

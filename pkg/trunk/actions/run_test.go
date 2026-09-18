@@ -96,7 +96,7 @@ func TestRun_InteractiveTrue_SkipsNonTTYStdin(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { os.Stdin = oldStdin })
 	os.Stdin = r
-	w.Close()
+	require.NoError(t, w.Close())
 
 	res, err := actions.Run(context.Background(), config.Config{}, action,
 		actions.RunOptions{CacheDir: t.TempDir(), RepoRoot: t.TempDir()}, &stdout, &stderr)
