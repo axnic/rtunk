@@ -53,18 +53,20 @@ func (c *initCmd) Run(stdout io.Writer, stderr Stderr) error {
 	// command from this point on. Warn (not fail: init still succeeds) so that isn't silent.
 	trunkYAMLPath := filepath.Join(repoRoot, ".trunk", "trunk.yaml")
 	if _, statErr := os.Stat(trunkYAMLPath); statErr == nil {
-		fmt.Fprintf(stderr, "warning: %s already exists -- %s now takes precedence for this repo\n", trunkYAMLPath, configPath)
+		_, _ = fmt.Fprintf(stderr, "warning: %s already exists -- %s now takes precedence for this repo\n", trunkYAMLPath, configPath)
 	}
 
+	//nolint:gosec // .rtunk/ and its rtunk.yaml are repo-tracked, readable like every other tracked path
 	if err := os.MkdirAll(rtunkDir, 0o755); err != nil {
 		return err
 	}
+	//nolint:gosec // see above
 	if err := os.WriteFile(configPath, []byte(initScaffold), 0o644); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "initialized rtunk at %s\n", configPath)
-	fmt.Fprintln(stdout, "next: rtunk check enable <linter>, rtunk actions enable <action>, rtunk git-hooks install")
+	_, _ = fmt.Fprintf(stdout, "initialized rtunk at %s\n", configPath)
+	_, _ = fmt.Fprintln(stdout, "next: rtunk check enable <linter>, rtunk actions enable <action>, rtunk git-hooks install")
 	return nil
 }
 
@@ -109,14 +111,14 @@ func (c *deinitCmd) Run(stdout io.Writer) error {
 	}
 
 	if !dirExisted && len(removed) == 0 {
-		fmt.Fprintln(stdout, "nothing to deinit")
+		_, _ = fmt.Fprintln(stdout, "nothing to deinit")
 		return nil
 	}
 	for _, name := range removed {
-		fmt.Fprintf(stdout, "removed hook: %s\n", name)
+		_, _ = fmt.Fprintf(stdout, "removed hook: %s\n", name)
 	}
 	if dirExisted {
-		fmt.Fprintf(stdout, "removed %s\n", rtunkDir)
+		_, _ = fmt.Fprintf(stdout, "removed %s\n", rtunkDir)
 	}
 	return nil
 }
