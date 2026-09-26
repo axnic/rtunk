@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -59,6 +60,7 @@ const (
 	InstallStart    // a download began for Item
 	InstallProgress // Bytes/BytesTotal update for Item
 	InstallDone     // the download for Item ended (success or failure)
+	InstallPlanned  // once, before the first InstallStart, when installs are needed (Total = number of items)
 )
 
 // Event reports one linter's run progress or outcome, streamed on the channel Run returns. A
@@ -201,10 +203,33 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 		}
 		sort.Strings(names)
 
+		// Match every linter's files first: the tools they need are then known up front and
+		// downloaded together, and their number is announced (InstallPlanned) before any starts.
+		filesByName := map[string][]string{}
+		var refs []download.Ref
+		for _, name := range names {
+			linter := env.Cfg.Lint.Definitions[name]
+			files, err := Files(env.Cfg, linter, repoRoot, paths)
+			if err != nil {
+				events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
+				continue
+			}
+			if len(files) == 0 {
+				continue
+			}
+			filesByName[name] = files
+			refs = append(refs, requiredRefs(linter, include)...)
+		}
+		failed := prefetch(env.Cfg, root, env.CacheDir, refs, func(ev Event) { events <- ev })
+
 		states := make(map[string]*linterState, len(names))
 		var jobs []job
 		for _, name := range names {
-			linterJobs := buildJobs(env.Cfg, root, env.CacheDir, repoRoot, name, env.Cfg.Lint.Definitions[name], paths, include, env.DryRun, events)
+			files, ok := filesByName[name]
+			if !ok {
+				continue
+			}
+			linterJobs := buildJobs(env.Cfg, root, env.CacheDir, repoRoot, name, env.Cfg.Lint.Definitions[name], files, failed, include, env.DryRun, events)
 			if len(linterJobs) == 0 {
 				continue
 			}
@@ -261,16 +286,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 // resolution -- which may download a tool, or (separately) a Command.Parser's own runtime -- runs
 // at most once per linter (per distinct Parser.Runtime, for the parser case), lazily, on the first
 // command that needs it.
-func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, paths []string, include func(config.Command) bool, dryRun bool, events chan<- Event) []job {
-	files, err := Files(cfg, linter, repoRoot, paths)
-	if err != nil {
-		events <- Event{Linter: name, Phase: Failed, Note: "matching files", Err: err}
-		return nil
-	}
-	if len(files) == 0 {
-		return nil
-	}
-
+func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, files []string, failed map[string]error, include func(config.Command) bool, dryRun bool, events chan<- Event) []job {
 	relFiles := make([]string, len(files))
 	for i, f := range files {
 		if rel, err := filepath.Rel(repoRoot, f); err == nil {
@@ -316,7 +332,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			}
 			dir, cached := parserPathEnvByRuntime[cmd.Parser.Runtime]
 			if !cached {
-				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime, emit)
+				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime, failed, emit)
 				if err != nil {
 					events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("parser runtime %q unavailable: %v", cmd.Parser.Runtime, err), Files: relFiles}
 					continue
@@ -355,7 +371,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		}
 
 		if !pathEnvResolved {
-			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools, emit)
+			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools, failed, emit)
 			if err != nil {
 				events <- Event{Linter: name, Phase: Failed, Note: "resolving tools", Err: err, Files: relFiles}
 				return nil
@@ -803,7 +819,21 @@ func remapPaths(paths []string, base, repoRoot string) []string {
 // Done or Failed only closes an item whose InstallStart was emitted (a tool whose runtime failed
 // first gets a Failed for a ref that never started), so starts and dones stay balanced.
 func forwardInstall(evs <-chan download.Event, emit func(Event)) error {
+	var first error
+	for _, err := range forwardInstallAll(evs, emit, false) {
+		if first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// forwardInstallAll drains evs, emitting Install* events, and returns each failed item's error
+// keyed by "category/id". With closeUnstarted a failed item that never started still gets its
+// InstallDone, for callers that announced it with InstallPlanned.
+func forwardInstallAll(evs <-chan download.Event, emit func(Event), closeUnstarted bool) map[string]error {
 	started := map[string]bool{}
+	failed := map[string]error{}
 	for ev := range evs {
 		item := ev.Ref.Category + "/" + ev.Ref.ID
 		switch ev.Phase {
@@ -817,19 +847,82 @@ func forwardInstall(evs <-chan download.Event, emit func(Event)) error {
 				emit(Event{Phase: InstallDone, Item: item})
 			}
 		case download.Failed:
-			if started[item] {
+			if started[item] || closeUnstarted {
 				emit(Event{Phase: InstallDone, Item: item})
 			}
-			return ev.Err
+			if failed[item] == nil {
+				failed[item] = ev.Err
+			}
 		}
 	}
-	return nil
+	return failed
+}
+
+// requiredRefs is the tool and parser-runtime refs linter needs to run any of its commands
+// selected by include -- nothing when none is runnable, so a `fmt` run fetches no check-only tool.
+func requiredRefs(linter config.Linter, include func(config.Command) bool) []download.Ref {
+	var refs []download.Ref
+	runnable := false
+	for _, cmd := range linter.Commands {
+		if !include(cmd) || (cmd.Enabled != nil && !*cmd.Enabled) {
+			continue
+		}
+		runnable = true
+		if cmd.Parser != nil {
+			refs = append(refs, download.Ref{Category: "runtimes", ID: cmd.Parser.Runtime})
+		}
+	}
+	if !runnable {
+		return nil
+	}
+	for _, id := range linter.Tools {
+		refs = append(refs, download.Ref{Category: "tools", ID: id})
+	}
+	return refs
+}
+
+// prefetch downloads every missing ref in parallel (download.Download's own bound), announcing the
+// item count first so the live view's total is fixed before the first install starts. It returns
+// each failed item's error keyed by "category/id"; those linters then fail in resolveShimDirs
+// without a second attempt.
+func prefetch(cfg config.Config, root, cacheDir string, refs []download.Ref, emit func(Event)) map[string]error {
+	// Same "is it there" test as resolveShimDirs/resolveRuntimeShimDir: a shim on disk wins.
+	var missing []download.Ref
+	for _, r := range refs {
+		var shim string
+		switch tool, rt := cfg.Tools[r.ID], cfg.Runtimes.Definitions[r.ID]; r.Category {
+		case "tools":
+			shim = download.ShimPath(root, "tools", r.ID, download.ResolveVersion(cfg.Lint.Enabled, r.ID, tool.KnownGoodVersion), r.ID)
+		case "runtimes":
+			if len(rt.Shims) > 0 {
+				shim = download.ShimPath(root, "runtimes", r.ID, download.ResolveVersion(cfg.Runtimes.Enabled, r.ID, rt.KnownGoodVersion), rt.Shims[0])
+			}
+		}
+		if _, err := os.Stat(shim); shim == "" || err != nil {
+			missing = append(missing, r)
+		}
+	}
+	pending := download.Pending(cfg, root, missing...)
+	if len(pending) == 0 {
+		return nil
+	}
+	emit(Event{Phase: InstallPlanned, Total: len(pending)})
+	evs, err := download.Download(cfg, cacheDir, pending...)
+	if err != nil {
+		failed := map[string]error{}
+		for _, r := range pending {
+			failed[r.Category+"/"+r.ID] = err
+			emit(Event{Phase: InstallDone, Item: r.Category + "/" + r.ID})
+		}
+		return failed
+	}
+	return forwardInstallAll(evs, emit, true)
 }
 
 // resolveShimDirs resolves (downloading first if not already cached) every tool id's shim, and
 // returns the directory each shim lives in -- a Command.Run string references its tool(s) by bare
 // name, so those directories become the PATH prefix that lets `sh -c` find them.
-func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string, emit func(Event)) ([]string, error) {
+func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string, failed map[string]error, emit func(Event)) ([]string, error) {
 	dirs := make([]string, 0, len(toolIDs))
 	for _, id := range toolIDs {
 		tool, ok := cfg.Tools[id]
@@ -838,6 +931,9 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string,
 		}
 		version := download.ResolveVersion(cfg.Lint.Enabled, id, tool.KnownGoodVersion)
 		shimPath := download.ShimPath(root, "tools", id, version, id)
+		if err := failed["tools/"+id]; err != nil {
+			return nil, err // already attempted (and reported) by prefetch
+		}
 		if _, statErr := os.Stat(shimPath); statErr != nil {
 			evs, err := download.Download(cfg, cacheDir, download.Ref{Category: "tools", ID: id, Version: version})
 			if err != nil {
@@ -865,7 +961,7 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string,
 // never gets a shim written for it at all (see fetchRuntimeRef), so resolving one here would
 // return a directory that was never created; this is a known, real gap for that specific
 // combination, left unhandled since no real catalog Command.Parser reaches it today.
-func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string, emit func(Event)) (string, error) {
+func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string, failed map[string]error, emit func(Event)) (string, error) {
 	rt, ok := cfg.Runtimes.Definitions[runtimeID]
 	if !ok {
 		return "", fmt.Errorf("engine: parser runtime %q referenced but not found in resolved config", runtimeID)
@@ -875,6 +971,9 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string, 
 	}
 	version := download.ResolveVersion(cfg.Runtimes.Enabled, runtimeID, rt.KnownGoodVersion)
 	shimPath := download.ShimPath(root, "runtimes", runtimeID, version, rt.Shims[0])
+	if err := failed["runtimes/"+runtimeID]; err != nil {
+		return "", err // already attempted (and reported) by prefetch
+	}
 	if _, statErr := os.Stat(shimPath); statErr != nil {
 		evs, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
 		if err != nil {
@@ -886,6 +985,50 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string, 
 	}
 	download.Touch(root, "runtimes", runtimeID, version)
 	return filepath.Dir(shimPath), nil
+}
+
+// baseEnvAllow are the glob patterns (path.Match, matched against the upper-cased name) of the
+// only variables of rtunk's own environment a linter or its parser sees: HOME, temp files, locale,
+// proxy, TLS roots, and the tools' cache/config locations and toolchain switches (dropping those
+// sends every tool back to a cold cache, which reads as a hung run). PATH is rebuilt by the caller.
+var baseEnvAllow = []string{
+	"HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TZ", "LANG", "LC_*",
+	"*PROXY", "SSL_CERT_*",
+	"XDG_*", "*CACHE*", "GO*", "CARGO_HOME", "RUSTUP_HOME",
+}
+
+// baseEnvDeny wins over baseEnvAllow: a broad allow pattern (GO* also matches GOAUTH) must never
+// let a credential through. The keywords are gitleaks' generic-api-key rule
+// (cmd/generate/config/rules/generic.go, MIT) plus detect-secrets' "pwd"
+// (detect_secrets/plugins/keyword.py, MIT), each matched as a substring of the upper-cased name.
+var baseEnvDeny = func() []string {
+	keywords := []string{"ACCESS", "API", "AUTH", "KEY", "CREDENTIAL", "CREDS", "PASSWD", "PASSWORD", "PWD", "SECRET", "TOKEN"}
+	globs := make([]string, len(keywords))
+	for i, k := range keywords {
+		globs[i] = "*" + k + "*"
+	}
+	return globs
+}()
+
+func globAny(patterns []string, name string) bool {
+	for _, p := range patterns {
+		if ok, _ := path.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// baseEnv is the part of os.Environ that baseEnvAllow lets through and baseEnvDeny does not.
+func baseEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if upper := strings.ToUpper(name); globAny(baseEnvAllow, upper) && !globAny(baseEnvDeny, upper) {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
 
 // runOneInvocation substitutes ${target}/${tmpfile}/${plugin}/${cwd} into cmd.Run and executes it
@@ -926,7 +1069,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 	if pathEnv != "" {
 		path = pathEnv + string(os.PathListSeparator) + path
 	}
-	c.Env = append(os.Environ(), "PATH="+path)
+	c.Env = append(baseEnv(), "PATH="+path)
 
 	inv.Template, inv.Files, inv.Cwd, inv.PathPrefix, inv.Argv = cmd.Run, files, workDir, pathEnv, c.Args
 	log.Emit(inv)
@@ -992,7 +1135,7 @@ func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEn
 	if parserPathEnv != "" {
 		path = parserPathEnv + string(os.PathListSeparator) + path
 	}
-	c.Env = append(os.Environ(), "PATH="+path)
+	c.Env = append(baseEnv(), "PATH="+path)
 
 	var stdout, stderr strings.Builder
 	c.Stdout = &stdout
