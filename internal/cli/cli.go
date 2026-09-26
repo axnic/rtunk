@@ -45,10 +45,6 @@ type CLI struct {
 	LintersCmd  lintersCmd  `cmd:"" name:"linters" help:"List, enable and disable linters."`
 	PluginsCmd  pluginsCmd  `cmd:"" name:"plugins" help:"Inspect plugins."`
 	ConfigCmd   configCmd   `cmd:"" name:"config" help:"Query the resolved trunk configuration."`
-	DownloadCmd downloadCmd `cmd:"" name:"download" help:"Download enabled tools/runtimes into the local cache."`
-	WhereCmd    whereCmd    `cmd:"" name:"where" help:"Print a cached item's shim path."`
-	ExecCmd     execCmd     `cmd:"" name:"exec" help:"Run a tool/runtime, downloading it first if missing."`
-	XCmd        execCmd     `cmd:"" name:"x" hidden:"" help:"Alias for exec."`
 	CacheCmd    cacheCmd    `cmd:"" name:"cache" help:"Manage the rtunk downloads cache."`
 	CheckCmd    checkCmd    `cmd:"" name:"check" help:"Run enabled checks against source files (read-only)."`
 	FmtCmd      fmtCmd      `cmd:"" name:"fmt" help:"Run configured formatters against source files."`
@@ -62,9 +58,9 @@ type CLI struct {
 	// used by CLI.ActionsCmd.Run -- both paths share one Run method, so there is nothing to keep
 	// in sync between them.
 	RunCmd actionsRunCmd `cmd:"" name:"run" help:"Run a specified action (shortcut for 'actions run')."`
-	// RenovateCmd is `rtunk renovate`: generates Renovate annotations for trunk.yaml's version
-	// pins (see docs/superpowers/specs/2026-09-17-renovate-annotations-design.md).
-	RenovateCmd renovateCmd `cmd:"" name:"renovate" help:"Generate Renovate annotations for trunk.yaml's version pins."`
+	// ToolboxCmd is `rtunk toolbox`: internal commands (download, exec, where, renovate), hidden from
+	// the default help.
+	ToolboxCmd toolboxCmd `cmd:"" name:"toolbox" hidden:"" help:"Internal commands: download, exec, where, renovate."`
 	// LogsCmd is `rtunk logs`: reads back the run logs check, fmt and actions run write (see
 	// docs/superpowers/specs/2026-09-26-run-logs-design.md).
 	LogsCmd logsCmd `cmd:"" name:"logs" help:"List, show and clean the logs of past runs."`
@@ -112,9 +108,25 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
+	// `rtunk help [--all]` is `--help`; --all also lists the hidden commands (toolbox, ...).
+	if len(args) > 0 && args[0] == "help" {
+		if len(args) == 2 && args[1] == "--all" {
+			showHidden(parser.Model.Node)
+		}
+		args = []string{"--help"}
+	}
+
 	kctx, err := parser.Parse(args)
 	if err != nil {
 		return err
 	}
 	return kctx.Run()
+}
+
+// showHidden un-hides n and every command below it, for `rtunk help --all`.
+func showHidden(n *kong.Node) {
+	n.Hidden = false
+	for _, c := range n.Children {
+		showHidden(c)
+	}
 }

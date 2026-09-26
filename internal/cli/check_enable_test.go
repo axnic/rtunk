@@ -159,7 +159,7 @@ func TestCheckEnableCmd_NoAnnotations_BehaviorUnchanged(t *testing.T) {
 
 func TestCheckEnableCmd_AnnotatedSurvivor_KeepsExactComment(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@1.0.0"})
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 	before, err := os.ReadFile(cfgPath)
 	require.NoError(t, err)
@@ -183,7 +183,7 @@ func TestCheckEnableCmd_AnnotatedSurvivor_KeepsExactComment(t *testing.T) {
 // annotated AND re-pinned to the known_good_version.
 func TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@9.9.9"})
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	before, err := os.ReadFile(cfgPath)
@@ -202,7 +202,7 @@ func TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood(t 
 
 func TestCheckEnableCmd_NewEntryInAnnotatedCategory_GetsFreshComment(t *testing.T) {
 	cfgPath, repoRoot := writeToolLinterFixture(t, []string{"fixture"})
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	// Add a second, independently-resolvable tool+linter to the same fixture repo before
@@ -244,7 +244,7 @@ lint:
 
 func TestCheckEnableCmd_UnresolvableNewEntryInAnnotatedCategory_NoCommentNoForcedPin(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"})
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	_, stderr, err = run2(t, "--config", cfgPath, "linters", "enable", "phantom")

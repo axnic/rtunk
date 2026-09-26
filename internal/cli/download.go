@@ -7,29 +7,32 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/download"
 )
 
-// downloadCmd is `rtunk download`: bare fetches everything enabled+used in the resolved config;
-// with Category+ID, one targeted item (optionally `@version`, parsed by cutVersion below).
-type downloadCmd struct {
-	Category string `arg:"" optional:"" default:"" enum:"tools,runtimes,lint,actions,plugins," help:"Resource category."`
-	ID       string `arg:"" optional:"" help:"Resource id, optionally @version."`
+// toolboxCategory maps the CLI's `runtime|tools` argument to the cache's category name.
+func toolboxCategory(c string) string {
+	if c == "runtime" {
+		return "runtimes"
+	}
+	return c
 }
 
-// Run resolves the trunk.yaml in effect, fetches the requested ref(s) (or everything
-// enabled+used, for the bare `rtunk download` form), and streams one line per download.Event to
-// stdout as it arrives -- so a slow fetch shows progress rather than going silent until it's done.
+// downloadCmd is `rtunk toolbox download {runtime,tools} <id>[@version]`: one targeted item
+// (`@version` parsed by cutVersion below). Everything else is downloaded lazily by check/fmt/run.
+type downloadCmd struct {
+	Category string `arg:"" enum:"runtime,tools" help:"Resource category."`
+	ID       string `arg:"" help:"Resource id, optionally @version."`
+}
+
+// Run resolves the trunk.yaml in effect, fetches the requested ref, and streams one line per
+// download.Event to stdout as it arrives -- so a slow fetch shows progress rather than going
+// silent until it's done.
 func (c *downloadCmd) Run(cli *CLI, stdout io.Writer) error {
 	cfg, err := resolveConfig(cli.Config, cli.CacheDir, false)
 	if err != nil {
 		return err
 	}
 
-	var refs []download.Ref
-	if c.Category != "" {
-		id, version, _ := cutVersion(c.ID)
-		refs = []download.Ref{{Category: c.Category, ID: id, Version: version}}
-	}
-
-	events, err := download.Download(cfg, cli.CacheDir, refs...)
+	id, version, _ := cutVersion(c.ID)
+	events, err := download.Download(cfg, cli.CacheDir, download.Ref{Category: toolboxCategory(c.Category), ID: id, Version: version})
 	if err != nil {
 		return err
 	}

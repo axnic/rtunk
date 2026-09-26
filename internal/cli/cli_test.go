@@ -178,3 +178,13 @@ func TestVersionFlag_PrintsCliVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "v9.9.9")
 }
+
+func TestHelp_HidesToolboxUnlessAll(t *testing.T) {
+	def, _, err := run2(t, "help")
+	require.NoError(t, err)
+	assert.NotContains(t, def, "toolbox")
+
+	all, _, err := run2(t, "help", "--all")
+	require.NoError(t, err)
+	assert.Contains(t, all, "toolbox download")
+}

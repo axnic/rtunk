@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -14,17 +15,19 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/renovate"
 )
 
-// renovateCmd is `rtunk renovate`: ROADMAP.md's v1.1 addition, generating Renovate
+// renovateCmd is `rtunk toolbox renovate`: ROADMAP.md's v1.1 addition, generating Renovate
 // annotations for trunk.yaml's version pins (see
-// docs/superpowers/specs/2026-09-17-renovate-annotations-design.md).
+// docs/superpowers/specs/2026-09-17-renovate-annotations-design.md). enable/disable turn the
+// annotations on or off and warn when the Renovate regexManager is missing.
 type renovateCmd struct {
-	Annotate renovateAnnotateCmd `cmd:"" help:"Annotate trunk.yaml's version pins for Renovate."`
-	Config   renovateConfigCmd   `cmd:"" help:"Print the Renovate regexManagers config to add."`
+	Enable  renovateAnnotateCmd `cmd:"" help:"Annotate trunk.yaml's version pins for Renovate."`
+	Disable renovateDisableCmd  `cmd:"" help:"Remove the Renovate annotations from trunk.yaml."`
+	Config  renovateConfigCmd   `cmd:"" help:"Print the Renovate regexManagers config to add."`
 }
 
 type renovateAnnotateCmd struct{}
 
-func (c *renovateAnnotateCmd) Run(cli *CLI, stdout io.Writer) error {
+func (c *renovateAnnotateCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	configPath := cli.Config
 	if configPath == "" {
 		found, err := findTrunkYAML()
@@ -54,22 +57,92 @@ func (c *renovateAnnotateCmd) Run(cli *CLI, stdout io.Writer) error {
 		return nil
 	}
 
+	if err := rewriteYAML(configPath, data, &doc); err != nil {
+		return err
+	}
+
+	warnIfNoRegexManager(stderr, configPath)
+	printRenovateReport(stdout, report)
+	return nil
+}
+
+// rewriteYAML re-encodes doc over configPath at the indent width data already used, so comments
+// and layout everywhere else survive the round trip.
+func rewriteYAML(configPath string, data []byte, doc *yaml.Node) error {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(detectIndentWidth(data))
-	if err := enc.Encode(&doc); err != nil {
+	if err := enc.Encode(doc); err != nil {
 		return err
 	}
 	if err := enc.Close(); err != nil {
 		return err
 	}
 	//nolint:gosec // trunk.yaml is a repo-tracked config file, readable like every other tracked file
-	if err := os.WriteFile(configPath, buf.Bytes(), 0o644); err != nil {
+	return os.WriteFile(configPath, buf.Bytes(), 0o644)
+}
+
+type renovateDisableCmd struct{}
+
+func (c *renovateDisableCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
+	configPath := cli.Config
+	if configPath == "" {
+		found, err := findTrunkYAML()
+		if err != nil {
+			return err
+		}
+		configPath = found
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
 		return err
 	}
-
-	printRenovateReport(stdout, report)
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	removed := stripRenovateComments(&doc)
+	if removed > 0 {
+		if err := rewriteYAML(configPath, data, &doc); err != nil {
+			return err
+		}
+	}
+	_, _ = fmt.Fprintf(stdout, "%d annotation(s) removed\n", removed)
+	warnIfNoRegexManager(stderr, configPath)
 	return nil
+}
+
+// stripRenovateComments clears every "# renovate:" head comment under n -- the exact shape
+// annotateDoc writes, whole-comment, on entry nodes and on ref key nodes -- and returns how many.
+func stripRenovateComments(n *yaml.Node) int {
+	count := 0
+	if strings.HasPrefix(strings.TrimSpace(n.HeadComment), "# renovate:") {
+		n.HeadComment = ""
+		count++
+	}
+	for _, c := range n.Content {
+		count += stripRenovateComments(c)
+	}
+	return count
+}
+
+// renovateConfigFiles are the places Renovate reads its own configuration from.
+var renovateConfigFiles = []string{
+	"renovate.json", "renovate.json5", ".renovaterc", ".renovaterc.json",
+	".github/renovate.json", ".github/renovate.json5", ".gitlab/renovate.json", ".gitlab/renovate.json5",
+}
+
+// warnIfNoRegexManager warns on stderr when none of the Renovate config files at the repo root
+// carries the regexManager `toolbox renovate config` prints (matched on its "renovate: datasource"
+// pattern) -- without it the annotations are inert.
+func warnIfNoRegexManager(stderr io.Writer, configPath string) {
+	repoRoot := filepath.Dir(filepath.Dir(configPath))
+	for _, f := range renovateConfigFiles {
+		if b, err := os.ReadFile(filepath.Join(repoRoot, f)); err == nil && bytes.Contains(b, []byte("renovate: datasource")) {
+			return
+		}
+	}
+	_, _ = fmt.Fprintln(stderr, "warning: no Renovate regexManager found for the annotations; add the output of `rtunk toolbox renovate config` to your Renovate config")
 }
 
 // renovateReport summarizes what `rtunk renovate annotate` did.

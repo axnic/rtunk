@@ -84,12 +84,12 @@ func TestDownloadCmd_Targeted(t *testing.T) {
 	defer srv.Close()
 
 	configPath := writeNodeFixture(t, srv)
-	stdout, stderr, err := run2(t, "--config", configPath, "--cache-dir", t.TempDir(), "download", "runtimes", "node")
+	stdout, stderr, err := run2(t, "--config", configPath, "--cache-dir", t.TempDir(), "toolbox", "download", "runtime", "node")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "runtimes node: done")
 }
 
 func TestDownloadCmd_UnknownCategory(t *testing.T) {
-	_, _, err := run2(t, "--config", trunkYAML, "download", "bogus", "whatever")
+	_, _, err := run2(t, "--config", trunkYAML, "toolbox", "download", "bogus", "whatever")
 	assert.Error(t, err)
 }

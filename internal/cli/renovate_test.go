@@ -76,7 +76,7 @@ lint:
 func TestRenovateAnnotate_UnpinnedResolvableEntry_GetsCommentAndPin(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"})
 
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(cfgPath)
@@ -87,7 +87,7 @@ func TestRenovateAnnotate_UnpinnedResolvableEntry_GetsCommentAndPin(t *testing.T
 func TestRenovateAnnotate_AlreadyPinnedEntry_GetsCommentKeepsVersion(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@9.9.9"})
 
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(cfgPath)
@@ -100,7 +100,7 @@ func TestRenovateAnnotate_UnresolvableLinter_LeftUntouched(t *testing.T) {
 	// bridge exists) -- must be left exactly as-is, no comment, no forced pin.
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture", "phantom"})
 
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(cfgPath)
@@ -121,7 +121,7 @@ func TestRenovateAnnotate_PreExistingNonRenovateComment_LeftUntouched(t *testing
 		"    # IMPORTANT: pinned by hand, do not bump -- breaks CI\n    - fixture\n", 1)
 	require.NoError(t, os.WriteFile(cfgPath, []byte(withComment), 0o644))
 
-	stdout, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	stdout, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "lint/fixture: has a pre-existing non-renovate comment, left untouched")
 
@@ -137,7 +137,7 @@ func TestRenovateAnnotate_PreExistingNonRenovateComment_LeftUntouched(t *testing
 // rtunk can no longer confirm.
 func TestRenovateAnnotate_StaleAnnotation_ClearedWhenNoLongerResolvable(t *testing.T) {
 	cfgPath, repoRoot := writeToolLinterFixture(t, []string{"fixture"})
-	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	_, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	before, err := os.ReadFile(cfgPath)
@@ -153,7 +153,7 @@ func TestRenovateAnnotate_StaleAnnotation_ClearedWhenNoLongerResolvable(t *testi
 		[]byte(strings.ReplaceAll(string(pluginData), "https://github.com/acme/widget", "https://example.com/acme/widget")),
 		0o644))
 
-	stdout, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	stdout, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "lint/fixture: no longer resolvable, stale annotation removed")
 
@@ -221,7 +221,7 @@ func TestAnnotateDoc_LocalPluginSource_NeverAnnotated(t *testing.T) {
 func TestRenovateAnnotate_PrintsSummary(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"})
 
-	stdout, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
+	stdout, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "annotated lint/fixture")
 	assert.Contains(t, stdout, "skipped plugins.sources/local")
@@ -229,7 +229,28 @@ func TestRenovateAnnotate_PrintsSummary(t *testing.T) {
 }
 
 func TestRenovateConfig_PrintsSnippet(t *testing.T) {
-	stdout, stderr, err := run2(t, "renovate", "config")
+	stdout, stderr, err := run2(t, "toolbox", "renovate", "config")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Equal(t, renovateConfigSnippet, stdout)
+}
+
+func TestRenovateDisable_StripsAnnotationsAndWarnsWithoutRegexManager(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".trunk", "trunk.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0o755))
+	require.NoError(t, os.WriteFile(cfgPath, []byte("lint:\n  enabled:\n    # renovate: datasource=github-releases depName=koalaman/shellcheck\n    - shellcheck@0.10.0\n    # keep me\n    - other@1.0.0\n"), 0o644))
+
+	stdout, stderr, err := run2(t, "--config", cfgPath, "toolbox", "renovate", "disable")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "1 annotation(s) removed")
+	assert.Contains(t, stderr, "no Renovate regexManager")
+	got, _ := os.ReadFile(cfgPath)
+	assert.NotContains(t, string(got), "renovate:")
+	assert.Contains(t, string(got), "# keep me")
+
+	// with the regexManager present: no warning
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "renovate.json"), []byte(renovateConfigSnippet), 0o644))
+	_, stderr, err = run2(t, "--config", cfgPath, "toolbox", "renovate", "disable")
+	require.NoError(t, err)
+	assert.NotContains(t, stderr, "regexManager")
 }
