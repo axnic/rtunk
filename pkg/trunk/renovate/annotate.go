@@ -17,6 +17,23 @@ import (
 type Annotation struct {
 	Datasource string
 	DepName    string
+	// ExtractVersion, when set, is a Renovate extractVersion regex (with a named "version" group)
+	// stripping what trunk.yaml's pin doesn't carry from the datasource's own versions.
+	ExtractVersion string
+}
+
+// goVersionPrefix is the extractVersion for the go datasource: Go module versions are always
+// "v"-prefixed, but a trunk.yaml pin isn't (rtunk adds the "v" back right before `go install`).
+const goVersionPrefix = `^v(?<version>.+)$`
+
+// Comment renders a as the "# renovate: ..." line the regexManagers config in internal/cli
+// matches.
+func (a Annotation) Comment() string {
+	c := "# renovate: datasource=" + a.Datasource + " depName=" + a.DepName
+	if a.ExtractVersion != "" {
+		c += " extractVersion=" + a.ExtractVersion
+	}
+	return c
 }
 
 // runtimeDatasources maps a Tool's Runtime ecosystem to the Renovate datasource that tracks
@@ -87,7 +104,11 @@ func resolveToolAnnotation(cfg config.Config, tool config.Tool) (Annotation, str
 		if !ok {
 			return Annotation{}, "", false
 		}
-		return Annotation{Datasource: datasource, DepName: tool.Package}, tool.KnownGoodVersion, true
+		ann := Annotation{Datasource: datasource, DepName: tool.Package}
+		if tool.Runtime == "go" {
+			ann.ExtractVersion = goVersionPrefix
+		}
+		return ann, tool.KnownGoodVersion, true
 	}
 	return Annotation{}, "", false
 }

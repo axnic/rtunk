@@ -45,6 +45,10 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) err
 	}
 	defer func() { _ = os.RemoveAll(buildDir) }()
 
+	// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see renovate.goVersionPrefix).
+	if version != "" && version[0] >= '0' && version[0] <= '9' {
+		version = "v" + version
+	}
 	//nolint:gosec // goBin is rtunk's own installed toolchain; pkg/version come from the pinned plugin catalog
 	cmd := exec.Command(goBin, "install", pkg+"@"+version)
 	cmd.Env = append(os.Environ(),

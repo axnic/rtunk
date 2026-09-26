@@ -103,7 +103,7 @@ const renovateConfigSnippet = `{
     {
       "fileMatch": ["(^|/)\\.trunk/trunk\\.yaml$", "(^|/)\\.rtunk/rtunk\\.yaml$"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s*(?:-\\s*\\S+@|ref:\\s*)(?<currentValue>\\S+)"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?:\\s+extractVersion=(?<extractVersion>\\S+))?\\s*\\n\\s*(?:-\\s*\\S+@|ref:\\s*)(?<currentValue>\\S+)"
       ]
     }
   ]
@@ -199,7 +199,7 @@ func annotateEnabledSeq(root *yaml.Node, category string, report *renovateReport
 			}
 			entry.Value = id + "@" + knownGoodVersion
 		}
-		entry.HeadComment = "# renovate: datasource=" + ann.Datasource + " depName=" + ann.DepName
+		entry.HeadComment = ann.Comment()
 		report.Annotated = append(report.Annotated, label)
 	}
 }
@@ -249,7 +249,7 @@ func annotatePluginSources(root *yaml.Node, cfg config.Config, report *renovateR
 			report.Skipped = append(report.Skipped, label+": has a pre-existing non-renovate comment, left untouched")
 			continue
 		}
-		refKey.HeadComment = "# renovate: datasource=" + ann.Datasource + " depName=" + ann.DepName
+		refKey.HeadComment = ann.Comment()
 		report.Annotated = append(report.Annotated, label)
 	}
 }

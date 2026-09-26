@@ -60,7 +60,7 @@ func TestInstallPackage_Go(t *testing.T) {
 	fields := strings.Fields(line)
 	require.GreaterOrEqual(t, len(fields), 3)
 	assert.Equal(t, "install", fields[0])
-	assert.Equal(t, "mvdan.cc/gofumpt@0.6.0", fields[1])
+	assert.Equal(t, "mvdan.cc/gofumpt@v0.6.0", fields[1])
 	assert.True(t, strings.HasPrefix(fields[2], "GOBIN="))
 	gobin := strings.TrimPrefix(fields[2], "GOBIN=")
 	assert.NotEqual(t, pkgDir, gobin, "go install must run against a scratch GOBIN, not pkgDir directly")
