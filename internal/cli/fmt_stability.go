@@ -143,6 +143,12 @@ type unstableFormatError string
 
 func (e unstableFormatError) Error() string { return string(e) }
 
+// isUnstable reports whether err is the "did not converge" verdict.
+func isUnstable(err error) bool {
+	var u unstableFormatError
+	return errors.As(err, &u)
+}
+
 // runFailedBy reports whether err means the run itself failed (for the run log's verdict): any
 // non-nil error except an unstable-format verdict.
 func runFailedBy(err error) bool {

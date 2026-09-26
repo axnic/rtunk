@@ -177,6 +177,7 @@ func TestFmtCmd_UnstableReportsConflictingLinters(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", "--verify-stable", "-j", "1", filepath.Join(repoRoot, "work"))
 	require.Error(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "REFORMATTED   1 file\n\n  work/oscillating.txt\n")
+	assert.Contains(t, stdout, "✖ 1 file reformatted · did not converge\n", "the verdict glyph must match the non-zero exit")
 	assert.Equal(t, "fmt did not converge after 2 attempts. Still unstable:\n  work/oscillating.txt (conflicting: fmtA, fmtB)", err.Error())
 }
 

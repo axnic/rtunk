@@ -131,6 +131,10 @@ func (p *plain) Close(s Summary) error {
 			verdict = plural(changed, "file") + " would be reformatted"
 		}
 	}
+	if s.Unstable {
+		ok = false
+		verdict += " · did not converge"
+	}
 	if n := len(p.failed); n > 0 {
 		ok = false
 		verdict += " · " + plural(n, "failure")

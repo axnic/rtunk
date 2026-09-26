@@ -113,7 +113,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 			changed, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr, fixR.Event)
 		}
 		fixFailed = ffErr
-		_ = fixR.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: fixSkipped, Changed: changed})
+		_ = fixR.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: fixSkipped, Changed: changed, Unstable: isUnstable(ffErr)})
 	}
 
 	started := time.Now()

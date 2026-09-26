@@ -29,10 +29,11 @@ type Options struct {
 
 // Summary carries what only the CLI knows, given to Close once the stream is drained.
 type Summary struct {
-	Elapsed time.Duration // measured by the CLI around the engine run(s)
-	RunLog  string        // runlog.Writer.Name(); "" when logging is disabled
-	Skipped []string      // "linter [note]", one per skipped linter
-	Changed []string      // fmt only: repoRoot-relative files reformatted (or that would be)
+	Elapsed  time.Duration // measured by the CLI around the engine run(s)
+	RunLog   string        // runlog.Writer.Name(); "" when logging is disabled
+	Skipped  []string      // "linter [note]", one per skipped linter
+	Changed  []string      // fmt only: repoRoot-relative files reformatted (or that would be)
+	Unstable bool          // fmt --verify-stable did not converge: the command exits non-zero, so the verdict must not read as success
 }
 
 // Renderer consumes one run: Event for every engine event in arrival order (from a single

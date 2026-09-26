@@ -143,3 +143,9 @@ func TestNoColorFromEnv(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	assert.True(t, NoColorFromEnv())
 }
+
+func TestPlain_UnstableFlipsTheVerdict(t *testing.T) {
+	events := []engine.Event{{Linter: "gofmt", Phase: engine.Done, Files: []string{"a.go"}, ChangedFiles: []string{"a.go"}}}
+	stdout, _ := run(t, Options{Command: Fmt}, events, Summary{Changed: []string{"a.go"}, Unstable: true})
+	assert.Contains(t, stdout, "✖ 1 file reformatted · did not converge\n")
+}

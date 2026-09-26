@@ -88,8 +88,8 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	}
 	started := time.Now()
 	r := render.NewPlain(stdout, stderr, render.Options{Command: kind, NoProgress: c.NoProgress, NoColor: render.NoColorFromEnv()})
-	summary := func(changed, skipped []string) render.Summary {
-		return render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped, Changed: changed}
+	summary := func(changed, skipped []string, err error) render.Summary {
+		return render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped, Changed: changed, Unstable: isUnstable(err)}
 	}
 
 	if c.Check {
@@ -100,7 +100,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 		}
 		_, wouldChange, skipped, failed := drainRunEvents(r.Event, events)
 		runFailed = failed != nil
-		_ = r.Close(summary(wouldChange, skipped))
+		_ = r.Close(summary(wouldChange, skipped, nil))
 		if failed != nil {
 			return failed
 		}
@@ -113,13 +113,13 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	if c.VerifyStable {
 		changed, skipped, err := runStableFormat(context.Background(), env, files, r.Event)
 		runFailed = runFailedBy(err)
-		_ = r.Close(summary(changed, skipped))
+		_ = r.Close(summary(changed, skipped, err))
 		return err
 	}
 
 	changed, skipped, err := runFormatOnce(context.Background(), env, files, repoRoot, stderr, r.Event)
 	runFailed = runFailedBy(err)
-	_ = r.Close(summary(changed, skipped))
+	_ = r.Close(summary(changed, skipped, err))
 	return err
 }
 
