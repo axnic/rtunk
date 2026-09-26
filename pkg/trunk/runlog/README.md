@@ -10,8 +10,8 @@ Each run is one file, `<cache>/logs/<sha256(repoRoot)>/<UTC yyyymmddThhmmss.nnnn
 (`logsRoot`, `Start`), where `<cache>` is the directory `download.Root` sits in
 (`--cache-dir` / `RTUNK_CACHE_DIR`, else the OS user cache dir's `rtunk/`). `<cmd>` is `check`,
 `fmt` or `actions-run`. `logs/` is a sibling of `downloads/`, so `rtunk cache clean` (which removes
-`downloads/`) never deletes logs; `rtunk logs clean [--all]` does (`Clean`). Files are `0600`, their
-directories `0750`: the first event records the environment. `Start` keeps the newest 50 runs per
+`downloads/`) never deletes logs; `rtunk logs clean [--all]` does (`Clean`). Files are `0600` and their
+directories `0750`, because the first event records the environment. `Start` keeps the newest 50 runs per
 repository and prunes the rest (`keepRuns`).
 
 ## Events

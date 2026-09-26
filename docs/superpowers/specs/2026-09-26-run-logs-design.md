@@ -42,8 +42,8 @@ Owns everything log-related; no dependency on the engine (the engine depends on 
   `rtunk/`), so `logs/` is a sibling of `downloads/`. It never fails the run: on error it prints one
   warning and returns nil, a valid no-op writer. If the package-reorg spec moves the cache root,
   `logsRoot` is the single function to update. Files are `0600`, directories `0750`.
-- Per-stream cap: 1 MiB for each `output` event, and cumulatively per stream for a `Tee`d live stream; beyond it the data is cut and
-  `"truncated": true` is set.
+- Per-stream cap: 1 MiB for each `output` event, and cumulatively per stream for a `Tee`d live
+  stream; beyond it the data is cut and `"truncated": true` is set.
 - `RedactEnv(environ []string) map[string]string`: keeps every variable, replaces the value with
   `"<redacted>"` when the name matches `(?i)TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH`.
   Heuristic by decision: a secret held in an innocuously named variable is not caught.
@@ -74,7 +74,8 @@ Reproducibility decisions:
 - **`parsed_from`** records which stream fed the parser (`read_output_from` may be stdout, stderr
   or tmp_file), and the **parser is its own step** (stdin source, stdout, exit code): that is where
   raw tool output becomes findings.
-- **Only the main config file is recorded** (`config`); plugin sources are pinned inside it, which is what makes them reproducible.
+- **Only the main config file is recorded** (`config`); plugin sources are pinned inside it, which
+  is what makes them reproducible.
 - `status` in `run_end` is `ok` when every linter ended Done/Skipped, `failed` otherwise. A
   `--verify-stable` "did not converge" verdict is not a run failure and is logged as `ok`
   (`runFailedBy`, `internal/cli/fmt_stability.go`). A file with no `run_end` is an interrupted run.
@@ -121,13 +122,13 @@ Reproducibility decisions:
 ### 5. Error handling
 
 Logging never fails a run. On the first write error the writer prints one warning on stderr and
-disables itself for the rest of the run. `Open` failing (unwritable cache) degrades to a nil
+disables itself for the rest of the run. `Start` failing (unwritable cache) degrades to a nil
 writer with the same single warning.
 
 ### 6. Testing
 
-- `runlog`: redaction (matching and non-matching names), per-stream truncation flag, prune keeps
-  the 50 newest, concurrent `Emit` from many goroutines yields only valid JSON lines, nil writer
+- `runlog`: redaction (matching and non-matching names), per-stream truncation flag, the `Tee`
+  cumulative cap (`TestTeeForwardsEverythingButLogsOnlyUpToTheCap`), prune keeps the 50 newest, concurrent `Emit` from many goroutines yields only valid JSON lines, nil writer
   is a no-op.
 - `engine`: a fake linter run produces the expected event sequence, including the parser step and
   a `Failed` linter.
