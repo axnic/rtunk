@@ -8,26 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/xunleii/rtunk/pkg/trunk/config"
 )
-
-func TestFormatLintList(t *testing.T) {
-	cfg := config.Config{
-		Lint: config.LintConfig{
-			CategoryConfig: config.CategoryConfig[config.Linter]{
-				Enabled: []string{"gofmt@1.2.3"},
-				Definitions: map[string]config.Linter{
-					"gofmt":         {Description: "Formats go"},
-					"golangci-lint": {Description: "Lints go"},
-				},
-			},
-		},
-	}
-	got := formatLintList(cfg)
-	want := "* gofmt  Formats go\n  golangci-lint  Lints go\n"
-	assert.Equal(t, want, got)
-}
 
 // TestCheckRunCmd_SkipsUnsupportedFormats: an unsupported Output format and a formatter-only
 // command must both be handled without ever attempting a network fetch or a real tool
@@ -107,8 +88,8 @@ func TestCheckListCmd_ShowsDisabledLinters(t *testing.T) {
 `)
 	stdout, stderr, err := run2(t, "--config", cfgPath, "linters", "list")
 	require.NoError(t, err, "stderr: %s", stderr)
-	want := "* alpha  Alpha linter\n  beta  Beta linter\n"
-	assert.Equal(t, want, stdout)
+	assert.Contains(t, stdout, "Enabled\n  ✔ alpha")
+	assert.Contains(t, stdout, "Available for this repo (not enabled)\n  ◯ beta")
 }
 
 // TestCheckRunCmd_FailedLinterKeepsOtherFindings covers item 4: a Failed event used to return

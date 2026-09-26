@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,41 +26,16 @@ type actionsCmd struct {
 	History actionsHistoryCmd `cmd:"" help:"Show recent action runs."`
 }
 
-type actionsListCmd struct{}
+type actionsListCmd struct {
+	Format string `enum:"human,json" default:"human" help:"Output format: human or json."`
+}
 
 func (c *actionsListCmd) Run(cli *CLI, stdout io.Writer) error {
 	cfg, err := resolveConfig(cli.Config, cli.CacheDir, true)
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprint(stdout, formatActionsList(cfg))
-	return nil
-}
-
-// formatActionsList mirrors formatLintList (check.go) exactly: sorted names, "*" prefix when
-// enabled, one line each.
-func formatActionsList(cfg config.Config) string {
-	names := make([]string, 0, len(cfg.Actions.Definitions))
-	for name := range cfg.Actions.Definitions {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	enabled := map[string]bool{}
-	for _, e := range cfg.Actions.Enabled {
-		bare, _, _ := cutVersion(e)
-		enabled[bare] = true
-	}
-
-	var b strings.Builder
-	for _, name := range names {
-		marker := " "
-		if enabled[name] {
-			marker = "*"
-		}
-		_, _ = fmt.Fprintf(&b, "%s %s  %s\n", marker, name, cfg.Actions.Definitions[name].Description)
-	}
-	return b.String()
+	return writeListing(stdout, buildActionsList(cfg), c.Format, "action", "actions enable", false)
 }
 
 type actionsEnableCmd struct {

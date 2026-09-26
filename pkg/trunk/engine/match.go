@@ -266,3 +266,9 @@ func matchesRequiredYAMLKeys(keys []string, path string) bool {
 	}
 	return true
 }
+
+// Matches reports whether path (absolute, so shebang files can be read) is one of linter's files.
+// The same predicate Files applies, exported for `rtunk linters list`'s per-linter file counts.
+func Matches(cfg config.Config, linter config.Linter, path string) bool {
+	return len(linter.Files) > 0 && matchesAny(cfg.Lint.Files, linter.Files, path)
+}

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 
@@ -204,46 +203,28 @@ func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (fin
 	return findings, changed, skipped, failed
 }
 
-// checkListCmd is `rtunk linters list`.
-type checkListCmd struct{}
+// checkListCmd is `rtunk linters list`: enabled linters (with their pinned version), the ones
+// available for this repo (matching at least one file), and with --all the rest.
+type checkListCmd struct {
+	All    bool   `help:"Also list the linters that match no file in this repository."`
+	Format string `enum:"human,json" default:"human" help:"Output format: human or json."`
+}
 
 func (c *checkListCmd) Run(cli *CLI, stdout io.Writer) error {
-	// all=true (config.ResolveAll): ROADMAP.md promises "list all linters available for the
-	// current configuration", not only the enabled+used subset Resolve trims to -- otherwise the
-	// enabled marker in formatLintList would be dead code (every listed line is always enabled).
+	// all=true (config.ResolveAll): the full catalog, not only the enabled+used subset.
 	cfg, err := resolveConfig(cli.Config, cli.CacheDir, true)
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprint(stdout, formatLintList(cfg))
-	return nil
-}
-
-// formatLintList renders every linter in cfg.Lint.Definitions, one per line, "* " prefixed when
-// enabled -- cfg.Lint.Enabled entries are matched by bare id (an @version pin doesn't change
-// whether a linter counts as enabled).
-func formatLintList(cfg config.Config) string {
-	names := make([]string, 0, len(cfg.Lint.Definitions))
-	for name := range cfg.Lint.Definitions {
-		names = append(names, name)
+	repoRoot, err := logsRepoRoot(cli)
+	if err != nil {
+		return err
 	}
-	sort.Strings(names)
-
-	enabled := map[string]bool{}
-	for _, e := range cfg.Lint.Enabled {
-		bare, _, _ := cutVersion(e)
-		enabled[bare] = true
+	files, err := repoFiles(repoRoot)
+	if err != nil {
+		return err
 	}
-
-	var b strings.Builder
-	for _, name := range names {
-		marker := " "
-		if enabled[name] {
-			marker = "*"
-		}
-		_, _ = fmt.Fprintf(&b, "%s %s  %s\n", marker, name, cfg.Lint.Definitions[name].Description)
-	}
-	return b.String()
+	return writeListing(stdout, buildLintersList(cfg, files), c.Format, "linter", "linters enable", c.All)
 }
 
 // checkEnableCmd is `rtunk linters enable <id>[@version]...`.
