@@ -648,3 +648,23 @@ func TestDownload_AllRefs_DefaultsToEveryToolAndRuntime(t *testing.T) {
 	assert.Equal(t, download.Cached, seen[download.Ref{Category: "runtimes", ID: "python"}],
 		"the system_version runtime must be fetched by default too")
 }
+
+func TestPending_DedupesRuntimeAndSkipsInstalled(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{
+		Tools: map[string]config.Tool{
+			"a": {Runtime: "node", Package: "a", KnownGoodVersion: "1"},
+			"b": {Runtime: "node", Package: "b", KnownGoodVersion: "1"},
+			"c": {Download: "c", KnownGoodVersion: "1"},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{Definitions: map[string]config.Runtime{"node": {KnownGoodVersion: "20"}}},
+	}
+	refs := []download.Ref{{Category: "tools", ID: "a"}, {Category: "tools", ID: "b"}, {Category: "tools", ID: "c"}}
+
+	got := download.Pending(cfg, root, refs...)
+	assert.Len(t, got, 4, "node once, plus a, b and c")
+
+	require.NoError(t, os.MkdirAll(download.InstallDir(root, "tools", "c", "1"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(download.InstallDir(root, "tools", "c", "1"), "f"), nil, 0o644))
+	assert.Len(t, download.Pending(cfg, root, refs...), 3, "an installed tool is not pending")
+}

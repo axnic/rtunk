@@ -59,15 +59,16 @@ func TestInstallDownload_Executable(t *testing.T) {
 	require.NoError(t, os.WriteFile(blob, []byte("binary content"), 0o644))
 
 	dest := filepath.Join(dir, "install")
-	entry := config.DownloadEntry{Executable: true}
-	err := download.InstallDownload(blob, "https://example.com/tool-linux-amd64", dest, entry, "")
+	// no Executable flag: an extension-less URL is a bare binary all the same (osv-scanner)
+	entry := config.DownloadEntry{}
+	err := download.InstallDownload(blob, "https://example.com/tool-linux-amd64", dest, entry, "tool")
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dest, "tool-linux-amd64"))
+	data, err := os.ReadFile(filepath.Join(dest, "tool"))
 	require.NoError(t, err)
 	assert.Equal(t, "binary content", string(data))
 
-	info, err := os.Stat(filepath.Join(dest, "tool-linux-amd64"))
+	info, err := os.Stat(filepath.Join(dest, "tool"))
 	require.NoError(t, err)
 	assert.NotZero(t, info.Mode()&0o111, "a bare Executable download must be made executable")
 }

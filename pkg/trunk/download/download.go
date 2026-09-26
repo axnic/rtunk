@@ -1,8 +1,10 @@
 package download
 
 import (
+	"cmp"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 
@@ -81,6 +83,50 @@ func Download(cfg config.Config, cacheDir string, refs ...Ref) (<-chan Event, er
 	return events, nil
 }
 
+// runtimeLocks serializes concurrent installs of one runtime directory (see fetchRuntimeRef).
+var runtimeLocks sync.Map // installDir -> *sync.Mutex
+
+// Pending returns the refs a Download of refs would really fetch: those not installed yet (with
+// their version resolved) plus the not-installed runtimes their packages need, deduplicated. The
+// engine uses it to announce the number of installs before starting them.
+func Pending(cfg config.Config, root string, refs ...Ref) []Ref {
+	var out []Ref
+	seen := map[Ref]bool{}
+	add := func(category, id, version, dir string) {
+		r := Ref{Category: category, ID: id, Version: version}
+		if !seen[r] && !dirNonEmpty(dir) {
+			seen[r] = true
+			out = append(out, r)
+		}
+	}
+	for _, ref := range refs {
+		switch ref.Category {
+		case "tools":
+			tool, ok := cfg.Tools[ref.ID]
+			if !ok {
+				continue
+			}
+			version := cmp.Or(ref.Version, ResolveVersion(cfg.Lint.Enabled, ref.ID, tool.KnownGoodVersion))
+			if dirNonEmpty(InstallDir(root, "tools", ref.ID, version)) {
+				continue
+			}
+			if rt, ok := cfg.Runtimes.Definitions[tool.Runtime]; ok && tool.Download == "" && rt.SystemVersion == "" {
+				rv := ResolveVersion(cfg.Runtimes.Enabled, tool.Runtime, rt.KnownGoodVersion)
+				add("runtimes", tool.Runtime, rv, InstallDir(root, "runtimes", tool.Runtime, rv))
+			}
+			add("tools", ref.ID, version, InstallDir(root, "tools", ref.ID, version))
+		case "runtimes":
+			rt, ok := cfg.Runtimes.Definitions[ref.ID]
+			if !ok || rt.SystemVersion != "" {
+				continue
+			}
+			version := cmp.Or(ref.Version, ResolveVersion(cfg.Runtimes.Enabled, ref.ID, rt.KnownGoodVersion))
+			add("runtimes", ref.ID, version, InstallDir(root, "runtimes", ref.ID, version))
+		}
+	}
+	return out
+}
+
 // allRefs is every enabled+used tool and runtime in cfg -- what a bare `rtunk download` fetches.
 // lint/actions/plugins refs (Task 10) are for targeted `rtunk download <category> <id>` use only:
 // their underlying tools/runtimes are already covered here.
@@ -136,6 +182,11 @@ func fetchRuntimeRef(cfg config.Config, root string, ref Ref, events chan<- Even
 	}
 
 	installDir := InstallDir(root, "runtimes", ref.ID, version)
+	// Several tools fetched in parallel can need the same runtime: the first installs it, the
+	// others wait here and then find it Cached.
+	mu, _ := runtimeLocks.LoadOrStore(installDir, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
 	if dirNonEmpty(installDir) {
 		events <- Event{Ref: ref, Phase: Cached}
 		return nil
@@ -229,8 +280,16 @@ func fetchToolRef(cfg config.Config, root string, ref Ref, events chan<- Event) 
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return
 	}
+	// ${home} (the go runtime's HOME) is a scratch home inside rtunk's own cache: left unresolved it
+	// ended up as the literal relative path "${home}", and every go tool then wrote its caches and
+	// telemetry to ./${home}/Library/... in whatever repo it ran from.
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o750); err != nil {
+		events <- Event{Ref: ref, Phase: Failed, Err: err}
+		return
+	}
 	env := BuildEnv(append(append([]config.EnvironmentEntry{}, rt.LinterEnvironment...), rt.RuntimeEnvironment...),
-		map[string]string{"runtime": runtimeInstallDir, "linter": installDir})
+		map[string]string{"runtime": runtimeInstallDir, "linter": installDir, "home": home})
 	extraEnv, err := ExtraToolEnv(rt, installDir)
 	if err != nil {
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
