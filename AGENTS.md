@@ -16,6 +16,18 @@ at all. The problem is that `trunk` itself ships as a closed-source binary you d
 your machine, which is hard to audit or get approved in a professional or regulated environment.
 rtunk exists to offer the same orchestration experience as an auditable, fully open-source tool.
 
+## Vision
+
+- **A meta-linter powered by the trunk ecosystem.** rtunk works through trunk's strength: its
+  plugins.
+- **Open to other uses within the meta-linter scope.** MR checks and CI are welcome; trunk is a
+  company's product, and rtunk targets no other part of its offering and does not encroach on it.
+- **Partially compatible with trunk.** 100% compatible with trunk configuration; no compatibility
+  constraint for the rest (cache, other) nor for the UI.
+- **Fast.** Checks are optimized: by default only changed files are verified (see
+  [docs/cli.md](./docs/cli.md), "File selection").
+- **Pleasant, simple to understand and use.** A simple CLI and a simple UX.
+
 ## How it relates to trunk
 
 - **Config-compatible where practical.** rtunk aims to understand `.trunk/trunk.yaml` and honor
@@ -27,6 +39,14 @@ rtunk exists to offer the same orchestration experience as an auditable, fully o
   well-maintained is [trunk-io/plugins](https://github.com/trunk-io/plugins) — the YAML
   definitions describing every linter's runtime, commands, and output format. rtunk consumes those
   same plugin definitions rather than reinventing linter metadata from scratch.
+- **Scope: the meta-linter part of trunk only.** rtunk is open to other uses (MR checks, CI), but
+  only within the meta-linter surface. trunk is a company's product; rtunk targets no other part
+  of its offering and does not encroach on it.
+- **Compatibility is limited to configuration.** Compatibility with trunk configuration is
+  100% by goal. Everything else (cache layout, CLI surface beyond the commands trunk shares, UI
+  and output rendering) carries no compatibility constraint.
+- **`.rtunk` wins over `.trunk`, no merge.** When both `.rtunk` and `.trunk` exist, `.rtunk` takes
+  precedence and exactly one of the two is read. They are never merged.
 - **Independent implementation.** rtunk is not a fork of trunk and does not vendor any of trunk's
   proprietary code. It is a new codebase, written from scratch, that happens to speak a compatible
   config dialect and read the same community plugin definitions.
@@ -64,8 +84,36 @@ clone` of a repo URL pinned to a tag or SHA — never a branch.
 - **Reproducibility.** Linters, runtimes, and tools are version-pinned in config and installed
   hermetically per that pin. There is no silent fallback to whatever happens to already be on
   `PATH`.
-- **Checksum-verified downloads.** Every downloaded binary is fetched over HTTPS only and verified
-  against a SHA256 checksum before use.
+- **Checksum-verified downloads.** Every downloaded binary is fetched over HTTPS only (`http` is
+  rejected, redirects included), streamed through a SHA256 hasher into a temporary file, and moved
+  to `blobs/sha256/<hex>` only once the hash is known. trunk plugin `downloads:` recipes carry no
+  upstream checksum, so the model is trust-on-first-use (TOFU): the first download of an artifact
+  is accepted as is, and a source compromised at that moment is not detected. See
+  docs/superpowers/specs/2026-09-10-v0.2-download-design.md ("Checksum model"). The planned
+  hardening is `rtunk.lock` (see "Download integrity roadmap" below).
+
+## Behavioral decisions
+
+Detail lives in [docs/cli.md](./docs/cli.md) (commands and run semantics) and
+[docs/ux.md](./docs/ux.md) (terminal UX). They are the target design, authoritative over older
+specs under `docs/superpowers/`, not a description of shipped behavior: only `.rtunk` over `.trunk`
+precedence, `logs list|show|clean` and ad hoc per-file stderr events are implemented today.
+
+- **Project root.** `check`, `fmt` and `run` refuse to run without a `.trunk`/`.rtunk` ancestor.
+- **Changed files by default.** No-path `check`/`fmt` process only changed files (merge-base diff,
+  else staged, else nothing outside git); `--from <ref>` for CI; explicit paths process everything
+  under them.
+- **Exit codes.** Identical to trunk's: only `0` and `1`, measured on trunk 1.25.0.
+- **`fmt`** writes to the working tree only, never the index.
+- **Command surface.** Symmetric `linters`/`actions` groups, hidden `toolbox`, `cache
+destroy|prune --older-than`, `plugins print`.
+- **UX.** `check`/`fmt` emit an event stream consumed by `human`, `sarif` and `json` renderers;
+  every issue line is printed, no folding.
+- **Download integrity.** `rtunk.lock` (`id@version@platform -> sha256`) is post-v1 hardening,
+  roadmap `v1.2`; until then the TOFU limit above stands.
+
+Staging: `v0.8` CLI reshape and behavioral decisions, `v0.9` output and UX, `v1.2` `rtunk.lock`
+(see [ROADMAP.md](./ROADMAP.md)).
 
 ## Implementation
 
@@ -75,5 +123,6 @@ concurrency.
 
 ## Where to go next
 
-See [ROADMAP.md](./ROADMAP.md) for the staged build-out of rtunk's functionality, from reading an
+See [docs/cli.md](./docs/cli.md) and [docs/ux.md](./docs/ux.md) for the command and UX design, and
+[ROADMAP.md](./ROADMAP.md) for the staged build-out of rtunk's functionality, from reading an
 existing trunk configuration through CLI flag compatibility.
