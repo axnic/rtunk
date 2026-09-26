@@ -67,6 +67,7 @@ type Event struct {
 	Note         string           // Skipped (why) or Failed (which command)
 	Err          error            // Failed only
 	File         string           // Running only -- the file (or comma-joined batch) about to be checked
+	Files        []string         // Done, Skipped and Failed only (once files are matched) -- repoRoot-relative: every file the linter matched
 }
 
 // templateVarRE matches every ${...} placeholder in a Command.Run string.
@@ -106,6 +107,7 @@ type job struct {
 	parserPathEnv string
 	resolvedDir   string
 	toolVersions  map[string]string // linter.Tools resolved to versions, for the run log only
+	files         []string          // the linter's whole matched file set, repoRoot-relative (for terminal events)
 	dryRun        bool              // set uniformly from Env.DryRun for every job in a run -- a run-level
 	// setting, not a per-command one; see runBatch's own use of it.
 }
@@ -252,6 +254,15 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		return nil
 	}
 
+	relFiles := make([]string, len(files))
+	for i, f := range files {
+		if rel, err := filepath.Rel(repoRoot, f); err == nil {
+			relFiles[i] = rel
+		} else {
+			relFiles[i] = f
+		}
+	}
+
 	var jobs []job
 	var pathEnv string
 	pathEnvResolved := false
@@ -263,33 +274,33 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			continue
 		}
 		if cmd.Enabled != nil && !*cmd.Enabled {
-			events <- Event{Linter: name, Phase: Skipped, Note: "disabled by its own plugin source"}
+			events <- Event{Linter: name, Phase: Skipped, Note: "disabled by its own plugin source", Files: relFiles}
 			continue
 		}
 		if v, ok := findUnsupportedVar(cmd.Run); ok {
-			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q", v)}
+			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q", v), Files: relFiles}
 			continue
 		}
 		if !supportedOutputFormats[cmd.Output] {
-			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported output format %q", cmd.Output)}
+			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported output format %q", cmd.Output), Files: relFiles}
 			continue
 		}
 		if cmd.Formatter && !cmd.InPlace && (cmd.Output == "rewrite" || cmd.Output == "shfmt") {
-			events <- Event{Linter: name, Phase: Skipped, Note: "formatter without in_place has no supported effect (stdin/stdout-based formatters are unsupported)"}
+			events <- Event{Linter: name, Phase: Skipped, Note: "formatter without in_place has no supported effect (stdin/stdout-based formatters are unsupported)", Files: relFiles}
 			continue
 		}
 
 		var parserPathEnv string
 		if cmd.Parser != nil {
 			if v, ok := findUnsupportedParserVar(cmd.Parser.Run); ok {
-				events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q in parser", v)}
+				events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported template var %q in parser", v), Files: relFiles}
 				continue
 			}
 			dir, cached := parserPathEnvByRuntime[cmd.Parser.Runtime]
 			if !cached {
 				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime)
 				if err != nil {
-					events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("parser runtime %q unavailable: %v", cmd.Parser.Runtime, err)}
+					events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("parser runtime %q unavailable: %v", cmd.Parser.Runtime, err), Files: relFiles}
 					continue
 				}
 				dir = resolved
@@ -299,11 +310,11 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		}
 
 		if cmd.InPlace && cmd.SandboxType != "" {
-			events <- Event{Linter: name, Phase: Skipped, Note: "in_place command combined with sandbox_type is unsupported (writes would be lost)"}
+			events <- Event{Linter: name, Phase: Skipped, Note: "in_place command combined with sandbox_type is unsupported (writes would be lost)", Files: relFiles}
 			continue
 		}
 		if cmd.SandboxType != "" && cmd.SandboxType != "copy_targets" && cmd.SandboxType != "expanded" {
-			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported sandbox_type %q", cmd.SandboxType)}
+			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported sandbox_type %q", cmd.SandboxType), Files: relFiles}
 			continue
 		}
 
@@ -321,14 +332,14 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 
 		groups, ok := groupByRunFrom(effectiveRunFrom, files, repoRoot, linter.DirectConfigs)
 		if !ok {
-			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported run_from %q", cmd.RunFrom)}
+			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported run_from %q", cmd.RunFrom), Files: relFiles}
 			continue
 		}
 
 		if !pathEnvResolved {
 			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools)
 			if err != nil {
-				events <- Event{Linter: name, Phase: Failed, Note: "resolving tools", Err: err}
+				events <- Event{Linter: name, Phase: Failed, Note: "resolving tools", Err: err, Files: relFiles}
 				return nil
 			}
 			pathEnv = strings.Join(shimDirs, string(os.PathListSeparator))
@@ -353,7 +364,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			for _, batch := range batches {
 				jobs = append(jobs, job{
 					linterName: name, linter: linter, cmd: cmd, batch: batch,
-					pathEnv: pathEnv, parserPathEnv: parserPathEnv, resolvedDir: dir, toolVersions: versions, dryRun: dryRun,
+					pathEnv: pathEnv, parserPathEnv: parserPathEnv, resolvedDir: dir, toolVersions: versions, files: relFiles, dryRun: dryRun,
 				})
 			}
 		}
@@ -460,7 +471,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 	if err != nil {
 		state.failed = true
 		state.terminalSent = true
-		events <- Event{Linter: j.linterName, Phase: Failed, Note: j.cmd.Name, Err: err}
+		events <- Event{Linter: j.linterName, Phase: Failed, Note: j.cmd.Name, Err: err, Files: j.files}
 		return
 	}
 
@@ -468,7 +479,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 	state.changedFiles = dedupeStrings(append(state.changedFiles, changedFiles...))
 	if state.remaining == 0 {
 		state.terminalSent = true
-		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings, ChangedFiles: state.changedFiles}
+		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings, ChangedFiles: state.changedFiles, Files: j.files}
 	}
 }
 

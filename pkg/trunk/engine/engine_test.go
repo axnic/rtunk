@@ -2040,3 +2040,97 @@ func TestRun_DryRunSandboxStagedInsideRepoRoot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "v2\n", string(data), "DryRun must never write the real file")
 }
+
+// fakeToolCache installs the fake tool shim under a fresh cache dir and returns that dir.
+func fakeToolCache(t *testing.T) string {
+	t.Helper()
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+	return cacheDir
+}
+
+func TestRun_TerminalEventsCarryFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	cacheDir := fakeToolCache(t)
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	off := false
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"clean": {
+						Name: "clean", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool passfail ${target}", Output: "pass_fail", ErrorCodes: []int{1}}},
+					},
+					"off": {
+						Name: "off", Files: []string{"ALL"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool passfail ${target}", Output: "pass_fail", Enabled: &off}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	got := map[string]Event{}
+	for ev := range events {
+		if ev.Phase == Running {
+			assert.Empty(t, ev.Files, "Running events carry no Files")
+			continue
+		}
+		got[ev.Linter] = ev
+	}
+	assert.Equal(t, Done, got["clean"].Phase)
+	assert.ElementsMatch(t, []string{"a.txt", "b.txt"}, got["clean"].Files)
+	assert.Equal(t, Skipped, got["off"].Phase)
+	assert.ElementsMatch(t, []string{"a.txt", "b.txt"}, got["off"].Files)
+}
+
+func TestRun_FailedEventCarriesTheWholeFileSet(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	cacheDir := fakeToolCache(t)
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"alwaysfail": {
+						Name: "alwaysfail", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool alwaysfail ${target}", Output: "pass_fail", ErrorCodes: []int{1}}},
+					},
+				},
+			},
+		},
+	}
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var failed Event
+	for ev := range events {
+		if ev.Phase == Failed {
+			failed = ev
+		}
+	}
+	assert.ElementsMatch(t, []string{"a.txt", "b.txt", "c.txt"}, failed.Files, "a failed linter's files still count as checked")
+}
