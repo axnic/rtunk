@@ -38,6 +38,8 @@ type lintersCmd struct {
 type checkRunCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to check (default: changed files, see --from)."`
 	NoProgress   bool     `help:"Do not print the per-linter progress lines on stderr."`
+	ASCII        bool     `name:"ascii" help:"Use ASCII glyphs in the live view."`
+	LiveHeight   int      `help:"Maximum height of the live view in lines (default: half the terminal, minimum 3)." env:"RTUNK_LIVE_HEIGHT"`
 	Format       string   `enum:"human,sarif,json" default:"human" help:"Output format: human, sarif (for CI) or json."`
 	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
@@ -112,7 +114,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		if c.Format != "human" {
 			fixOut = io.Discard
 		}
-		fixR := newRenderer("human", fixOut, stderr, render.Fmt, c.NoProgress)
+		fixR := newRenderer("human", fixOut, stderr, render.Fmt, progressOpts{c.NoProgress, c.ASCII, c.LiveHeight})
 		onFix := func(ev engine.Event) {
 			fixR.Event(ev)
 			if ev.Phase == engine.Failed {
@@ -133,7 +135,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	}
 
 	started := time.Now()
-	r := newRenderer(c.Format, stdout, stderr, render.Check, c.NoProgress)
+	r := newRenderer(c.Format, stdout, stderr, render.Check, progressOpts{c.NoProgress, c.ASCII, c.LiveHeight})
 	events, err := engine.Run(context.Background(), env, files, func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace })
 	if err != nil {
 		return err

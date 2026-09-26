@@ -25,6 +25,8 @@ import (
 type fmtCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to format (default: changed files, see --from)."`
 	NoProgress   bool     `help:"Do not print the per-linter progress lines on stderr."`
+	ASCII        bool     `name:"ascii" help:"Use ASCII glyphs in the live view."`
+	LiveHeight   int      `help:"Maximum height of the live view in lines (default: half the terminal, minimum 3)." env:"RTUNK_LIVE_HEIGHT"`
 	Format       string   `enum:"human,sarif,json" default:"human" help:"Output format: human or json (sarif is only supported by check)."`
 	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
 	Force        bool     `help:"Also format files with both staged and unstaged changes (skipped with a warning by default)."`
@@ -91,7 +93,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 		kind = render.FmtCheck
 	}
 	started := time.Now()
-	r := newRenderer(c.Format, stdout, stderr, kind, c.NoProgress)
+	r := newRenderer(c.Format, stdout, stderr, kind, progressOpts{c.NoProgress, c.ASCII, c.LiveHeight})
 	summary := func(changed, skipped []string, err error) render.Summary {
 		return render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped, Changed: changed, Unstable: isUnstable(err)}
 	}
