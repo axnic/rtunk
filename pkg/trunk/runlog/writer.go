@@ -96,7 +96,7 @@ func open(o StartOpts) (*Writer, error) {
 	return &Writer{f: f, enc: enc, warn: o.Warn, start: time.Now()}, nil
 }
 
-// logsRoot is <cache>/logs, a sibling of download.Root's <cache>/downloads: `rtunk cache clean`
+// logsRoot is <cache>/logs, a sibling of download.Root's <cache>/downloads: `rtunk cache destroy`
 // removes the whole downloads root, and logs have their own `rtunk logs clean`.
 func logsRoot(cacheDir string) (string, error) {
 	root, err := download.Root(cacheDir)

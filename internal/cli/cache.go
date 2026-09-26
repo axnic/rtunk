@@ -1,23 +1,27 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/xunleii/rtunk/pkg/trunk/download"
 )
 
-// cacheCmd is `rtunk cache`: clean wipes the whole downloads/ subtree, prune removes only what's
-// no longer enabled+used.
+// cacheCmd is `rtunk cache`: destroy wipes the whole downloads/ subtree, prune removes the entries
+// unused for a while.
 type cacheCmd struct {
-	Clean cacheCleanCmd `cmd:"" help:"Remove all files from the rtunk downloads cache."`
-	Prune cachePruneCmd `cmd:"" help:"Remove cached files no longer referenced by the enabled config."`
+	Destroy cacheDestroyCmd `cmd:"" help:"Remove the entire rtunk downloads cache."`
+	Prune   cachePruneCmd   `cmd:"" help:"Remove cache entries not used for a given duration."`
 }
 
-type cacheCleanCmd struct{}
+type cacheDestroyCmd struct{}
 
-func (c *cacheCleanCmd) Run(cli *CLI, _ io.Writer) error {
+func (c *cacheDestroyCmd) Run(cli *CLI, _ io.Writer) error {
 	root, err := download.Root(cli.CacheDir)
 	if err != nil {
 		return err
@@ -25,10 +29,15 @@ func (c *cacheCleanCmd) Run(cli *CLI, _ io.Writer) error {
 	return os.RemoveAll(root)
 }
 
-type cachePruneCmd struct{}
+// cachePruneCmd removes every installed item (installs/<category>/<id>/<version> and its shims)
+// whose mtime is older than --older-than; download.Touch bumps that mtime on every use. There is
+// deliberately no project registry, so "unreferenced by every repo" is not detectable.
+type cachePruneCmd struct {
+	OlderThan string `required:"" help:"Remove entries unused for longer than this duration (e.g. 30d, 12h)."`
+}
 
 func (c *cachePruneCmd) Run(cli *CLI, _ io.Writer) error {
-	cfg, err := resolveConfig(cli.Config, cli.CacheDir, false)
+	age, err := parseAge(c.OlderThan)
 	if err != nil {
 		return err
 	}
@@ -36,35 +45,38 @@ func (c *cachePruneCmd) Run(cli *CLI, _ io.Writer) error {
 	if err != nil {
 		return err
 	}
-
-	keep := map[string]bool{}
-	for id := range cfg.Tools {
-		keep[download.InstallsBase(root, "tools", id)] = true
-		keep[filepath.Join(root, "shims", "tools", id)] = true
-	}
-	for id := range cfg.Runtimes.Definitions {
-		keep[download.InstallsBase(root, "runtimes", id)] = true
-		keep[filepath.Join(root, "shims", "runtimes", id)] = true
-	}
-	return pruneUnused(root, keep)
+	return pruneOlderThan(root, time.Now().Add(-age))
 }
 
-// pruneUnused removes every installs/<category>/<id> and shims/<category>/<id> directory whose
-// path isn't one of keepPrefixes -- the enabled+used set resolveConfig's filterEnabled already
-// computed. Callers must key keepPrefixes with both the download.InstallsBase path and its
-// shims/<category>/<id> counterpart for each id to keep, since a surviving install's shim
-// would otherwise never match either glob's keep-check.
-func pruneUnused(root string, keepPrefixes map[string]bool) error {
+// parseAge is time.ParseDuration plus a "d" (days) suffix.
+func parseAge(s string) (time.Duration, error) {
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid --older-than %q", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid --older-than %q", s)
+	}
+	return d, nil
+}
+
+// pruneOlderThan removes every installs/<category>/<id>/<version> and shims/<category>/<id>/
+// <version> directory last used before cutoff.
+func pruneOlderThan(root string, cutoff time.Time) error {
 	for _, pattern := range []string{
-		filepath.Join(root, "installs", "*", "*"),
-		filepath.Join(root, "shims", "*", "*"),
+		filepath.Join(root, "installs", "*", "*", "*"),
+		filepath.Join(root, "shims", "*", "*", "*"),
 	} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			return err
 		}
 		for _, match := range matches {
-			if keepPrefixes[match] {
+			if info, err := os.Stat(match); err != nil || !info.ModTime().Before(cutoff) {
 				continue
 			}
 			if err := os.RemoveAll(match); err != nil {

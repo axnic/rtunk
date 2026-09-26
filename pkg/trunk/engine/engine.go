@@ -791,6 +791,7 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 				}
 			}
 		}
+		download.Touch(root, "tools", id, version)
 		dirs = append(dirs, filepath.Dir(shimPath))
 	}
 	return dirs, nil
@@ -829,6 +830,7 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) 
 			}
 		}
 	}
+	download.Touch(root, "runtimes", runtimeID, version)
 	return filepath.Dir(shimPath), nil
 }
 

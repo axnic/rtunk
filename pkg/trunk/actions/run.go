@@ -142,6 +142,7 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) 
 			}
 		}
 	}
+	download.Touch(root, "runtimes", runtimeID, version)
 	return filepath.Dir(shimPath), nil
 }
 

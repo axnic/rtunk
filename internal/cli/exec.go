@@ -67,6 +67,7 @@ func (c *execCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		}
 	}
 
+	download.Touch(root, category, id, version)
 	target := shimPath
 	if args[0] != id {
 		// ponytail: an executable found directly in the install dir runs without the runtime's

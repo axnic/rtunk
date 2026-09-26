@@ -19,7 +19,7 @@ import (
 // renames into pkgInstallDir, the PERMANENT per-tool cache entry): tmpDir/bin is the only real
 // output; the module cache and build cache are multi-hundred-MB-to-multi-GB build ephemera that
 // must never be kept forever, and worse, go's module cache is written read-only by design, so a
-// later `os.RemoveAll` on pkgInstallDir (rtunk cache clean/prune) would fail outright the moment
+// later `os.RemoveAll` on pkgInstallDir (rtunk cache destroy/prune) would fail outright the moment
 // any go tool had ever been installed. GOFLAGS=-modcacherw makes that module cache deletable too,
 // so this scratch dir's own unconditional cleanup below doesn't hit the same failure.
 func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {

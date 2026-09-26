@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"time"
 )
 
 // Root resolves the downloads cache root: cacheDir/downloads if cacheDir is set (mirrors
@@ -38,14 +39,6 @@ func InstallDir(root, category, id, version string) string {
 	return filepath.Join(root, "installs", category, id, version, Platform())
 }
 
-// InstallsBase is category/id's installs directory with no version/platform suffix -- unlike
-// InstallDir, which is keyed per-version, this is a stable prefix `rtunk cache prune` uses to
-// decide whether an on-disk installed version (any version, any platform) is still referenced by
-// the resolved config, without needing to know which version is current.
-func InstallsBase(root, category, id string) string {
-	return filepath.Join(root, "installs", category, id)
-}
-
 // ShimPath is the filesystem path `rtunk where`/`rtunk exec` resolve to for one item's named
 // shim.
 func ShimPath(root, category, id, version, name string) string {
@@ -55,4 +48,18 @@ func ShimPath(root, category, id, version, name string) string {
 // Platform is the GOOS-GOARCH pair InstallDir keys installs by.
 func Platform() string {
 	return goruntime.GOOS + "-" + goruntime.GOARCH
+}
+
+// Touch marks one item as used just now, by bumping the mtime of its installs/ and shims/
+// version directories: `rtunk cache prune --older-than` decides staleness from those mtimes.
+// Missing directories (a system_version runtime has none) and errors are ignored -- recording a
+// use must never fail a run.
+func Touch(root, category, id, version string) {
+	now := time.Now()
+	for _, dir := range []string{
+		filepath.Join(root, "installs", category, id, version),
+		filepath.Join(root, "shims", category, id, version),
+	} {
+		_ = os.Chtimes(dir, now, now)
+	}
 }

@@ -45,9 +45,3 @@ func TestShimPath(t *testing.T) {
 func TestPlatform(t *testing.T) {
 	assert.Equal(t, runtime.GOOS+"-"+runtime.GOARCH, download.Platform())
 }
-
-func TestInstallsBase(t *testing.T) {
-	got := download.InstallsBase("root", "tools", "shellcheck")
-	want := filepath.Join("root", "installs", "tools", "shellcheck")
-	assert.Equal(t, want, got)
-}
