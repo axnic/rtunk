@@ -36,6 +36,18 @@ func TestScreenDrawSequences(t *testing.T) {
 	assert.Empty(t, buf.String(), "clearing an empty area writes nothing")
 }
 
+func TestScreenNarrowedTerminalMovesUpOverReflowedRows(t *testing.T) {
+	var buf bytes.Buffer
+	s := &screen{w: &buf, cols: 80}
+	s.draw([]string{"0123456789", "abcdefghij"}) // 2 lines of 10 columns
+
+	buf.Reset()
+	s.cols = 5 // each line now wraps onto 2 rows: 4 rows to climb back over
+	s.draw([]string{"x"})
+	assert.Equal(t, "\x1b[4A\r\x1b[J\x1b[2Kx\n", buf.String())
+	assert.Equal(t, 1, s.lines)
+}
+
 func TestScreenNeverHidesTheCursor(t *testing.T) {
 	var buf bytes.Buffer
 	s := &screen{w: &buf}

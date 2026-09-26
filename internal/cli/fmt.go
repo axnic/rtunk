@@ -108,7 +108,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 		runFailed = failed != nil
 		_ = r.Close(summary(wouldChange, skipped, nil))
 		if failed != nil {
-			return failed
+			return errors.New("fmt: a linter failed to run")
 		}
 		if len(wouldChange) > 0 {
 			return fmt.Errorf("rtunk: fmt --check found %d file(s) needing reformatting", len(wouldChange))

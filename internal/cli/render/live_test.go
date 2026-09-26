@@ -33,13 +33,13 @@ func jobDone(linter, file string) engine.Event {
 }
 
 func TestBrailleBarSubSteps(t *testing.T) {
-	// one cell, 6 sub-steps: each step fills one more dot pair of the glyph table
-	want := []string{"⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿"}
+	// one cell, 7 sub-steps: blank first, then each step fills one more dot pair of the glyph table
+	want := []string{"\u2800", "⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿"}
 	for step, glyph := range want {
-		assert.Equal(t, glyph, brailleBar(step, 6, 1), "step %d/6", step)
+		assert.Equal(t, glyph, brailleBar(step, 7, 1), "step %d/7", step)
 	}
-	assert.Equal(t, "⣀⣀⣀", brailleBar(0, 0, 3), "total 0 renders an empty bar")
-	assert.Equal(t, "⣿⣿⣿⣦⣀", brailleBar(7, 10, 5), "7/10 of 5 cells = 21 of 30 steps: 3 full cells, then state 3")
+	assert.Equal(t, strings.Repeat("\u2800", 3), brailleBar(0, 0, 3), "total 0 renders an empty bar")
+	assert.Equal(t, "⣿⣿⣿⣤\u2800", brailleBar(7, 10, 5), "7/10 of 5 cells = 24 of 35 steps: 3 full cells, then state 3")
 	assert.Equal(t, "⣿⣿", brailleBar(9, 3, 2), "clamped at full")
 	assert.Equal(t, "[==  ]", asciiBar(1, 2, 6))
 }
@@ -51,9 +51,9 @@ func TestHeader(t *testing.T) {
 	}
 	f := s.frame(60, 10, t0, false)
 	require.NotEmpty(t, f)
-	assert.Equal(t, "Checking   39% "+strings.Repeat("⣿", 12)+strings.Repeat("⣀", 19)+" 12/31 · 3.2s", f[0])
+	assert.Equal(t, "Checking   39% "+strings.Repeat("⣿", 12)+strings.Repeat("\u2800", 19)+" 12/31 · 3.2s", f[0])
 
-	fmtBar := strings.Repeat("⣀", 59-14-2-utf8.RuneCountInString("0/4 · 3.2s"))
+	fmtBar := strings.Repeat("\u2800", 59-14-2-utf8.RuneCountInString("0/4 · 3.2s"))
 	assert.Equal(t, "Formatting  0% "+fmtBar+" 0/4 · 3.2s",
 		liveOf(Fmt, plan("a", 4, false)).frame(60, 10, t0, false)[0], "Formatting verb, 0%")
 	assert.Equal(t, "Formatting  0% "+fmtBar+" 0/4 · 3.2s",
@@ -86,7 +86,7 @@ func TestPerFileLinterTree(t *testing.T) {
 	f := s.frame(80, 10, t0, false)
 	assert.Equal(t, []string{
 		"Checking   15% " + brailleBar(7, 47, 80-1-14-2-utf8.RuneCountInString("7/47 · 3.2s")) + " 7/47 · 3.2s",
-		"  markdownlint  ⣶⣀⣀⣀⣀ 7/47",
+		"  markdownlint  ⣶\u2800\u2800\u2800\u2800 7/47",
 		"    ⠋ docs/a.md",
 		"    ⠋ docs/b.md",
 	}, f)
@@ -117,11 +117,13 @@ func TestBatchLinterLine(t *testing.T) {
 func TestInstallRows(t *testing.T) {
 	s := liveOf(Check,
 		plan("l", 1, false), running("l", "f"),
+		engine.Event{Phase: engine.InstallPlanned, Total: 1},
 		engine.Event{Phase: engine.InstallStart, Item: "tools/shfmt", BytesTotal: -1},
 	)
 	f := s.frame(80, 10, t0, false)
 	assert.Equal(t, "↓ shfmt  ⠁", f[len(f)-1], "spinner alone without a total")
-	assert.Contains(t, f[0], "0/2", "the header total grows on InstallStart")
+	assert.Contains(t, f[0], "0/2", "InstallPlanned adds to the header total")
+	assert.True(t, strings.HasPrefix(f[0], "Installing"), "the verb reads Installing while installs are left")
 
 	s.apply(engine.Event{Phase: engine.InstallProgress, Item: "tools/shfmt", Bytes: 4_300_000, BytesTotal: 12_582_912})
 	f = s.frame(80, 10, t0, false)
@@ -130,16 +132,17 @@ func TestInstallRows(t *testing.T) {
 	s.apply(engine.Event{Phase: engine.InstallDone, Item: "tools/shfmt"})
 	assert.NotContains(t, strings.Join(s.frame(80, 10, t0, false), "\n"), "shfmt")
 	assert.Contains(t, s.frame(80, 10, t0, false)[0], "1/2")
+	assert.True(t, strings.HasPrefix(s.frame(80, 10, t0, false)[0], "Checking"), "back to Checking once the installs are done")
 
 	s.apply(engine.Event{Phase: engine.InstallDone, Item: "tools/ghost"})
-	assert.Contains(t, s.frame(80, 10, t0, false)[0], "1/2", "an unknown InstallDone never counts")
+	assert.Contains(t, s.frame(80, 10, t0, false)[0], "2/2", "an InstallDone without a row (a planned item that failed before starting) still counts")
 }
 
 func TestNamesAlignAcrossLintersAndInstalls(t *testing.T) {
 	s := liveOf(Check, plan("go", 2, false), running("go", "a.go"),
 		engine.Event{Phase: engine.InstallStart, Item: "tools/shfmt", BytesTotal: -1})
 	f := s.frame(80, 10, t0, false)
-	assert.Equal(t, "  go     ⣀⣀⣀⣀⣀ 0/2", f[1])
+	assert.Equal(t, "  go     "+strings.Repeat("\u2800", 5)+" 0/2", f[1])
 	assert.Equal(t, "↓ shfmt  ⠁", f[3])
 }
 
@@ -181,7 +184,7 @@ func TestFirstOversizedBlockIsTrimmed(t *testing.T) {
 		running("a", "1"), running("a", "2"), running("a", "3"), running("a", "4"))
 	f := s.frame(80, 3, t0, false)
 	require.Len(t, f, 3)
-	assert.Equal(t, "  a  ⣀⣀⣀⣀⣀ 0/9", f[1])
+	assert.Equal(t, "  a  "+strings.Repeat("\u2800", 5)+" 0/9", f[1])
 	assert.Equal(t, "    ⠋ 1", f[2], "as many file lines as fit, trimmed lines are not counted")
 }
 
@@ -205,9 +208,10 @@ func TestLinesNeverExceedTheWidth(t *testing.T) {
 
 func TestASCIIFrame(t *testing.T) {
 	s := liveOf(Check, plan("l", 2, false), running("l", "a.go"),
+		engine.Event{Phase: engine.InstallPlanned, Total: 1},
 		engine.Event{Phase: engine.InstallStart, Item: "tools/x", BytesTotal: -1})
 	f := s.frame(60, 10, t0, true)
-	assert.Regexp(t, `^Checking {4}0% \[ +\] 0/3 - 3\.2s$`, f[0])
+	assert.Regexp(t, `^Installing {2}0% \[ +\] 0/3 - 3\.2s$`, f[0])
 	assert.Equal(t, "  l  [     ] 0/2", f[1])
 	assert.Equal(t, "    | a.go", f[2])
 	assert.Equal(t, "v x  |", f[3])

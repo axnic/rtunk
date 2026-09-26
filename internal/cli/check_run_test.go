@@ -121,9 +121,9 @@ func TestCheckRunCmd_FailedLinterKeepsOtherFindings(t *testing.T) {
 	cacheDir := t.TempDir()
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
 	require.Error(t, err)
-	assert.EqualError(t, err, "engine: beta: check exited 1: ")
+	assert.EqualError(t, err, "check: a linter failed to run")
 
-	assert.Contains(t, stdout, "ISSUES   1 in 1 file\n", "alpha's finding must still be printed despite beta's Failed event")
+	assert.Contains(t, stdout, "  (1)\n", "alpha's finding must still be printed despite beta's Failed event")
 	assert.Contains(t, stdout, "work/file.txt  (1)\n  0:0  high    file did not pass  alpha\n")
 	assert.Contains(t, stdout, "FAILURES\n  ✖ beta  failed to run  rtunk logs show ")
 
@@ -229,7 +229,7 @@ func TestCheckRunCmd_Fix_AppliesFixesBeforeReporting(t *testing.T) {
 	// Without --fix: the checking command reports the file as failing.
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
 	require.Error(t, err, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "ISSUES   1 in 1 file\n")
+	assert.Contains(t, stdout, "  (1)\n")
 
 	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644)) // reset for the --fix run
 

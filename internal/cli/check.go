@@ -154,7 +154,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		return fixFailed
 	}
 	if failed != nil {
-		return failed
+		return errors.New("check: a linter failed to run")
 	}
 	if len(findings) > 0 {
 		return fmt.Errorf("rtunk: check found %d issue(s)", len(findings))

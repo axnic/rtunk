@@ -87,7 +87,7 @@ func TestFormat_HumanOutsideATerminalHasNoEscapes(t *testing.T) {
 	cfgPath, work := twoLinterFixture(t)
 	stdout, _, _ := run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", work)
 	assert.NotContains(t, stdout, "\x1b")
-	assert.Contains(t, stdout, "ISSUES   1 in 1 file\n")
+	assert.Contains(t, stdout, "  (1)\n")
 }
 
 func TestIsTerminal(t *testing.T) {

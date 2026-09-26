@@ -92,7 +92,7 @@ func TestLive_ForwardsEventsToTheInnerRendererInOrder(t *testing.T) {
 		l.Event(ev)
 	}
 	require.NoError(t, l.Close(Summary{}))
-	assert.Contains(t, report.String(), "ISSUES   1 in 1 file")
+	assert.Contains(t, report.String(), "  (1)")
 }
 
 func TestLive_InterruptErasesTheAreaAndReRaises(t *testing.T) {

@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
+
+// maxMessageWidth caps the message column padding in the ISSUES block.
+const maxMessageWidth = 80
 
 // human is the text renderer: the v0.9.1 report, with ANSI color when Options.Color is set.
 type human struct{ base }
@@ -71,37 +75,44 @@ func (h *human) writeIssues(b *strings.Builder, sev *[3]int) int {
 	if len(findings) == 0 {
 		return 0
 	}
-	byFile := map[string]int{}
-	for _, f := range findings {
-		byFile[f.File]++
-	}
-	_, _ = fmt.Fprintf(b, "ISSUES   %d in %s\n", len(findings), plural(len(byFile), "file"))
+	for start := 0; start < len(findings); {
+		end := start
+		for end < len(findings) && findings[end].File == findings[start].File {
+			end++
+		}
+		group := findings[start:end]
+		start = end
 
-	last := ""
-	for i, f := range findings {
-		if i == 0 || f.File != last {
-			_, _ = fmt.Fprintf(b, "\n%s  (%d)\n", paint(h.opts.Color, sgrBold, f.File), byFile[f.File])
-			last = f.File
+		// Columns are aligned per file; a very long message would push the rule column off screen.
+		locW, msgW := 0, 0
+		for _, f := range group {
+			locW = max(locW, len(fmt.Sprintf("%d:%d", f.Line, f.Column)))
+			msgW = max(msgW, min(utf8.RuneCountInString(f.Message), maxMessageWidth))
 		}
-		word := severity(f.Severity)
-		glyph, code := "·", sgrDim
-		switch word {
-		case "high":
-			sev[0]++
-			glyph, code = "✖", sgrRed
-		case "medium":
-			sev[1]++
-			glyph, code = "▲", sgrYellow
-		default:
-			sev[2]++
+		_, _ = fmt.Fprintf(b, "%s  (%d)\n", paint(h.opts.Color, sgrBold, group[0].File), len(group))
+		for _, f := range group {
+			word := severity(f.Severity)
+			glyph, code := "·", sgrDim
+			switch word {
+			case "high":
+				sev[0]++
+				glyph, code = "✖", sgrRed
+			case "medium":
+				sev[1]++
+				glyph, code = "▲", sgrYellow
+			default:
+				sev[2]++
+			}
+			cell := fmt.Sprintf("%-6s", word) // padded before painting so escapes never shift columns
+			if h.opts.Color {
+				cell = paint(true, code, glyph+" "+cell)
+			}
+			loc := fmt.Sprintf("%-*s", locW, fmt.Sprintf("%d:%d", f.Line, f.Column))
+			msg := f.Message + strings.Repeat(" ", max(msgW-utf8.RuneCountInString(f.Message), 0))
+			_, _ = fmt.Fprintf(b, "  %s  %s  %s  %s\n", loc, cell, msg, paint(h.opts.Color, sgrDim, linterRule(f)))
 		}
-		cell := fmt.Sprintf("%-6s", word) // padded before painting so escapes never shift columns
-		if h.opts.Color {
-			cell = paint(true, code, glyph+" "+cell)
-		}
-		_, _ = fmt.Fprintf(b, "  %d:%d  %s  %s  %s\n", f.Line, f.Column, cell, f.Message, paint(h.opts.Color, sgrDim, linterRule(f)))
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 	return len(findings)
 }
 
@@ -135,6 +146,9 @@ func (h *human) writeFailures(b *strings.Builder, runLog string) {
 			line += "  rtunk logs show " + runLog
 		}
 		b.WriteString(line + "\n")
+		if f.Err != "" {
+			b.WriteString("    " + paint(h.opts.Color, sgrDim, f.Err) + "\n")
+		}
 	}
 	b.WriteString("\n")
 }

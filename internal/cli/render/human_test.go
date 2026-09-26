@@ -41,8 +41,6 @@ func TestPlain_CheckIssuesAndFailures(t *testing.T) {
 		"▲ markdownlint     done     3 issues\n"+
 		"✖ gitleaks         failed   boom\n", stderr)
 	assert.Equal(t, ""+
-		"ISSUES   3 in 2 files\n"+
-		"\n"+
 		"a.go  (2)\n"+
 		"  1:0  high    m1  markdownlint/r0\n"+
 		"  5:3  medium  m2  markdownlint/r1\n"+
@@ -52,6 +50,7 @@ func TestPlain_CheckIssuesAndFailures(t *testing.T) {
 		"\n"+
 		"FAILURES\n"+
 		"  ✖ gitleaks  failed to run  rtunk logs show 3f9a2c\n"+
+		"    boom\n"+
 		"\n"+
 		"Checked 3 files with 2 linters in 1.5s\n"+
 		"✖ 3 issues (1 high · 1 medium · 1 low) · 1 failure\n", stdout)
@@ -143,8 +142,6 @@ func TestHuman_ColorKeepsTheWordsAndAddsGlyphs(t *testing.T) {
 	stdout, _ := run(t, Options{Command: Check, Color: true}, events, Summary{})
 
 	assert.Equal(t, ""+
-		"ISSUES   1 in 1 file\n"+
-		"\n"+
 		"\x1b[1ma.go\x1b[0m  (1)\n"+
 		"  1:0  \x1b[31m✖ high  \x1b[0m  m1  \x1b[2mlint/r0\x1b[0m\n"+
 		"\n"+
@@ -164,4 +161,15 @@ func TestPlain_UnstableFlipsTheVerdict(t *testing.T) {
 	events := []engine.Event{{Linter: "gofmt", Phase: engine.Done, Files: []string{"a.go"}, ChangedFiles: []string{"a.go"}}}
 	stdout, _ := run(t, Options{Command: Fmt}, events, Summary{Changed: []string{"a.go"}, Unstable: true})
 	assert.Contains(t, stdout, "✖ 1 file reformatted · did not converge\n")
+}
+
+func TestHuman_IssueColumnsAlignPerFile(t *testing.T) {
+	events := []engine.Event{{Linter: "lint", Phase: engine.Done, Files: []string{"a.go"}, Findings: []output.Finding{
+		{File: "a.go", Line: 9, Column: 1, Severity: "error", RuleID: "r0", Message: "short"},
+		{File: "a.go", Line: 120, Column: 45, Severity: "error", RuleID: "r1", Message: "a longer message"},
+	}}}
+	stdout, _ := run(t, Options{Command: Check}, events, Summary{})
+
+	assert.Contains(t, stdout, "  9:1     high    short             lint/r0\n")
+	assert.Contains(t, stdout, "  120:45  high    a longer message  lint/r1\n")
 }

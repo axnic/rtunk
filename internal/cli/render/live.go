@@ -36,11 +36,13 @@ func spinFrame(now time.Time, interval time.Duration, frames []string) string {
 func dotsFrame(now time.Time) string { return spinFrame(now, dotsInterval, dotsFrames) }
 func sandFrame(now time.Time) string { return spinFrame(now, sandInterval, sandFrames) }
 
-// brailleStates are the cell states, empty to full: the dot pairs filled bottom-up, keeping the
-// empty cell visible as ⣀. Six sub-steps per cell.
-var brailleStates = []string{"⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿"}
+// brailleStates are the cell states, empty to full: the blank braille cell (U+2800, same width as
+// the others), then the dot pairs filled bottom-up. Seven sub-steps per cell.
+var brailleStates = []string{"\u2800", "⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿"}
 
-// brailleBar renders done/total over cells cells: the first steps/6 cells are full, the next one
+const brailleSteps = 7
+
+// brailleBar renders done/total over cells cells: the first steps/7 cells are full, the next one
 // holds the remainder, the rest are empty. total <= 0 is an empty bar; done is clamped.
 func brailleBar(done, total, cells int) string {
 	if cells <= 0 {
@@ -48,15 +50,15 @@ func brailleBar(done, total, cells int) string {
 	}
 	steps := 0
 	if total > 0 {
-		steps = min(done*cells*6/total, cells*6)
+		steps = min(done*cells*brailleSteps/total, cells*brailleSteps)
 	}
 	var b strings.Builder
 	for i := 0; i < cells; i++ {
 		switch {
-		case i < steps/6:
-			b.WriteString(brailleStates[6])
-		case i == steps/6:
-			b.WriteString(brailleStates[steps%6])
+		case i < steps/brailleSteps:
+			b.WriteString(brailleStates[brailleSteps])
+		case i == steps/brailleSteps:
+			b.WriteString(brailleStates[steps%brailleSteps])
 		default:
 			b.WriteString(brailleStates[0])
 		}
@@ -148,6 +150,7 @@ type liveState struct {
 	kind        Kind
 	start       time.Time
 	total, done int
+	instLeft    int // installs planned and not yet done: the header says "Installing" meanwhile
 	linters     map[string]*lintRow
 	installs    []*installRow
 }
@@ -180,8 +183,10 @@ func (s *liveState) apply(ev engine.Event) {
 				}
 			}
 		}
+	case engine.InstallPlanned:
+		s.instLeft += ev.Total
+		s.total += ev.Total // known before the first install starts, so the bar never has to grow
 	case engine.InstallStart:
-		s.total++
 		s.installs = append(s.installs, &installRow{item: ev.Item, total: -1})
 	case engine.InstallProgress:
 		for _, r := range s.installs {
@@ -190,9 +195,10 @@ func (s *liveState) apply(ev engine.Event) {
 			}
 		}
 	case engine.InstallDone:
+		s.done++
+		s.instLeft = max(s.instLeft-1, 0)
 		for i, r := range s.installs {
 			if r.item == ev.Item {
-				s.done++
 				s.installs = append(s.installs[:i], s.installs[i+1:]...)
 				break
 			}
@@ -344,9 +350,12 @@ func (s *liveState) header(limit int, now time.Time, ascii bool) string {
 	if s.kind != Check {
 		verb = "Formatting"
 	}
+	if s.instLeft > 0 {
+		verb = "Installing"
+	}
 	pct := 0
 	if s.total > 0 {
-		pct = (100*s.done + s.total/2) / s.total
+		pct = min((100*s.done+s.total/2)/s.total, 100)
 	}
 	sep := "·"
 	if ascii {
@@ -452,6 +461,7 @@ func (l *live) loop(sigs <-chan os.Signal) {
 				height = rows / 2
 			}
 			l.mu.Lock()
+			l.scr.cols = cols
 			l.scr.draw(l.state.frame(cols, max(height, 3), l.opts.Now(), l.opts.ASCII))
 			l.mu.Unlock()
 		}
