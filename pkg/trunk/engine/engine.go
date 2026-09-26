@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -14,11 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/download"
 	"github.com/xunleii/rtunk/pkg/trunk/engine/security"
 	"github.com/xunleii/rtunk/pkg/trunk/output"
+	"github.com/xunleii/rtunk/pkg/trunk/runlog"
 )
 
 // Env is every piece of shared configuration a job needs to run.
@@ -34,6 +37,10 @@ type Env struct {
 	// InPlace command anyway, since a sandboxed write would otherwise be silently lost -- see the
 	// InPlace+SandboxType skip in buildJobs).
 	DryRun bool
+	// Log, when non-nil, records every command this run launches (see pkg/trunk/runlog). A nil
+	// Log records nothing. The caller owns it: Run neither opens nor ends it, so one Log can span
+	// several Run calls (`check --fix`, `fmt --verify-stable`).
+	Log *runlog.Writer
 }
 
 // Phase is one linter's point in the run lifecycle.
@@ -98,7 +105,8 @@ type job struct {
 	pathEnv       string
 	parserPathEnv string
 	resolvedDir   string
-	dryRun        bool // set uniformly from Env.DryRun for every job in a run -- a run-level
+	toolVersions  map[string]string // linter.Tools resolved to versions, for the run log only
+	dryRun        bool              // set uniformly from Env.DryRun for every job in a run -- a run-level
 	// setting, not a per-command one; see runBatch's own use of it.
 }
 
@@ -204,13 +212,26 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 					if ctx.Err() != nil {
 						return
 					}
-					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, events)
+					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, events, env.Log)
 				}
 			})
 		}
 		wg.Wait()
 	}()
-	return events, nil
+	if env.Log == nil {
+		return events, nil
+	}
+	// Every terminal event -- including the ones buildJobs sends directly -- passes through here
+	// on its way out, so logging them needs no change at each of those send sites.
+	logged := make(chan Event)
+	go func() {
+		defer close(logged)
+		for ev := range events {
+			logLinterEnd(env.Log, ev)
+			logged <- ev
+		}
+	}()
+	return logged, nil
 }
 
 // buildJobs resolves name's matched files and queues one job per runnable command invocation
@@ -234,6 +255,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 	var jobs []job
 	var pathEnv string
 	pathEnvResolved := false
+	versions := toolVersions(cfg, linter.Tools)
 	parserPathEnvByRuntime := map[string]string{}
 
 	for _, cmd := range linter.Commands {
@@ -331,7 +353,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			for _, batch := range batches {
 				jobs = append(jobs, job{
 					linterName: name, linter: linter, cmd: cmd, batch: batch,
-					pathEnv: pathEnv, parserPathEnv: parserPathEnv, resolvedDir: dir, dryRun: dryRun,
+					pathEnv: pathEnv, parserPathEnv: parserPathEnv, resolvedDir: dir, toolVersions: versions, dryRun: dryRun,
 				})
 			}
 		}
@@ -413,7 +435,7 @@ func findUnsupportedParserVar(run string) (string, bool) {
 // marks the linter failed (any of its not-yet-started jobs are then skipped, best-effort: a job
 // already picked up by a worker still runs to completion), and the linter's single terminal event
 // fires exactly once, the moment its last job finishes.
-func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inPlaceMu *sync.Mutex, events chan<- Event) {
+func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inPlaceMu *sync.Mutex, events chan<- Event, log *runlog.Writer) {
 	state.mu.Lock()
 	if state.failed {
 		state.mu.Unlock()
@@ -422,7 +444,11 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 	state.mu.Unlock()
 
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
-	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu)
+	id := log.NextID()
+	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu, log, id)
+	if err == nil && len(findings) > 0 {
+		log.Emit(runlog.Event{T: runlog.KindFindings, ID: id, Linter: j.linterName, Findings: findings})
+	}
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -457,7 +483,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // (see the lock acquired below) so two of them can never interleave their before-hash/invoke/
 // after-hash cycle over the same file. A dry run (job.dryRun) never reaches the real file at all
 // -- see the sandboxType computation below.
-func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex) ([]output.Finding, []string, error) {
+func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
 	workDir := j.resolvedDir
 	// A dry run stages InPlace commands into a throwaway sandbox copy regardless of the command's
 	// own SandboxType (always empty in practice for InPlace commands -- see the InPlace+SandboxType
@@ -520,7 +546,9 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		beforeHashes = hashFiles(workDir, j.batch)
 	}
 
-	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir)
+	readFrom := cmp.Or(j.cmd.ReadOutputFrom, "stdout")
+	inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: j.linterName, ToolVersions: j.toolVersions, Sandbox: sandboxType}
+	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir, log, inv)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -579,7 +607,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	// empty stdin to a converter script that may not tolerate it (e.g. Python's
 	// json.load(sys.stdin) raises on empty input).
 	if j.cmd.Parser != nil && strings.TrimSpace(out) != "" {
-		converted, err := runParser(ctx, j.cmd.Parser, workDir, j.parserPathEnv, out, j.batch, pluginDir, cwdDir, exitCode)
+		converted, err := runParser(ctx, j.cmd.Parser, workDir, j.parserPathEnv, out, j.batch, pluginDir, cwdDir, exitCode, log, runlog.Event{T: runlog.KindParser, ID: id, StdinFrom: readFrom})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -813,7 +841,11 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) 
 // (default stdout), the process's raw stderr (always captured, regardless of ReadOutputFrom, so
 // callers can surface it on a crash), and the exit code; err is only ever a launch failure (e.g.
 // "sh" missing), never a non-zero exit -- callers read exitCode for that.
-func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string, pluginDir, cwdDir string) (out, stderrOut string, exitCode int, err error) {
+//
+// A non-nil log records the invocation (inv arrives pre-filled by the caller with its id, linter,
+// tool versions and sandbox, and is completed here with the command line actually run), both raw
+// output streams, and the exit; a nil log records nothing.
+func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string, pluginDir, cwdDir string, log *runlog.Writer, inv runlog.Event) (out, stderrOut string, exitCode int, err error) {
 	target := strings.Join(quoteAll(files), " ")
 
 	var tmpfile string
@@ -840,10 +872,14 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 	}
 	c.Env = append(os.Environ(), "PATH="+path)
 
+	inv.Template, inv.Files, inv.Cwd, inv.PathPrefix, inv.Argv = cmd.Run, files, workDir, pathEnv, c.Args
+	log.Emit(inv)
+
 	var stdout, stderr strings.Builder
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 
+	started := time.Now()
 	runErr := c.Run()
 	code := 0
 	if runErr != nil {
@@ -853,6 +889,9 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 			return "", "", 0, runErr
 		}
 	}
+	log.Output(inv.ID, "stdout", stdout.String())
+	log.Output(inv.ID, "stderr", stderr.String())
+	log.Emit(runlog.Event{T: runlog.KindExit, ID: inv.ID, Code: &code, Ms: time.Since(started).Milliseconds(), ParsedFrom: cmp.Or(cmd.ReadOutputFrom, "stdout")})
 
 	switch cmd.ReadOutputFrom {
 	case "stderr":
@@ -862,6 +901,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 		if readErr != nil {
 			return "", stderr.String(), code, readErr
 		}
+		log.Output(inv.ID, "tmp_file", string(data))
 		out = string(data)
 	default: // "" or "stdout"
 		out = stdout.String()
@@ -882,7 +922,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 // bare positional argument (never quoted: it's always digits from strconv.Itoa, and prettier's
 // real script parses it as a Python int) so the converter script can tell "ran clean" from
 // "reformatted" from a genuine tool error, all of which are non-error exit codes for prettier.
-func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEnv, stdin string, batch []string, pluginDir, cwdDir string, exitCode int) (string, error) {
+func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEnv, stdin string, batch []string, pluginDir, cwdDir string, exitCode int, log *runlog.Writer, ev runlog.Event) (string, error) {
 	target := strings.Join(quoteAll(batch), " ")
 	run := strings.NewReplacer(
 		"${target}", target, "${plugin}", quoteOne(pluginDir), "${cwd}", quoteOne(cwdDir),
@@ -902,11 +942,28 @@ func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEn
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 
-	if err := c.Run(); err != nil {
-		errText := strings.TrimSpace(stderr.String())
+	started := time.Now()
+	runErr := c.Run()
+	var errText string
+	if runErr != nil {
+		errText = strings.TrimSpace(stderr.String())
 		if errText == "" {
-			errText = err.Error()
+			errText = runErr.Error()
 		}
+	}
+	// ev arrives pre-filled by the caller with its id and stdin source; a nil log records nothing.
+	if log != nil {
+		code := 0
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
+			code = exitErr.ExitCode()
+		} else if runErr != nil {
+			code = -1 // the parser could not even be launched
+		}
+		ev.Template, ev.Argv, ev.Code, ev.Ms, ev.Err = parser.Run, c.Args, &code, time.Since(started).Milliseconds(), errText
+		ev.Data, ev.Truncated = runlog.Cap(stdout.String())
+		log.Emit(ev)
+	}
+	if runErr != nil {
 		return "", fmt.Errorf("engine: parser: %s", errText)
 	}
 	return stdout.String(), nil
@@ -924,4 +981,40 @@ func quoteAll(files []string) []string {
 // are one path each, not a list.
 func quoteOne(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// logLinterEnd records a linter's terminal event (Done, Skipped or Failed) in log. A Running event
+// is progress, not an outcome, and the invocation events already cover it.
+func logLinterEnd(log *runlog.Writer, ev Event) {
+	var phase string
+	switch ev.Phase {
+	case Done:
+		phase = "Done"
+	case Skipped:
+		phase = "Skipped"
+	case Failed:
+		phase = "Failed"
+	default:
+		return
+	}
+	e := runlog.Event{T: runlog.KindLinterEnd, Linter: ev.Linter, Phase: phase, Note: ev.Note, Changed: ev.ChangedFiles}
+	if ev.Err != nil {
+		e.Err = ev.Err.Error()
+	}
+	log.Emit(e)
+}
+
+// toolVersions resolves each of ids to the version resolveShimDirs will install and run (an id
+// missing from cfg.Tools is left out; resolveShimDirs reports that as its own error).
+func toolVersions(cfg config.Config, ids []string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if tool, ok := cfg.Tools[id]; ok {
+			out[id] = download.ResolveVersion(cfg.Lint.Enabled, id, tool.KnownGoodVersion)
+		}
+	}
+	return out
 }

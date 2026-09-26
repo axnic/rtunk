@@ -16,6 +16,7 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/download"
 	"github.com/xunleii/rtunk/pkg/trunk/output"
+	"github.com/xunleii/rtunk/pkg/trunk/runlog"
 )
 
 // fakeToolSrc is a real compiled Go program standing in for a linter's tool binary, not a shell
@@ -639,7 +640,7 @@ func TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent(t *testing.T) {
 	repoRoot := t.TempDir()
 	cmd := config.Command{Name: "check", Run: "echo \"$PATH\"", Output: "pass_fail"}
 
-	out, stderr, exitCode, err := runOneInvocation(context.Background(), cmd, repoRoot, "", nil, "", "")
+	out, stderr, exitCode, err := runOneInvocation(context.Background(), cmd, repoRoot, "", nil, "", "", nil, runlog.Event{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, exitCode)
 	assert.Empty(t, stderr)
