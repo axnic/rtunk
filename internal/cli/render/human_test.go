@@ -17,7 +17,7 @@ import (
 func run(t *testing.T, opts Options, events []engine.Event, s Summary) (stdout, stderr string) {
 	t.Helper()
 	var out, errOut strings.Builder
-	r := NewPlain(&out, &errOut, opts)
+	r := New(&out, &errOut, opts)
 	for _, ev := range events {
 		r.Event(ev)
 	}
@@ -95,7 +95,7 @@ func TestPlain_NoProgressSilencesStderrOnly(t *testing.T) {
 		{Linter: "gofmt", Phase: engine.Done, Files: []string{"a.go"}},
 	}
 	withProgress, stderr := run(t, Options{Command: Check}, events, Summary{})
-	quiet, quietStderr := run(t, Options{Command: Check, NoProgress: true, NoColor: true}, events, Summary{})
+	quiet, quietStderr := run(t, Options{Command: Check, NoProgress: true}, events, Summary{})
 	assert.NotEmpty(t, stderr)
 	assert.Empty(t, quietStderr)
 	assert.Equal(t, withProgress, quiet, "the stdout report is identical, and never carries ANSI escapes")
@@ -137,15 +137,25 @@ func TestPlain_FmtNothingToDo(t *testing.T) {
 	assert.Equal(t, "Checked 1 file with 1 linter in 0.0s\n✔ no files would be reformatted\n", stdout)
 }
 
-func TestNoColorFromEnv(t *testing.T) {
-	t.Setenv("NO_COLOR", "")
-	assert.False(t, NoColorFromEnv())
-	t.Setenv("NO_COLOR", "1")
-	assert.True(t, NoColorFromEnv())
+func TestHuman_ColorKeepsTheWordsAndAddsGlyphs(t *testing.T) {
+	events := []engine.Event{{Linter: "lint", Phase: engine.Done, Files: []string{"a.go"},
+		Findings: []output.Finding{{File: "a.go", Line: 1, Severity: "error", RuleID: "r0", Message: "m1"}}}}
+	stdout, _ := run(t, Options{Command: Check, Color: true}, events, Summary{})
+
+	assert.Equal(t, ""+
+		"ISSUES   1 in 1 file\n"+
+		"\n"+
+		"\x1b[1ma.go\x1b[0m  (1)\n"+
+		"  1:0  \x1b[31m✖ high  \x1b[0m  m1  \x1b[2mlint/r0\x1b[0m\n"+
+		"\n"+
+		"Checked 1 file with 1 linter in 0.0s\n"+
+		"\x1b[31m✖ 1 issue (1 high · 0 medium · 0 low)\x1b[0m\n", stdout)
 }
 
-func TestPlain_UnstableFlipsTheVerdict(t *testing.T) {
-	events := []engine.Event{{Linter: "gofmt", Phase: engine.Done, Files: []string{"a.go"}, ChangedFiles: []string{"a.go"}}}
-	stdout, _ := run(t, Options{Command: Fmt}, events, Summary{Changed: []string{"a.go"}, Unstable: true})
-	assert.Contains(t, stdout, "✖ 1 file reformatted · did not converge\n")
+func TestHuman_NoColorIsByteIdenticalToV091(t *testing.T) {
+	events := []engine.Event{{Linter: "lint", Phase: engine.Done, Files: []string{"a.go"},
+		Findings: []output.Finding{{File: "a.go", Line: 1, Severity: "error", RuleID: "r0", Message: "m1"}}}}
+	stdout, _ := run(t, Options{Command: Check}, events, Summary{})
+	assert.NotContains(t, stdout, "\x1b")
+	assert.Contains(t, stdout, "  1:0  high    m1  lint/r0\n")
 }

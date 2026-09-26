@@ -4,7 +4,7 @@
 package render
 
 import (
-	"os"
+	"io"
 	"time"
 
 	"github.com/xunleii/rtunk/pkg/trunk/engine"
@@ -20,11 +20,23 @@ const (
 	FmtCheck             // files that would be reformatted (fmt --check, nothing written)
 )
 
+// Format selects the renderer.
+type Format int
+
+// The output formats.
+const (
+	Human Format = iota // text report, color on a TTY
+	JSON                // one JSON document
+	SARIF               // one SARIF 2.1.0 document (check only)
+)
+
 // Options configures a renderer.
 type Options struct {
+	Format     Format // Human (zero value), JSON, SARIF
 	Command    Kind
-	NoProgress bool // suppress the per-linter progress lines on stderr
-	NoColor    bool // NO_COLOR is set; plain never emits color, later renderers read this
+	NoProgress bool   // suppress the per-linter progress lines on stderr
+	Color      bool   // human only: emit ANSI color; decided by the CLI (see UseColor)
+	Version    string // SARIF tool.driver.version; the CLI passes internal/cli.Version
 }
 
 // Summary carries what only the CLI knows, given to Close once the stream is drained.
@@ -43,5 +55,19 @@ type Renderer interface {
 	Close(Summary) error
 }
 
-// NoColorFromEnv reports whether NO_COLOR is set and non-empty (no-color.org).
-func NoColorFromEnv() bool { return os.Getenv("NO_COLOR") != "" }
+// New returns the renderer for opts.Format.
+func New(stdout, stderr io.Writer, opts Options) Renderer {
+	b := newBase(stdout, stderr, opts)
+	switch opts.Format {
+	case JSON:
+		return &jsonRenderer{base: b}
+	case SARIF:
+		return &sarifRenderer{base: b}
+	default:
+		return &human{base: b}
+	}
+}
+
+// UseColor reports whether ANSI color is allowed: stdout is a terminal and NO_COLOR is empty
+// (no-color.org).
+func UseColor(isTTY bool, noColor string) bool { return isTTY && noColor == "" }

@@ -39,6 +39,7 @@ type lintersCmd struct {
 type checkRunCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to check (default: changed files, see --from)."`
 	NoProgress   bool     `help:"Do not print the per-linter progress lines on stderr."`
+	Format       string   `enum:"human,sarif,json" default:"human" help:"Output format: human, sarif (for CI) or json."`
 	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
 	Fix          bool     `short:"y" help:"Apply automatic fixes (formatter commands) before reporting."`
@@ -102,22 +103,28 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	// matching this project's existing per-linter failure isolation (one linter's Failed event
 	// has never stopped its siblings from running).
 	var fixFailed error
+	var fixChanged, fixSkipped []string
 	if c.Fix {
 		started := time.Now()
-		fixR := render.NewPlain(stdout, stderr, render.Options{Command: render.Fmt, NoProgress: c.NoProgress, NoColor: render.NoColorFromEnv()})
-		var changed, fixSkipped []string
+		// Under a machine format the formatter pass has no stdout report of its own (one document
+		// per run); its progress still streams and it still counts toward the exit code.
+		fixOut := stdout
+		if c.Format != "human" {
+			fixOut = io.Discard
+		}
+		fixR := newRenderer("human", fixOut, stderr, render.Fmt, c.NoProgress)
 		var ffErr error
 		if c.VerifyStable {
-			changed, fixSkipped, ffErr = runStableFormat(context.Background(), env, files, fixR.Event)
+			fixChanged, fixSkipped, ffErr = runStableFormat(context.Background(), env, files, fixR.Event)
 		} else {
-			changed, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr, fixR.Event)
+			fixChanged, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr, fixR.Event)
 		}
 		fixFailed = ffErr
-		_ = fixR.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: fixSkipped, Changed: changed, Unstable: isUnstable(ffErr)})
+		_ = fixR.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: fixSkipped, Changed: fixChanged, Unstable: isUnstable(ffErr)})
 	}
 
 	started := time.Now()
-	r := render.NewPlain(stdout, stderr, render.Options{Command: render.Check, NoProgress: c.NoProgress, NoColor: render.NoColorFromEnv()})
+	r := newRenderer(c.Format, stdout, stderr, render.Check, c.NoProgress)
 	events, err := engine.Run(context.Background(), env, files, func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace })
 	if err != nil {
 		return err
@@ -125,7 +132,12 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	findings, _, skipped, failed := drainRunEvents(r.Event, events)
 	runFailed = failed != nil || runFailedBy(fixFailed)
 
-	_ = r.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped})
+	sum := render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped}
+	if c.Format != "human" { // the machine document carries the formatter pass too
+		sum.Changed = fixChanged
+		sum.Skipped = mergeSortedUnique(skipped, fixSkipped)
+	}
+	_ = r.Close(sum)
 	if fixFailed != nil {
 		return fixFailed
 	}

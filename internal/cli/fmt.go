@@ -25,6 +25,7 @@ import (
 type fmtCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to format (default: changed files, see --from)."`
 	NoProgress   bool     `help:"Do not print the per-linter progress lines on stderr."`
+	Format       string   `enum:"human,sarif,json" default:"human" help:"Output format: human or json (sarif is only supported by check)."`
 	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
 	Force        bool     `help:"Also format files with both staged and unstaged changes (skipped with a warning by default)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
@@ -38,6 +39,9 @@ type fmtCmd struct {
 }
 
 func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error {
+	if c.Format == "sarif" {
+		return errors.New("--format sarif is only supported by check")
+	}
 	configPath := cli.Config
 	if configPath == "" {
 		found, err := findTrunkYAML()
@@ -87,7 +91,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 		kind = render.FmtCheck
 	}
 	started := time.Now()
-	r := render.NewPlain(stdout, stderr, render.Options{Command: kind, NoProgress: c.NoProgress, NoColor: render.NoColorFromEnv()})
+	r := newRenderer(c.Format, stdout, stderr, kind, c.NoProgress)
 	summary := func(changed, skipped []string, err error) render.Summary {
 		return render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped, Changed: changed, Unstable: isUnstable(err)}
 	}
