@@ -618,7 +618,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		beforeHashes = hashFiles(workDir, j.batch)
 	}
 
-	readFrom := cmp.Or(j.cmd.ReadOutputFrom, "stdout")
+	readFrom := outputSource(j.cmd)
 	inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: j.linterName, ToolVersions: j.toolVersions, Sandbox: sandboxType}
 	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir, log, inv)
 	if err != nil {
@@ -1116,9 +1116,9 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 	}
 	log.Output(inv.ID, "stdout", stdout.String())
 	log.Output(inv.ID, "stderr", stderr.String())
-	log.Emit(runlog.Event{T: runlog.KindExit, ID: inv.ID, Code: &code, Ms: time.Since(started).Milliseconds(), ParsedFrom: cmp.Or(cmd.ReadOutputFrom, "stdout")})
+	log.Emit(runlog.Event{T: runlog.KindExit, ID: inv.ID, Code: &code, Ms: time.Since(started).Milliseconds(), ParsedFrom: outputSource(cmd)})
 
-	switch cmd.ReadOutputFrom {
+	switch outputSource(cmd) {
 	case "stderr":
 		out = stderr.String()
 	case "tmp_file":
@@ -1132,6 +1132,16 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 		out = stdout.String()
 	}
 	return out, stderr.String(), code, nil
+}
+
+// outputSource names the stream a command's output is parsed from. markdownlint --json writes
+// its report to stderr and its plugin definition (trunk's own parser is built in) never says so,
+// so stdout would be empty and every file would look clean.
+func outputSource(cmd config.Command) string {
+	if cmd.Output == "markdownlint" {
+		return cmp.Or(cmd.ReadOutputFrom, "stderr")
+	}
+	return cmp.Or(cmd.ReadOutputFrom, "stdout")
 }
 
 // runParser converts a real command's raw native output into the shape cmd.Output expects, by

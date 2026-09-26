@@ -652,6 +652,18 @@ func TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent(t *testing.T) {
 	assert.False(t, strings.Contains(gotPath, "::"), "PATH must not contain an empty component: %q", gotPath)
 }
 
+func TestRunOneInvocation_MarkdownlintReadsStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c only on POSIX")
+	}
+
+	cmd := config.Command{Name: "lint", Run: "echo '[]' >&2", Output: "markdownlint"}
+
+	out, _, _, err := runOneInvocation(context.Background(), cmd, t.TempDir(), "", nil, "", "", nil, runlog.Event{})
+	require.NoError(t, err)
+	assert.Equal(t, "[]\n", out, "markdownlint --json reports on stderr")
+}
+
 func TestRun_NewOutputFormatDispatch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("faketool invoked via sh -c")
