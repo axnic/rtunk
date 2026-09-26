@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,4 +101,27 @@ func TestRun_NilLogStillWorks(t *testing.T) {
 		actions.RunOptions{CacheDir: t.TempDir(), RepoRoot: t.TempDir()}, &stdout, &stderr)
 	require.NoError(t, err)
 	assert.Equal(t, "ok\n", stdout.String())
+}
+
+// A background child that keeps the inherited pipes open must not hold Run hostage: with a log
+// attached stdout/stderr are wrapped writers, so exec waits on copy goroutines until WaitDelay.
+func TestRun_LogBackgroundChildDoesNotBlock(t *testing.T) {
+	start := time.Now()
+	logged, res, err, stdout, _ := runLogged(t, config.Action{ID: "bg", Run: "sleep 3 & echo hi"}, t.TempDir())
+	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 2800*time.Millisecond)
+	assert.Equal(t, 0, res.ExitCode)
+	assert.Equal(t, "hi\n", stdout)
+	require.Equal(t, []string{"run_start", "invocation", "output", "exit", "run_end"}, kinds(logged))
+	assert.Equal(t, "hi\n", logged[2].Data)
+	require.NotNil(t, logged[3].Code)
+	assert.Equal(t, 0, *logged[3].Code)
+}
+
+func TestRun_NilLogBackgroundChildStillWorks(t *testing.T) {
+	var stdout bytes.Buffer
+	_, err := actions.Run(context.Background(), config.Config{}, config.Action{ID: "bg", Run: "sleep 1 & echo hi"},
+		actions.RunOptions{CacheDir: t.TempDir(), RepoRoot: t.TempDir()}, &stdout, &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.Equal(t, "hi\n", stdout.String())
 }

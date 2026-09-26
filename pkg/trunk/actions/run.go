@@ -295,9 +295,17 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 	c.Stdout = opts.Log.Tee(id, "stdout", stdout)
 	c.Stderr = opts.Log.Tee(id, "stderr", stderr)
 	c.Stdin = os.Stdin
+	if opts.Log != nil {
+		// Wrapped writers make exec wait for its copy goroutines, which end only when every holder
+		// of the pipe (a `cmd &` left behind) closes it. Without a log, os.File needs no goroutine.
+		c.WaitDelay = 2 * time.Second
+	}
 
 	execStart := time.Now()
 	runErr := c.Run()
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		runErr = nil // the process itself exited 0; only a stray child kept the pipes open
+	}
 	if runErr != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			result.ExitCode = exitErr.ExitCode()
