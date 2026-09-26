@@ -597,6 +597,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		}
 		workDir = sandboxDir
 	}
+	defer linkDirectConfigs(repoRoot, workDir, j.linter.DirectConfigs)()
 
 	// Two InPlace commands (same or different linters) touching overlapping files must not
 	// interleave their before-hash/invoke/after-hash cycle, or one's write can silently clobber
