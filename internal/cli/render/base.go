@@ -10,11 +10,6 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
-type failure struct {
-	Linter string
-	Err    string // first line of the error, or the note
-}
-
 // base collects what every renderer needs from the event stream and writes the stderr progress
 // lines; the format renderers embed it and only implement Close.
 type base struct {
@@ -22,7 +17,7 @@ type base struct {
 	opts           Options
 
 	findings   []output.Finding // Linter back-filled from the event
-	failures   []failure        // first Failed event per linter, arrival order
+	failures   []Failure        // first Failed event per linter, arrival order
 	failedSeen map[string]bool
 	files      map[string]bool // unique files across terminal events
 	linters    map[string]bool // linters that emitted a terminal event
@@ -63,7 +58,7 @@ func (b *base) Event(ev engine.Event) {
 		glyph, word, detail = "✖", "failed", failureText(ev)
 		if !b.failedSeen[ev.Linter] {
 			b.failedSeen[ev.Linter] = true
-			b.failures = append(b.failures, failure{Linter: ev.Linter, Err: detail})
+			b.failures = append(b.failures, Failure{Linter: ev.Linter, Err: detail})
 		}
 	}
 	if !b.opts.NoProgress {
@@ -88,6 +83,10 @@ func (b *base) doneDetail(ev engine.Event) string {
 	}
 	return "clean"
 }
+
+// FailureFrom is the Failure a Failed event describes, for callers that feed a renderer's
+// Summary.Failures (a pass whose events never reach that renderer).
+func FailureFrom(ev engine.Event) Failure { return Failure{Linter: ev.Linter, Err: failureText(ev)} }
 
 // failureText is the first line of the failure's error (or its note when there is no error).
 func failureText(ev engine.Event) string {
@@ -115,9 +114,16 @@ func (b *base) sortedFindings() []output.Finding {
 	return out
 }
 
-// sortedFailures is the failures ordered by linter name.
-func (b *base) sortedFailures() []failure {
-	out := append([]failure(nil), b.failures...)
+// sortedFailures is the failures ordered by linter name, extra (Summary.Failures) joined in: one
+// entry per linter, the event stream's own entry winning over an extra one.
+func (b *base) sortedFailures(extra ...Failure) []Failure {
+	out := append([]Failure(nil), b.failures...)
+	for _, f := range extra {
+		if !b.failedSeen[f.Linter] {
+			b.failedSeen[f.Linter] = true
+			out = append(out, f)
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Linter < out[j].Linter })
 	return out
 }

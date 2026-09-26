@@ -182,3 +182,34 @@ func TestMachineFormats_NoFilesWritesNoDocument(t *testing.T) {
 		assert.Empty(t, stdout)
 	}
 }
+
+func TestCheckFix_FormatterFailureIsInTheMachineDocument(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"brokenfmt"}, `    - name: brokenfmt
+      files: [ALL]
+      commands:
+        - name: lint
+          run: "true"
+          output: pass_fail
+        - name: format
+          run: "false"
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+          formatter: true
+`)
+	target := filepath.Join(repoRoot, "f.txt")
+	require.NoError(t, os.WriteFile(target, []byte("x\n"), 0o644))
+
+	stdout, _, err := run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--fix", "--format", "json", target)
+	require.Error(t, err, "the formatter failure still exits non-zero")
+	var doc struct {
+		Failures []struct{ Linter, Error string }
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	require.Len(t, doc.Failures, 1, "the document must explain the exit code")
+	assert.Equal(t, "brokenfmt", doc.Failures[0].Linter)
+
+	stdout, _, err = run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--fix", "--format", "sarif", target)
+	require.Error(t, err)
+	assert.Contains(t, stdout, `"executionSuccessful": false`)
+}

@@ -86,3 +86,11 @@ func TestSARIF_CleanRun(t *testing.T) {
 	assert.Empty(t, inv["toolExecutionNotifications"])
 	assert.NotNil(t, inv["toolExecutionNotifications"])
 }
+
+func TestSARIF_SummaryFailuresMakeTheRunUnsuccessful(t *testing.T) {
+	events := []engine.Event{{Linter: "gofmt", Phase: engine.Done, Files: []string{"a.go"}}}
+	stdout, _ := run(t, Options{Format: SARIF, Command: Check}, events, Summary{Failures: []Failure{{Linter: "fmt", Err: "did not converge"}}})
+	inv := decodeSARIF(t, stdout)["runs"].([]any)[0].(map[string]any)["invocations"].([]any)[0].(map[string]any)
+	assert.Equal(t, false, inv["executionSuccessful"])
+	assert.Equal(t, "fmt: did not converge", inv["toolExecutionNotifications"].([]any)[0].(map[string]any)["message"].(map[string]any)["text"])
+}

@@ -53,7 +53,7 @@ func (j *jsonRenderer) Close(s Summary) error {
 			Message: f.Message, Linter: f.Linter, Rule: f.RuleID, URL: f.URL,
 		})
 	}
-	for _, f := range j.sortedFailures() {
+	for _, f := range j.sortedFailures(s.Failures...) {
 		doc.Failures = append(doc.Failures, jsonFailure{Linter: f.Linter, Error: f.Err})
 	}
 	return writeJSON(j.stdout, doc)

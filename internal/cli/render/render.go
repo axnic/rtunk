@@ -1,4 +1,5 @@
-// Package render turns the engine's event stream into terminal output. A Renderer holds
+// Package render turns the engine's event stream into terminal output in one of three formats
+// (human, json, sarif). A Renderer holds
 // presentation state only (grouping, counting); it makes no decision about what to run or what
 // the exit code is. See docs/superpowers/specs/2026-09-26-v0.9.1-event-stream-plain-renderer-design.md.
 package render
@@ -39,12 +40,19 @@ type Options struct {
 	Version    string // SARIF tool.driver.version; the CLI passes internal/cli.Version
 }
 
+// Failure is a linter that failed to run: its name and the first line of its error.
+type Failure struct {
+	Linter string
+	Err    string
+}
+
 // Summary carries what only the CLI knows, given to Close once the stream is drained.
 type Summary struct {
 	Elapsed  time.Duration // measured by the CLI around the engine run(s)
 	RunLog   string        // runlog.Writer.Name(); "" when logging is disabled
 	Skipped  []string      // "linter [note]", one per skipped linter
 	Changed  []string      // fmt only: repoRoot-relative files reformatted (or that would be)
+	Failures []Failure     // failures the renderer's own event stream never saw (a formatter pass rendered elsewhere); machine formats only
 	Unstable bool          // fmt --verify-stable did not converge: the command exits non-zero, so the verdict must not read as success
 }
 

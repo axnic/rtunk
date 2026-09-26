@@ -112,3 +112,17 @@ func TestJSON_StdoutIsOnlyTheDocumentAndProgressStaysOnStderr(t *testing.T) {
 	assert.ErrorIs(t, dec.Decode(&v), io.EOF, "exactly one JSON value")
 	assert.Contains(t, stderr, "gofmt")
 }
+
+func TestJSON_SummaryFailuresJoinTheEventFailures(t *testing.T) {
+	events := []engine.Event{{Linter: "gitleaks", Phase: engine.Failed, Err: errors.New("boom")}}
+	stdout, _ := run(t, Options{Format: JSON, Command: Check}, events,
+		Summary{Failures: []Failure{{Linter: "prettier", Err: "crashed"}, {Linter: "gitleaks", Err: "dup"}}})
+	var doc struct {
+		Failures []struct{ Linter, Error string } `json:"failures"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	require.Len(t, doc.Failures, 2, "one entry per linter, the check pass's own failure wins")
+	assert.Equal(t, "gitleaks", doc.Failures[0].Linter)
+	assert.Equal(t, "boom", doc.Failures[0].Error)
+	assert.Equal(t, "prettier", doc.Failures[1].Linter)
+}

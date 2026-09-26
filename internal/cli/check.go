@@ -104,6 +104,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	// has never stopped its siblings from running).
 	var fixFailed error
 	var fixChanged, fixSkipped []string
+	var fixFailures []render.Failure // machine formats: the document must explain a non-zero exit
 	if c.Fix {
 		started := time.Now()
 		// Under a machine format the formatter pass has no stdout report of its own (one document
@@ -113,11 +114,20 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 			fixOut = io.Discard
 		}
 		fixR := newRenderer("human", fixOut, stderr, render.Fmt, c.NoProgress)
+		onFix := func(ev engine.Event) {
+			fixR.Event(ev)
+			if ev.Phase == engine.Failed {
+				fixFailures = append(fixFailures, render.FailureFrom(ev))
+			}
+		}
 		var ffErr error
 		if c.VerifyStable {
-			fixChanged, fixSkipped, ffErr = runStableFormat(context.Background(), env, files, fixR.Event)
+			fixChanged, fixSkipped, ffErr = runStableFormat(context.Background(), env, files, onFix)
 		} else {
-			fixChanged, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr, fixR.Event)
+			fixChanged, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr, onFix)
+		}
+		if isUnstable(ffErr) {
+			fixFailures = append(fixFailures, render.Failure{Linter: "fmt", Err: "did not converge"})
 		}
 		fixFailed = ffErr
 		_ = fixR.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: fixSkipped, Changed: fixChanged, Unstable: isUnstable(ffErr)})
@@ -136,6 +146,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	if c.Format != "human" { // the machine document carries the formatter pass too
 		sum.Changed = fixChanged
 		sum.Skipped = mergeSortedUnique(skipped, fixSkipped)
+		sum.Failures = fixFailures
 	}
 	_ = r.Close(sum)
 	if fixFailed != nil {

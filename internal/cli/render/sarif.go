@@ -68,7 +68,7 @@ func sarifLevel(s string) string {
 	return "note"
 }
 
-func (r *sarifRenderer) Close(Summary) error {
+func (r *sarifRenderer) Close(s Summary) error {
 	rules := []sarifRule{}
 	ruleIdx := map[string]int{}
 	results := []sarifResult{}
@@ -94,7 +94,7 @@ func (r *sarifRenderer) Close(Summary) error {
 	}
 
 	notes := []sarifNotification{}
-	for _, f := range r.sortedFailures() {
+	for _, f := range r.sortedFailures(s.Failures...) {
 		notes = append(notes, sarifNotification{Level: "error", Message: sarifMessage{Text: f.Linter + ": " + f.Err}})
 	}
 
