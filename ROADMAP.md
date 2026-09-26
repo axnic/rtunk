@@ -155,14 +155,17 @@ enable|disable|config`: `enable` is the former `annotate`, `disable` strips the 
 
 ## v0.9 — Output and UX
 
-`check` and `fmt` emit an event stream; renderers consume it and hold no business logic. Today the
-engine yields events (`engine.Run`) that `internal/cli/check.go` prints ad hoc to stderr; the
-renderers, `--format` and the flags below do not exist yet. Design: [docs/ux.md](./docs/ux.md). Implemented in this order:
+`check` and `fmt` emit an event stream; renderers consume it and hold no business logic. Item 1 is
+implemented (`internal/cli/render`); `--format`, the TTY live view and the filtered `list` do not
+exist yet. Design: [docs/ux.md](./docs/ux.md). Implemented in this order:
 
-1. **Event stream + plain renderer** — needed for CI and tests. Out of TTY: one line per finished
+1. **Event stream + plain renderer** (implemented) — needed for CI and tests. Out of TTY: one line per finished
    linter, then findings; honors `NO_COLOR` and `--no-progress`. Every issue line is printed, files
    sorted alphabetically and issues by line; failures get their own section carrying the run log
-   uid (linking to `rtunk logs show`, see `v0.8`).
+   uid (linking to `rtunk logs show`, see `v0.8`). Breaking: the old `file:line severity [rule]
+message` lines and `N issue(s) in M file(s)` summary are gone; stable machine output comes with
+   item 2. `--no-progress` (on `check` and `fmt`) suppresses only the per-linter stderr lines. No
+   color yet (`NO_COLOR` is read for later renderers).
 2. **`--format human|sarif|json`** on `check` and `fmt`: `human` is the default on a TTY, `sarif`
    is for CI, `json` for other machine consumers. Each is a renderer over the event stream.
 3. **TTY live view** — hand-written renderer (no bubbletea): header bar, per-linter tree, install

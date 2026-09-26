@@ -3,9 +3,14 @@
 This document specifies the terminal UX of `check` and `fmt`. Command semantics live in
 [cli.md](./cli.md); staging lives in [ROADMAP.md](../ROADMAP.md) (`v0.9`).
 
-**Implementation status.** Planned for `v0.9`, none of it shipped. Today the engine yields events
-(`engine.Run`) that `internal/cli/check.go` prints ad hoc, per file, to stderr. UI carries no
-compatibility constraint with trunk.
+**Implementation status.** `v0.9` item 1 (event stream + plain renderer) is implemented, in
+`internal/cli/render`: `check`, `fmt` and `check --fix`'s formatter pass render through the plain
+renderer (see "Non-TTY fallback" and "Issues output"). Engine terminal events carry the matched
+`Files`, and `runlog.Writer.Name()` exposes the run uid used in the failures section. Still planned:
+`--format json|sarif` (item 2), the TTY live view (item 3), the filtered `linters list` (item 4).
+Color is not implemented (`NO_COLOR` is read for the later renderers). UI carries no compatibility
+constraint with trunk: the former `file:line severity [rule] message` lines and the
+`N issue(s) in M file(s)` summary are gone; stable machine output is planned as `--format json|sarif`.
 
 ## Architecture
 
@@ -88,8 +93,11 @@ Licensing for rtunk is to be confirmed (Zed is GPL, but a list of braille charac
 
 ## Non-TTY fallback
 
-No redraw, no spinner: one line per finished linter, then the findings. Honors `NO_COLOR` and
-`--no-progress` (a flag trunk also has).
+No redraw, no spinner: one stderr line per finished linter, then the report on stdout. Honors
+`NO_COLOR` and `--no-progress` (a flag trunk also has; on `check` and `fmt`, it suppresses only the
+per-linter progress lines, not warnings or errors). Implemented.
+
+Progress line format: `✔|▲|-|✖ <linter>  done|skipped|failed  <detail>`.
 
 ## Issues output
 
@@ -125,6 +133,13 @@ Rules:
 - Files in alphabetical order, issues sorted by line.
 - Deferred: clickable OSC 8 links, sort by severity.
 
+Implemented by the plain renderer, without color: severity maps `error` to `high`, `warning` to
+`medium`, anything else to `low`; issue lines are `line:col  high|medium|low  message  linter/rule`.
+Skipped linters get one `Skipped  N linters: ...` line before the footer. The footer is
+`Checked N files with M linters in Ts`, followed by a verdict: `✔ no issues`, or `✖ N issues (a high
+· b medium · c low) · F failures`. `fmt` reports `REFORMATTED   N files` (`WOULD REFORMAT` with
+`--check`) plus a verdict.
+
 ## Implementation (lazy)
 
 Neither bubbletea nor a progress-bar library. A hand-written renderer (about 150 lines): a single
@@ -153,8 +168,9 @@ supported; `actions list` follows the same layout.
 
 ## Implementation order
 
-1. Event stream + plain renderer (needed for CI and tests).
-2. TTY live view.
-3. Filtered `linters list`.
+1. Event stream + plain renderer (needed for CI and tests). Implemented.
+2. `--format json|sarif`.
+3. TTY live view.
+4. Filtered `linters list`.
 
 Later: color themes, detailed byte-progress style.

@@ -10,9 +10,11 @@ semantics of `check`, `fmt` and `run`. It is authoritative over older specs unde
 selection and `--from` (internal/cli/selection.go), exit codes (`cmd/rtunk/main.go`), `fmt`
 working-tree-only behavior with `--force`, `linters {list,enable,disable}`, `git-hooks sync|unsync`,
 `plugins print`, the hidden `toolbox` group, `logs list|show|clean`, `help [--all]`, and
-`cache destroy|prune --older-than`. Ad hoc per-file events are still printed to stderr by
-`internal/cli/check.go`. Still planned: `v0.9` (output and UX, see [ux.md](./ux.md)) and `v1.2`
-(`rtunk.lock`).
+`cache destroy|prune --older-than`. `v0.9` item 1 is implemented: `check` and `fmt` render through
+the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with `--no-progress`; this is a
+breaking change, the former `file:line severity [rule] message` lines and `N issue(s) in M file(s)`
+summary are gone. Still planned: the rest of `v0.9` (`--format`, TTY live view, filtered `list`) and
+`v1.2` (`rtunk.lock`).
 
 ## Cross-cutting rules
 
@@ -47,7 +49,11 @@ not the whole repository.
 
 ### Output
 
-`--format human|sarif|json`:
+`--no-progress` (`check` and `fmt`, implemented) suppresses the per-linter progress lines on stderr;
+warnings and errors are still printed. The default output is the plain renderer described in
+[ux.md](./ux.md).
+
+`--format human|sarif|json` (planned, `v0.9` item 2):
 
 - `human`: default when stdout is a TTY (interactive UX, see [ux.md](./ux.md));
 - `sarif`: for CI;
@@ -87,7 +93,7 @@ files are skipped with a warning unless `--force` is given. (Implemented.)
 ## Everyday commands
 
 ```text
-rtunk check [--from <ref>] [--format ...] [<path>...]
+rtunk check [--from <ref>] [--no-progress] [--format ...] [<path>...]
   -> read the config
   => [in parallel]
     -> download runtimes if needed
@@ -97,7 +103,7 @@ rtunk check [--from <ref>] [--format ...] [<path>...]
   -> output the result
 ```
 
-`rtunk fmt [<path>...]` follows the same flow, with the `fmt` rules above.
+`rtunk fmt [--no-progress] [<path>...]` follows the same flow, with the `fmt` rules above.
 
 `rtunk [actions] run <id>` runs an action in the current directory.
 
@@ -154,7 +160,7 @@ The two groups are symmetric:
 
 `linters list` and `actions list` share one layout (see [ux.md](./ux.md)). `linters ...` replaces
 `check enable|disable|list` (implemented; `check` takes paths only). The filtered layout of `list`
-lands in `v0.9`.
+lands in `v0.9` (item 4).
 
 ### Miscellaneous
 
