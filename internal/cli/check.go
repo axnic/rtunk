@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,7 +31,8 @@ type checkCmd struct {
 
 // checkRunCmd is `rtunk check [paths...]`: given paths, or the whole repository if none.
 type checkRunCmd struct {
-	Paths        []string `arg:"" optional:"" help:"Paths to check (default: whole repository)."`
+	Paths        []string `arg:"" optional:"" help:"Paths to check (default: changed files, see --from)."`
+	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
 	Fix          bool     `short:"y" help:"Apply automatic fixes (formatter commands) before reporting."`
 	VerifyStable bool     `help:"With --fix, verify the result is stable instead of a single pass."`
@@ -65,6 +67,15 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	// only supported layouts) -- repoRoot is two directories up either way.
 	repoRoot := filepath.Dir(filepath.Dir(configPath))
 
+	files, err := resolvePaths(repoRoot, c.Paths, c.From)
+	if errors.Is(err, errNoFiles) {
+		_, _ = fmt.Fprintln(stderr, "rtunk: no files to check")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
 	jobs := c.Jobs
 	if jobs <= 0 {
 		jobs = runtime.NumCPU()
@@ -88,15 +99,15 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		var changed, fixSkipped []string
 		var ffErr error
 		if c.VerifyStable {
-			changed, fixSkipped, ffErr = runStableFormat(context.Background(), env, c.Paths, stderr)
+			changed, fixSkipped, ffErr = runStableFormat(context.Background(), env, files, stderr)
 		} else {
-			changed, fixSkipped, ffErr = runFormatOnce(context.Background(), env, c.Paths, repoRoot, stderr)
+			changed, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr)
 		}
 		fixFailed = ffErr
 		printFmtReport(stdout, changed, fixSkipped)
 	}
 
-	events, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace })
+	events, err := engine.Run(context.Background(), env, files, func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace })
 	if err != nil {
 		return err
 	}

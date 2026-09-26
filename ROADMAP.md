@@ -103,23 +103,23 @@ lifecycle events (for example, on commit or push). This milestone brings that co
 
 Nothing here adds a linter capability; it aligns the command surface and run semantics with the
 decisions recorded in AGENTS.md ("Behavioral decisions") and detailed in docs/cli.md, before the output layer (`v0.9`) is built
-on them. `.rtunk` already wins over `.trunk` with no merge (`findTrunkYAML` in
-internal/cli/findtrunk.go); the rest below is not implemented yet. Full rules: [docs/cli.md](./docs/cli.md).
+on them. Implemented: `.rtunk` wins over `.trunk` with no merge, the project root rule, file
+selection, exit codes and `fmt` working-tree-only (marked below); the rest is not implemented yet. Full rules: [docs/cli.md](./docs/cli.md).
 
-- **Project root rule.** `check`, `fmt` and `run` refuse to run unless an ancestor (itself
+- **Project root rule (implemented).** `check`, `fmt` and `run` refuse to run unless an ancestor (itself
   included) contains `.trunk` or `.rtunk`, with an explicit message; this covers `rtunk check .` in
-  `$HOME`. Today `findTrunkYAML` stops at the git root but nothing guards the non-git case.
-- **File selection.** `check` and `fmt` without paths process changed files only: in git with an
+  `$HOME` (`findTrunkYAML`, internal/cli/findtrunk.go).
+- **File selection (implemented, internal/cli/selection.go).** `check` and `fmt` without paths process changed files only: in git with an
   upstream, the diff from `merge-base(upstream, HEAD)` to the working tree; in git without an
   upstream, staged files only; outside git, nothing runs (no timestamp fallback). `--from <ref>`
   forces the diff base (for CI). With explicit paths, every file under them is processed
-  (`git ls-files -co --exclude-standard` in git, everything otherwise). Today no-path runs cover
-  the whole repository.
-- **Exit codes.** `0` on success, `1` on findings, nonexistent path, invalid config, or a tool
+  (`git ls-files -co --exclude-standard` in git, everything otherwise). When nothing runs, rtunk
+  prints `rtunk: no files to check|format` and exits `0`.
+- **Exit codes (implemented).** `0` on success, `1` on findings, nonexistent path, invalid config, or a tool
   failing to run; no distinction between findings and errors. `fmt` exits `0` whether or not it
-  fixed files. Verify each case against `cmd/rtunk/main.go` (any returned error currently exits
-  `1`) and add the missing ones.
-- **`fmt` writes to the working tree only** and never touches the index (no `git add`); partially
+  fixed files. Verified against `cmd/rtunk/main.go`: any returned error exits `1`,
+  otherwise `0`.
+- **`fmt` writes to the working tree only (implemented)** and never touches the index (no `git add`); partially
   staged files are skipped with a warning unless `--force`.
 - **`linters` / `actions` symmetry.** Replace `check enable|disable|list` with
   `rtunk linters {list,enable,disable} <id>[@version]`, mirroring `actions {list,enable,disable}`;

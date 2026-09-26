@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -20,7 +21,9 @@ import (
 // real trunk's own `trunk fmt --check`: a CI gate asking "would anything change," not "make it
 // change.
 type fmtCmd struct {
-	Paths        []string `arg:"" optional:"" help:"Paths to format (default: whole repository)."`
+	Paths        []string `arg:"" optional:"" help:"Paths to format (default: changed files, see --from)."`
+	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
+	Force        bool     `help:"Also format files with both staged and unstaged changes (skipped with a warning by default)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
 	Check        bool     `aliases:"no-fix" short:"n" help:"Report files that would be reformatted, without writing them. (alias: --no-fix)"`
 	VerifyStable bool     `help:"Verify the result is stable (write, dry-run check, write+check again if needed) instead of a single pass."`
@@ -50,6 +53,21 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	}
 	repoRoot := filepath.Dir(filepath.Dir(configPath))
 
+	files, err := resolvePaths(repoRoot, c.Paths, c.From)
+	if err == nil && !c.Check && !c.Force {
+		files = skipPartiallyStaged(stderr, repoRoot, files)
+		if len(files) == 0 {
+			err = errNoFiles
+		}
+	}
+	if errors.Is(err, errNoFiles) {
+		_, _ = fmt.Fprintln(stderr, "rtunk: no files to format")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
 	jobs := c.Jobs
 	if jobs <= 0 {
 		jobs = runtime.NumCPU()
@@ -63,7 +81,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 
 	if c.Check {
 		env.DryRun = true
-		events, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return cmd.Formatter })
+		events, err := engine.Run(context.Background(), env, files, func(cmd config.Command) bool { return cmd.Formatter })
 		if err != nil {
 			return err
 		}
@@ -80,14 +98,33 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	}
 
 	if c.VerifyStable {
-		changed, skipped, err := runStableFormat(context.Background(), env, c.Paths, stderr)
+		changed, skipped, err := runStableFormat(context.Background(), env, files, stderr)
 		runFailed = runFailedBy(err)
 		printFmtReport(stdout, changed, skipped)
 		return err
 	}
 
-	changed, skipped, err := runFormatOnce(context.Background(), env, c.Paths, repoRoot, stderr)
+	changed, skipped, err := runFormatOnce(context.Background(), env, files, repoRoot, stderr)
 	runFailed = runFailedBy(err)
 	printFmtReport(stdout, changed, skipped)
 	return err
+}
+
+// skipPartiallyStaged drops, with a warning, the files that have both staged and unstaged
+// changes: fmt writes to the working tree only and never touches the index, so formatting one
+// would silently mix formatter output into what the user staged.
+func skipPartiallyStaged(stderr io.Writer, repoRoot string, files []string) []string {
+	partial := partiallyStaged(repoRoot)
+	if len(partial) == 0 {
+		return files
+	}
+	kept := files[:0:0]
+	for _, f := range files {
+		if partial[f] {
+			_, _ = fmt.Fprintf(stderr, "rtunk: skipping partially staged file %s (use --force to format it)\n", f)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept
 }

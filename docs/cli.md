@@ -5,11 +5,12 @@ semantics of `check`, `fmt` and `run`. It is authoritative over older specs unde
 `docs/superpowers/`. Terminal rendering lives in [ux.md](./ux.md); staging lives in
 [ROADMAP.md](../ROADMAP.md); project principles live in [AGENTS.md](../AGENTS.md).
 
-**Implementation status.** These are target decisions, not a description of shipped behavior.
-Implemented today: `.rtunk` over `.trunk` precedence (`findTrunkYAML` in internal/cli/findtrunk.go),
-`logs list|show|clean` (internal/cli/logs.go), and ad hoc per-file events printed to stderr by
-`internal/cli/check.go`. Everything else below is planned: `v0.8` (CLI reshape and behavioral
-decisions), `v0.9` (output and UX, see [ux.md](./ux.md)), `v1.2` (`rtunk.lock`).
+**Implementation status.** These are target decisions, not all of them shipped. Implemented today:
+`.rtunk` over `.trunk` precedence and the project root rule (`findTrunkYAML` in
+internal/cli/findtrunk.go), file selection and `--from` (internal/cli/selection.go), exit codes
+(`cmd/rtunk/main.go`), `fmt` working-tree-only behavior with `--force`, `logs list|show|clean`
+(internal/cli/logs.go), and ad hoc per-file events printed to stderr by `internal/cli/check.go`.
+Everything else below is planned: the rest of `v0.8` (CLI reshape), `v0.9` (output and UX, see [ux.md](./ux.md)), `v1.2` (`rtunk.lock`).
 
 ## Cross-cutting rules
 
@@ -17,7 +18,7 @@ decisions), `v0.9` (output and UX, see [ux.md](./ux.md)), `v1.2` (`rtunk.lock`).
 
 `check`, `fmt` and `run` only execute in a directory that has an ancestor (itself included)
 containing a config (`.trunk` or `.rtunk`). If no root is found, rtunk refuses with an explicit
-message. This guards against running in `$HOME`, including via `rtunk check .`.
+message. This guards against running in `$HOME`, including via `rtunk check .`. (Implemented.)
 
 Precedence when `.trunk` and `.rtunk` coexist: `.rtunk` wins over `.trunk`. Exactly one of the two
 is read, with no merge. (Implemented.)
@@ -32,13 +33,15 @@ Without a path (`rtunk check`, `rtunk fmt`):
 | In git, no upstream            | staged files only                                                                                    |
 | Not in git                     | nothing runs (no timestamp fallback)                                                                 |
 
-`--from <ref>` forces the diff base. It exists for CI (detached HEAD, no upstream).
+`--from <ref>` forces the diff base. It exists for CI (detached HEAD, no upstream). When nothing
+runs, rtunk prints `rtunk: no files to check` (`check`) or `rtunk: no files to format` (`fmt`) and
+exits `0`. (Implemented, internal/cli/selection.go.)
 
 With explicit path(s) (`rtunk check .`), every file under the path is processed: `git ls-files -co
 --exclude-standard` in git, everything otherwise.
 
 Default-to-changed-files is rtunk's performance lever: the common case checks a handful of files,
-not the whole repository. Today no-path runs cover the whole repository.
+not the whole repository.
 
 ### Output
 
@@ -66,13 +69,13 @@ measured on trunk 1.25.0 (throwaway repo, shfmt linter):
 Only `0` and `1` exist, with no distinction between "findings" and "error" (consistent with
 `docs/superpowers/specs/2026-09-12-check-v0.3-design.md`). A `fmt` that fixes files does not return
 an error. For `run` and `fmt` with a failing tool (not measured on trunk): `0` on success, non-zero
-on error. Today any returned error exits `1` (`cmd/rtunk/main.go`); each case above must be
-verified and the missing ones added.
+on error. Verified: `cmd/rtunk/main.go` exits `1` on any returned error and `0` otherwise; a `fmt`
+that fixes files exits `0`. (Implemented.)
 
 ### fmt
 
 `fmt` writes to the working tree only and never touches the index (no `git add`). Partially staged
-files are skipped with a warning unless `--force` is given.
+files are skipped with a warning unless `--force` is given. (Implemented.)
 
 ### Hidden commands
 

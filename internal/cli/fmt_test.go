@@ -83,9 +83,9 @@ func TestFmtCmd_DedupesFilesChangedByMultipleLinters(t *testing.T) {
 
 func TestFmtCmd_NoFixAlias_MatchesCheckFlag(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, nil, "")
-	longOut, longStderr, longErr := run2(t, "--config", cfgPath, "fmt", "--check")
-	aliasOut, aliasStderr, aliasErr := run2(t, "--config", cfgPath, "fmt", "--no-fix")
-	shortOut, shortStderr, shortErr := run2(t, "--config", cfgPath, "fmt", "-n")
+	longOut, longStderr, longErr := run2(t, "--config", cfgPath, "fmt", "--check", filepath.Dir(filepath.Dir(cfgPath)))
+	aliasOut, aliasStderr, aliasErr := run2(t, "--config", cfgPath, "fmt", "--no-fix", filepath.Dir(filepath.Dir(cfgPath)))
+	shortOut, shortStderr, shortErr := run2(t, "--config", cfgPath, "fmt", "-n", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Equal(t, longErr, aliasErr)
 	assert.Equal(t, longOut, aliasOut)
 	assert.Equal(t, longStderr, aliasStderr)
@@ -98,7 +98,7 @@ func TestFmtCmd_NoFixAlias_MatchesCheckFlag(t *testing.T) {
 // this is a documented no-op.
 func TestFmtCmd_PrintFailures_Accepted(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, nil, "")
-	_, _, err := run2(t, "--config", cfgPath, "fmt", "--print-failures")
+	_, _, err := run2(t, "--config", cfgPath, "fmt", "--print-failures", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err)
 }
 
@@ -122,7 +122,7 @@ func TestFmtCmd_Filter_OnlyRunsAllowedFormatter(t *testing.T) {
           formatter: true
           in_place: true
 `)
-	_, stderr, _ := run2(t, "--config", cfgPath, "fmt", "--filter", "keep-me")
+	_, stderr, _ := run2(t, "--config", cfgPath, "fmt", "--filter", "keep-me", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Contains(t, stderr, "keep-me")
 	assert.NotContains(t, stderr, "drop-me")
 }
@@ -147,7 +147,7 @@ func TestFmtCmd_Exclude_SkipsExcludedFormatter(t *testing.T) {
           formatter: true
           in_place: true
 `)
-	_, stderr, _ := run2(t, "--config", cfgPath, "fmt", "--exclude", "drop-me")
+	_, stderr, _ := run2(t, "--config", cfgPath, "fmt", "--exclude", "drop-me", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Contains(t, stderr, "keep-me")
 	assert.NotContains(t, stderr, "drop-me")
 }

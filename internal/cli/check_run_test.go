@@ -84,7 +84,7 @@ func TestCheckRunCmd_SkipsUnsupportedFormats(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "app.txt"), []byte("content\n"), 0o644))
 
 	cacheDir := t.TempDir()
-	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check")
+	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err, "stderr: %s", stderr)
 	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: unsupported-fmt [unsupported output format \"xml\"])\n"
 	assert.Equal(t, want, stdout)
@@ -315,7 +315,7 @@ func TestCheckRunCmd_Filter_OnlyRunsAllowedLinter(t *testing.T) {
           run: echo unused
           output: xml
 `)
-	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--filter", "keep-me")
+	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--filter", "keep-me", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Contains(t, stderr, "keep-me")
 	assert.NotContains(t, stderr, "drop-me")
 }
@@ -340,7 +340,7 @@ func TestCheckRunCmd_FilterDenyList_SkipsDeniedLinter(t *testing.T) {
           run: echo unused
           output: xml
 `)
-	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--filter=-drop-me")
+	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--filter=-drop-me", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Contains(t, stderr, "keep-me")
 	assert.NotContains(t, stderr, "drop-me")
 }
@@ -361,15 +361,15 @@ func TestCheckRunCmd_Exclude_SkipsExcludedLinter(t *testing.T) {
           run: echo unused
           output: xml
 `)
-	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--exclude", "drop-me")
+	_, stderr, _ := run2(t, "--config", cfgPath, "check", "--exclude", "drop-me", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Contains(t, stderr, "keep-me")
 	assert.NotContains(t, stderr, "drop-me")
 }
 
 func TestCheckRunCmd_ShortFixFlag_MatchesLongForm(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, nil, "")
-	longOut, longStderr, longErr := run2(t, "--config", cfgPath, "check", "--fix")
-	shortOut, shortStderr, shortErr := run2(t, "--config", cfgPath, "check", "-y")
+	longOut, longStderr, longErr := run2(t, "--config", cfgPath, "check", "--fix", filepath.Dir(filepath.Dir(cfgPath)))
+	shortOut, shortStderr, shortErr := run2(t, "--config", cfgPath, "check", "-y", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Equal(t, longErr, shortErr)
 	assert.Equal(t, longOut, shortOut)
 	assert.Equal(t, longStderr, shortStderr)
@@ -380,7 +380,7 @@ func TestCheckRunCmd_ShortFixFlag_MatchesLongForm(t *testing.T) {
 // that pass it defensively, not a behavior change.
 func TestCheckRunCmd_NoFix_Accepted(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, nil, "")
-	_, _, err := run2(t, "--config", cfgPath, "check", "-n")
+	_, _, err := run2(t, "--config", cfgPath, "check", "-n", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err)
 	_, _, err = run2(t, "--config", cfgPath, "check", "--no-fix")
 	require.NoError(t, err)

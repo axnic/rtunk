@@ -89,7 +89,7 @@ func TestCheckRunCmd_FailedLinterMarksRunFailed(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "file.txt"), []byte("hi\n"), 0o644))
 	cacheDir := t.TempDir()
 
-	_, _, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check")
+	_, _, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Dir(filepath.Dir(cfgPath)))
 	require.Error(t, err)
 
 	run, _ := lastRun(t, cacheDir, repoRoot)
@@ -111,7 +111,7 @@ func TestFmtCmd_WritesRunLog(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "messy.txt"), []byte("messy\n"), 0o644))
 	cacheDir := t.TempDir()
 
-	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt")
+	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	run, events := lastRun(t, cacheDir, repoRoot)
@@ -299,7 +299,7 @@ func TestFmtCmd_CheckLogsDryRun(t *testing.T) {
 	require.NoError(t, os.WriteFile(messy, []byte("messy\n"), 0o644))
 	cacheDir := t.TempDir()
 
-	_, _, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", "--check")
+	_, _, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", "--check", filepath.Dir(filepath.Dir(cfgPath)))
 	require.Error(t, err, "fmt --check exits non-zero when something would change")
 
 	run, events := lastRun(t, cacheDir, repoRoot)
@@ -345,7 +345,7 @@ func TestVerifyStableUnstable_LogsOkWhileCommandErrors(t *testing.T) {
 			cacheDir := t.TempDir()
 
 			full := append([]string{"--config", cfgPath, "--cache-dir", cacheDir}, args...)
-			_, _, err := run2(t, append(full, "-j", "1")...)
+			_, _, err := run2(t, append(full, "-j", "1", repoRoot)...)
 			require.ErrorContains(t, err, "did not converge")
 
 			run, _ := lastRun(t, cacheDir, repoRoot)
