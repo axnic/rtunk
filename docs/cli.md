@@ -13,8 +13,8 @@ working-tree-only behavior with `--force`, `linters {list,enable,disable}`, `git
 `cache destroy|prune --older-than`. `v0.9` item 1 is implemented: `check` and `fmt` render through
 the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with `--no-progress`; this is a
 breaking change, the former `file:line severity [rule] message` lines and `N issue(s) in M file(s)`
-summary are gone. Still planned: the rest of `v0.9` (`--format`, TTY live view, filtered `list`) and
-`v1.2` (`rtunk.lock`).
+summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and ANSI color. Still
+planned: the rest of `v0.9` (TTY live view, filtered `list`) and `v1.2` (`rtunk.lock`).
 
 ## Cross-cutting rules
 
@@ -53,11 +53,24 @@ not the whole repository.
 warnings and errors are still printed. The default output is the plain renderer described in
 [ux.md](./ux.md).
 
-`--format human|sarif|json` (planned, `v0.9` item 2):
+`--format human|sarif|json` (`check` and `fmt`, implemented; default `human`):
 
-- `human`: default when stdout is a TTY (interactive UX, see [ux.md](./ux.md));
-- `sarif`: for CI;
-- `json`: for other machine consumers.
+- `human`: the report described in [ux.md](./ux.md). ANSI color is added only when stdout is a
+  terminal and `NO_COLOR` is empty; stderr progress lines are never colored. Output outside a
+  terminal is uncolored.
+- `json`: one document on stdout: `{version: 1, command: "check"|"fmt", elapsed_ms, run_log,
+files_checked, linters, issues: [{file, line, column, severity, message, linter, rule, url}],
+failures: [{linter, error}], skipped: [], changed: []}`. All keys are always present, empty arrays
+  are `[]` (never `null`), `line`/`column` are `0` when unknown.
+- `sarif`: SARIF 2.1.0 for CI, `check` only: one run, `tool.driver` `rtunk`, deduplicated rules, one
+  result per issue, failures as `toolExecutionNotifications` with `executionSuccessful: false`.
+  `fmt --format sarif` is refused with `--format sarif is only supported by check` (exit `1`)
+  before anything runs.
+
+Progress lines stay on stderr for every format (`--no-progress` silences them); stdout carries only
+the report or document. `check --fix` under `json`/`sarif` emits a single document for the check
+pass (`json` puts the formatter pass's files under `changed`). When no file is selected no document
+is written (empty stdout, exit `0`). Exit codes are unchanged for every format.
 
 ### Exit codes
 
@@ -93,7 +106,7 @@ files are skipped with a warning unless `--force` is given. (Implemented.)
 ## Everyday commands
 
 ```text
-rtunk check [--from <ref>] [--no-progress] [--format ...] [<path>...]
+rtunk check [--from <ref>] [--no-progress] [--format human|sarif|json] [<path>...]
   -> read the config
   => [in parallel]
     -> download runtimes if needed
@@ -103,7 +116,7 @@ rtunk check [--from <ref>] [--no-progress] [--format ...] [<path>...]
   -> output the result
 ```
 
-`rtunk fmt [--no-progress] [<path>...]` follows the same flow, with the `fmt` rules above.
+`rtunk fmt [--no-progress] [--format human|json] [<path>...]` follows the same flow, with the `fmt` rules above.
 
 `rtunk [actions] run <id>` runs an action in the current directory.
 

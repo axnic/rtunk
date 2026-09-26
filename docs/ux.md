@@ -6,11 +6,12 @@ This document specifies the terminal UX of `check` and `fmt`. Command semantics 
 **Implementation status.** `v0.9` item 1 (event stream + plain renderer) is implemented, in
 `internal/cli/render`: `check`, `fmt` and `check --fix`'s formatter pass render through the plain
 renderer (see "Non-TTY fallback" and "Issues output"). Engine terminal events carry the matched
-`Files`, and `runlog.Writer.Name()` exposes the run uid used in the failures section. Still planned:
-`--format json|sarif` (item 2), the TTY live view (item 3), the filtered `linters list` (item 4).
-Color is not implemented (`NO_COLOR` is read for the later renderers). UI carries no compatibility
-constraint with trunk: the former `file:line severity [rule] message` lines and the
-`N issue(s) in M file(s)` summary are gone; stable machine output is planned as `--format json|sarif`.
+`Files`, and `runlog.Writer.Name()` exposes the run uid used in the failures section. Item 2
+(`--format human|sarif|json` and color) is implemented: color applies to `human` only, when stdout
+is a terminal and `NO_COLOR` is empty (see "Issues output"). Still planned: the TTY live view
+(item 3), the filtered `linters list` (item 4). UI carries no compatibility constraint with trunk:
+the former `file:line severity [rule] message` lines and the `N issue(s) in M file(s)` summary are
+gone; stable machine output is `--format json|sarif`.
 
 ## Architecture
 
@@ -133,12 +134,25 @@ Rules:
 - Files in alphabetical order, issues sorted by line.
 - Deferred: clickable OSC 8 links, sort by severity.
 
-Implemented by the plain renderer, without color: severity maps `error` to `high`, `warning` to
+Implemented by the plain renderer: severity maps `error` to `high`, `warning` to
 `medium`, anything else to `low`; issue lines are `line:col  high|medium|low  message  linter/rule`.
 Skipped linters get one `Skipped  N linters: ...` line before the footer. The footer is
 `Checked N files with M linters in Ts`, followed by a verdict: `✔ no issues`, or `✖ N issues (a high
 · b medium · c low) · F failures`. `fmt` reports `REFORMATTED   N files` (`WOULD REFORMAT` with
 `--check`) plus a verdict.
+
+Color (implemented, `human` only) is emitted only when stdout is a terminal (`ModeCharDevice`) and
+`NO_COLOR` is empty; the severity glyphs are added only then. Output outside a terminal is
+byte-identical to the uncolored report, and stderr progress lines are never colored.
+
+| Element       | Style                             |
+| ------------- | --------------------------------- |
+| File header   | bold                              |
+| `linter/rule` | dim                               |
+| `high`        | red, glyph `✖`                    |
+| `medium`      | yellow, glyph `▲`                 |
+| `low`         | dim, glyph `·`                    |
+| Verdict       | green when passing, red otherwise |
 
 ## Implementation (lazy)
 
@@ -169,7 +183,7 @@ supported; `actions list` follows the same layout.
 ## Implementation order
 
 1. Event stream + plain renderer (needed for CI and tests). Implemented.
-2. `--format json|sarif`.
+2. `--format human|sarif|json` and color. Implemented.
 3. TTY live view.
 4. Filtered `linters list`.
 
