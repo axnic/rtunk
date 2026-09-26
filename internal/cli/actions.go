@@ -15,6 +15,7 @@ import (
 
 	"github.com/xunleii/rtunk/pkg/trunk/actions"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/trunk/runlog"
 )
 
 // actionsCmd is `rtunk actions`: ROADMAP.md v0.5.
@@ -179,7 +180,7 @@ type actionsRunCmd struct {
 	Args []string `arg:"" optional:"" passthrough:"" help:"<action-id> [-- args...] when --hook is not given; otherwise just the args to forward."`
 }
 
-func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
+func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error {
 	args := c.Args
 	var id string
 	if c.Hook == "" {
@@ -229,8 +230,21 @@ func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		}
 	}
 
+	// One log for the whole invocation: a --hook run may run several actions, each its own
+	// invocation inside the same file. Keyed like check/fmt (config's grandparent directory), not by
+	// repoRoot above (the git root), so `rtunk logs` finds all three commands' runs together.
+	// No log when stdin is a terminal: Tee would turn the action's stdout/stderr into pipes, which
+	// breaks colors and TTY-only prompts for an action a person is running by hand. A nil log is a
+	// valid no-op writer.
+	var log *runlog.Writer
+	if !stdinIsTerminal() {
+		log = startLog(cli, "actions-run", filepath.Dir(filepath.Dir(configPath)), configPath, argv, 1, false, stderr)
+	}
+	runFailed := true // cleared once every action has run; an error return keeps it
+	defer func() { log.End(runFailed) }()
+
 	for _, a := range matched {
-		opts := actions.RunOptions{CacheDir: cli.CacheDir, RepoRoot: repoRoot, Hook: c.Hook, Args: args, Stdin: stdin}
+		opts := actions.RunOptions{CacheDir: cli.CacheDir, RepoRoot: repoRoot, Hook: c.Hook, Args: args, Stdin: stdin, Log: log}
 		result, runErr := actions.Run(context.Background(), cfg, a, opts, stdout, stderr)
 		if result.Skipped {
 			_, _ = fmt.Fprintf(stderr, "skipped %s: non-interactive context\n", a.ID)
@@ -240,6 +254,7 @@ func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 			return runErr
 		}
 	}
+	runFailed = false
 	return nil
 }
 

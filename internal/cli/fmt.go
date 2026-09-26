@@ -31,7 +31,7 @@ type fmtCmd struct {
 	PrintFailures bool `help:"Accepted for trunk compatibility; fmt already always prints failures, this has no effect."`
 }
 
-func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
+func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error {
 	configPath := cli.Config
 	if configPath == "" {
 		found, err := findTrunkYAML()
@@ -56,6 +56,11 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	}
 	env := engine.Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cli.CacheDir, Concurrency: jobs}
 
+	log := startLog(cli, "fmt", repoRoot, configPath, argv, jobs, c.Check, stderr)
+	runFailed := true // cleared once the run reaches its normal end; an early error return keeps it
+	defer func() { log.End(runFailed) }()
+	env.Log = log
+
 	if c.Check {
 		env.DryRun = true
 		events, err := engine.Run(context.Background(), env, c.Paths, func(cmd config.Command) bool { return cmd.Formatter })
@@ -63,6 +68,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 			return err
 		}
 		_, wouldChange, skipped, failed := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, events)
+		runFailed = failed != nil
 		printFmtCheckReport(stdout, wouldChange, skipped)
 		if failed != nil {
 			return failed
@@ -75,11 +81,13 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 
 	if c.VerifyStable {
 		changed, skipped, err := runStableFormat(context.Background(), env, c.Paths, stderr)
+		runFailed = err != nil
 		printFmtReport(stdout, changed, skipped)
 		return err
 	}
 
 	changed, skipped, err := runFormatOnce(context.Background(), env, c.Paths, repoRoot, stderr)
+	runFailed = err != nil
 	printFmtReport(stdout, changed, skipped)
 	return err
 }

@@ -16,6 +16,10 @@ import (
 // streams distinct so a shim's real stderr isn't merged into rtunk's stdout).
 type Stderr io.Writer
 
+// Argv is rtunk's own argument list (program name excluded), bound into every command's Run so
+// the commands that write a run log can record how they were invoked.
+type Argv []string
+
 // Version is rtunk's own version string, set by cmd/rtunk/main.go before calling Run (see that
 // file's own fallback chain: ldflags -X main.version=... -> debug.ReadBuildInfo() -> "dev").
 // pkg/trunk/upgrade's Available treats "dev" as "cannot determine current version" and never
@@ -79,6 +83,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		kong.Vars{"version": Version},
 		kong.BindFor[io.Writer](stdout),
 		kong.BindFor[Stderr](stderr),
+		kong.Bind(Argv(args)),
 	)
 	if err != nil {
 		return err

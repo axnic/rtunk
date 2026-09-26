@@ -44,7 +44,7 @@ type checkRunCmd struct {
 	PrintFailures bool `help:"Accepted for trunk compatibility; check already always prints failures, this has no effect."`
 }
 
-func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
+func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error {
 	configPath := cli.Config
 	if configPath == "" {
 		found, err := findTrunkYAML()
@@ -71,6 +71,11 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	}
 	env := engine.Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cli.CacheDir, Concurrency: jobs}
 
+	log := startLog(cli, "check", repoRoot, configPath, argv, jobs, false, stderr)
+	runFailed := true // cleared once the run reaches its normal end; an early error return keeps it
+	defer func() { log.End(runFailed) }()
+	env.Log = log
+
 	// --fix runs every Formatter command first (the exact same selection `rtunk fmt` uses) and
 	// lets it finish writing before the checking pass below ever reads the same files -- an
 	// issue the formatter genuinely fixed is, by definition, no longer wrong by the time the
@@ -96,6 +101,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 		return err
 	}
 	findings, _, skipped, failed := drainRunEvents(func(ev engine.Event) { printEvent(stderr, ev) }, events)
+	runFailed = failed != nil || fixFailed != nil
 
 	printReport(stdout, findings, skipped)
 	if fixFailed != nil {
