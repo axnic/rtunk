@@ -179,6 +179,24 @@ func TestVersionFlag_PrintsCliVersion(t *testing.T) {
 	assert.Contains(t, stdout, "v9.9.9")
 }
 
+// TestRun_NoArgs_PrintsHelp: `rtunk` alone should show usage like `trunk` does, not
+// Kong's bare "expected one of ..." parse error.
+func TestRun_NoArgs_PrintsHelp(t *testing.T) {
+	stdout, stderr, err := run2(t)
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "Usage: rtunk")
+}
+
+// TestHelp_GroupsCommands: the root help splits everyday commands from introspection/management
+// ones (config, cache) into a separate "extended commands" section, mirroring trunk's own layout.
+func TestHelp_GroupsCommands(t *testing.T) {
+	stdout, _, err := run2(t, "--help")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "extended commands")
+	assert.Contains(t, stdout, "config")
+	assert.Contains(t, stdout, "cache")
+}
+
 func TestHelp_HidesToolboxUnlessAll(t *testing.T) {
 	def, _, err := run2(t, "help")
 	require.NoError(t, err)
@@ -186,5 +204,5 @@ func TestHelp_HidesToolboxUnlessAll(t *testing.T) {
 
 	all, _, err := run2(t, "help", "--all")
 	require.NoError(t, err)
-	assert.Contains(t, all, "toolbox download")
+	assert.Contains(t, all, "toolbox")
 }

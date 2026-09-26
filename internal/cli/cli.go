@@ -42,28 +42,28 @@ type CLI struct {
 	// switch on.
 	Verbose bool `short:"v" help:"Accepted for trunk compatibility; rtunk already prints this detail, this has no effect."`
 
-	LintersCmd  lintersCmd  `cmd:"" name:"linters" help:"List, enable and disable linters."`
-	PluginsCmd  pluginsCmd  `cmd:"" name:"plugins" help:"Inspect plugins."`
-	ConfigCmd   configCmd   `cmd:"" name:"config" help:"Query the resolved trunk configuration."`
-	CacheCmd    cacheCmd    `cmd:"" name:"cache" help:"Manage the rtunk downloads cache."`
-	CheckCmd    checkCmd    `cmd:"" name:"check" help:"Run enabled checks against source files (read-only)."`
-	FmtCmd      fmtCmd      `cmd:"" name:"fmt" help:"Run configured formatters against source files."`
-	ActionsCmd  actionsCmd  `cmd:"" name:"actions" help:"Manage and run trunk actions."`
-	GitHooksCmd gitHooksCmd `cmd:"" name:"git-hooks" help:"Manage git hooks that trigger actions."`
-	InitCmd     initCmd     `cmd:"" name:"init" help:"Initialize rtunk in this repository."`
-	DeinitCmd   deinitCmd   `cmd:"" name:"deinit" help:"Remove rtunk's configuration and installed artifacts."`
-	UpgradeCmd  upgradeCmd  `cmd:"" name:"upgrade" help:"Check for and install a newer rtunk release."`
+	LintersCmd  lintersCmd  `cmd:"" name:"linters" help:"List, enable and disable linters." group:"commands"`
+	PluginsCmd  pluginsCmd  `cmd:"" name:"plugins" help:"Inspect plugins." group:"commands"`
+	ConfigCmd   configCmd   `cmd:"" name:"config" help:"Query the resolved trunk configuration." group:"extended"`
+	CacheCmd    cacheCmd    `cmd:"" name:"cache" help:"Manage the rtunk downloads cache." group:"extended"`
+	CheckCmd    checkCmd    `cmd:"" name:"check" help:"Run enabled checks against source files (read-only)." group:"commands"`
+	FmtCmd      fmtCmd      `cmd:"" name:"fmt" help:"Run configured formatters against source files." group:"commands"`
+	ActionsCmd  actionsCmd  `cmd:"" name:"actions" help:"Manage and run trunk actions." group:"commands"`
+	GitHooksCmd gitHooksCmd `cmd:"" name:"git-hooks" help:"Manage git hooks that trigger actions." group:"commands"`
+	InitCmd     initCmd     `cmd:"" name:"init" help:"Initialize rtunk in this repository." group:"commands"`
+	DeinitCmd   deinitCmd   `cmd:"" name:"deinit" help:"Remove rtunk's configuration and installed artifacts." group:"commands"`
+	UpgradeCmd  upgradeCmd  `cmd:"" name:"upgrade" help:"Check for and install a newer rtunk release." group:"commands"`
 	// RunCmd is `rtunk run <id>`: real trunk's own top-level shortcut for `trunk actions run
 	// <id>` (see trunk --help's own subcommand list). Registered as the same actionsRunCmd type
 	// used by CLI.ActionsCmd.Run -- both paths share one Run method, so there is nothing to keep
 	// in sync between them.
-	RunCmd actionsRunCmd `cmd:"" name:"run" help:"Run a specified action (shortcut for 'actions run')."`
+	RunCmd actionsRunCmd `cmd:"" name:"run" help:"Run a specified action (shortcut for 'actions run')." group:"commands"`
 	// ToolboxCmd is `rtunk toolbox`: internal commands (download, exec, where, renovate), hidden from
 	// the default help.
-	ToolboxCmd toolboxCmd `cmd:"" name:"toolbox" hidden:"" help:"Internal commands: download, exec, where, renovate."`
+	ToolboxCmd toolboxCmd `cmd:"" name:"toolbox" hidden:"" help:"Internal commands: download, exec, where, renovate." group:"commands"`
 	// LogsCmd is `rtunk logs`: reads back the run logs check, fmt and actions run write (see
 	// docs/superpowers/specs/2026-09-26-run-logs-design.md).
-	LogsCmd logsCmd `cmd:"" name:"logs" help:"List, show and clean the logs of past runs."`
+	LogsCmd logsCmd `cmd:"" name:"logs" help:"List, show and clean the logs of past runs." group:"commands"`
 }
 
 // exitPanic is a sentinel panic type used to signal that Kong called os.Exit without actually
@@ -85,6 +85,11 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		kong.BindFor[io.Writer](stdout),
 		kong.BindFor[Stderr](stderr),
 		kong.Bind(Argv(args)),
+		kong.ConfigureHelp(kong.HelpOptions{Compact: true, FlagsLast: true, NoExpandSubcommands: true}),
+		kong.ExplicitGroups([]kong.Group{
+			{Key: "commands", Title: "commands"},
+			{Key: "extended", Title: "extended commands"},
+		}),
 	)
 	if err != nil {
 		return err
@@ -109,7 +114,9 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	}()
 
 	// `rtunk help [--all]` is `--help`; --all also lists the hidden commands (toolbox, ...).
-	if len(args) > 0 && args[0] == "help" {
+	// Bare `rtunk` is the same as `--help` -- like trunk, showing usage beats Kong's default
+	// "expected one of ..." parse error.
+	if len(args) == 0 || args[0] == "help" {
 		if len(args) == 2 && args[1] == "--all" {
 			showHidden(parser.Model.Node)
 		}
