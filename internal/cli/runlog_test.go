@@ -293,3 +293,47 @@ func TestFmtCmd_CheckLogsDryRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "messy\n", string(data), "and the file itself must be untouched")
 }
+
+const fightingFormatters = `    - name: fmtA
+      description: Always rewrites to AAA, undoing fmtB's own change
+      files: [ALL]
+      commands:
+        - name: format
+          run: printf 'AAA\n' > ${target}
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+          formatter: true
+    - name: fmtB
+      description: Always rewrites to BBB, undoing fmtA's own change
+      files: [ALL]
+      commands:
+        - name: format
+          run: printf 'BBB\n' > ${target}
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+          formatter: true
+`
+
+// An unstable --verify-stable is a verdict on the formatters (like `fmt --check` finding files
+// to reformat), not a failed run: the command errors, the log's status stays ok.
+func TestVerifyStableUnstable_LogsOkWhileCommandErrors(t *testing.T) {
+	for _, args := range [][]string{
+		{"fmt", "--verify-stable"},
+		{"check", "--fix", "--verify-stable"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			cfgPath, repoRoot := writeLinterFixture(t, []string{"fmtA", "fmtB"}, fightingFormatters)
+			require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "osc.txt"), []byte("original\n"), 0o644))
+			cacheDir := t.TempDir()
+
+			full := append([]string{"--config", cfgPath, "--cache-dir", cacheDir}, args...)
+			_, _, err := run2(t, append(full, "-j", "1")...)
+			require.ErrorContains(t, err, "did not converge")
+
+			run, _ := lastRun(t, cacheDir, repoRoot)
+			assert.Equal(t, "ok", run.Status)
+		})
+	}
+}

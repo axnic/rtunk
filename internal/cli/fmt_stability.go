@@ -134,7 +134,20 @@ func unstableError(stillUnstable []string, round1, round2 map[string][]string) e
 			_, _ = fmt.Fprintf(&b, "  %s (conflicting: %s)\n", f, strings.Join(suspects, ", "))
 		}
 	}
-	return errors.New(strings.TrimRight(b.String(), "\n"))
+	return unstableFormatError(strings.TrimRight(b.String(), "\n"))
+}
+
+// unstableFormatError is the "did not converge" verdict: a result about the formatters, like
+// `fmt --check` finding files to reformat, not a run that failed to run.
+type unstableFormatError string
+
+func (e unstableFormatError) Error() string { return string(e) }
+
+// runFailedBy reports whether err means the run itself failed (for the run log's verdict): any
+// non-nil error except an unstable-format verdict.
+func runFailedBy(err error) bool {
+	var u unstableFormatError
+	return err != nil && !errors.As(err, &u)
 }
 
 // runStableFormat runs env's Formatter commands with a stability check, matching real trunk's own

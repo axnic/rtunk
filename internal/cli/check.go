@@ -101,7 +101,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		return err
 	}
 	findings, _, skipped, failed := drainRunEvents(func(ev engine.Event) { printEvent(stderr, ev) }, events)
-	runFailed = failed != nil || fixFailed != nil
+	runFailed = failed != nil || runFailedBy(fixFailed)
 
 	printReport(stdout, findings, skipped)
 	if fixFailed != nil {

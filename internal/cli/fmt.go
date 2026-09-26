@@ -81,13 +81,13 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 
 	if c.VerifyStable {
 		changed, skipped, err := runStableFormat(context.Background(), env, c.Paths, stderr)
-		runFailed = err != nil
+		runFailed = runFailedBy(err)
 		printFmtReport(stdout, changed, skipped)
 		return err
 	}
 
 	changed, skipped, err := runFormatOnce(context.Background(), env, c.Paths, repoRoot, stderr)
-	runFailed = err != nil
+	runFailed = runFailedBy(err)
 	printFmtReport(stdout, changed, skipped)
 	return err
 }
