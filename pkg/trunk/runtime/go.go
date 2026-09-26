@@ -1,10 +1,12 @@
-package download
+package runtime
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/xunleii/rtunk/pkg/trunk/install"
 )
 
 // installGoPackage runs `go install pkg@version` using the go toolchain shipped by the
@@ -13,7 +15,7 @@ import (
 // shimSearchPaths already looks. GOTOOLCHAIN=local and GOROOT pin go to the toolchain version
 // we just downloaded, instead of silently using a different one from the caller's environment.
 //
-// GOPATH/GOCACHE point at their own sibling scratch dir, never at tmpDir (the dir finalizeInstall
+// GOPATH/GOCACHE point at their own sibling scratch dir, never at tmpDir (the dir install.Finalize
 // renames into pkgInstallDir, the PERMANENT per-tool cache entry): tmpDir/bin is the only real
 // output; the module cache and build cache are multi-hundred-MB-to-multi-GB build ephemera that
 // must never be kept forever, and worse, go's module cache is written read-only by design, so a
@@ -23,7 +25,7 @@ import (
 func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
 	goBin := filepath.Join(runtimeInstallDir, "bin", "go")
 	if _, err := os.Stat(goBin); err != nil {
-		return fmt.Errorf("download: go not found at %s: %w", goBin, err)
+		return fmt.Errorf("runtime: go not found at %s: %w", goBin, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
@@ -45,7 +47,7 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) err
 	}
 	defer func() { _ = os.RemoveAll(buildDir) }()
 
-	// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see renovate.goVersionPrefix).
+	// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see goRuntime.ExtractVersion).
 	if version != "" && version[0] >= '0' && version[0] <= '9' {
 		version = "v" + version
 	}
@@ -62,7 +64,15 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) err
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("download: go install %s@%s: %w: %s", pkg, version, err, out)
+		return fmt.Errorf("runtime: go install %s@%s: %w: %s", pkg, version, err, out)
 	}
-	return finalizeInstall(tmpDir, pkgInstallDir)
+	return install.Finalize(tmpDir, pkgInstallDir)
+}
+
+var goRuntime = Runtime{
+	Install:    installGoPackage,
+	Datasource: "go",
+	// Go module versions are always "v"-prefixed, but a trunk.yaml pin isn't (installGoPackage
+	// adds the "v" back right before `go install`).
+	ExtractVersion: `^v(?<version>.+)$`,
 }

@@ -1,10 +1,12 @@
-package download
+package runtime
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/xunleii/rtunk/pkg/trunk/install"
 )
 
 // installRubyPackage runs `gem install --install-dir <scratch> --bindir <scratch>/bin pkg -v
@@ -14,7 +16,7 @@ import (
 func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
 	gem := filepath.Join(runtimeInstallDir, "bin", "gem")
 	if _, err := os.Stat(gem); err != nil {
-		return fmt.Errorf("download: gem not found at %s: %w", gem, err)
+		return fmt.Errorf("runtime: gem not found at %s: %w", gem, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
@@ -31,7 +33,9 @@ func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	cmd.Env = append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("download: gem install %s -v %s: %w: %s", pkg, version, err, out)
+		return fmt.Errorf("runtime: gem install %s -v %s: %w: %s", pkg, version, err, out)
 	}
-	return finalizeInstall(tmpDir, pkgInstallDir)
+	return install.Finalize(tmpDir, pkgInstallDir)
 }
+
+var rubyRuntime = Runtime{Install: installRubyPackage}

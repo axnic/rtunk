@@ -93,7 +93,7 @@ func TestForLint_RuntimePackage_AllFiveEcosystems_OK(t *testing.T) {
 			require.True(t, ok)
 			want := Annotation{Datasource: c.wantDatasource, DepName: "some/package/path"}
 			if c.runtime == "go" {
-				want.ExtractVersion = goVersionPrefix
+				want.ExtractVersion = `^v(?<version>.+)$`
 				assert.Equal(t, "# renovate: datasource=go depName=some/package/path extractVersion=^v(?<version>.+)$", ann.Comment())
 			}
 			assert.Equal(t, want, ann)

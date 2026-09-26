@@ -14,6 +14,7 @@ import (
 	"github.com/ulikunitz/xz"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/trunk/install"
 )
 
 // maxExtractedEntrySize bounds how much data one archive entry (or a bare .gz) may decompress to.
@@ -55,7 +56,7 @@ func copyLimited(dst io.Writer, src io.Reader, limit int64) error {
 // structure.
 //
 // All work happens inside a scratch temp directory (a sibling of destDir, so the final
-// os.Rename below stays on one filesystem), published into destDir only via finalizeInstall once
+// os.Rename below stays on one filesystem), published into destDir only via install.Finalize once
 // everything has succeeded (see Fix 3). Without this, destDir existed for the entire
 // download/extract window -- and permanently after any failure -- because it used to be created
 // as this function's very first action; dirNonEmpty(destDir) (fetchRuntimeRef/fetchToolRef's own
@@ -69,14 +70,14 @@ func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, 
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once finalizeInstall renames it into destDir
+	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once install.Finalize renames it into destDir
 
 	if entry.Executable {
 		name := filepath.Base(strings.SplitN(url, "?", 2)[0])
 		if err := copyFile(blobPath, filepath.Join(tmpDir, name), 0o755); err != nil {
 			return err
 		}
-		return finalizeInstall(tmpDir, destDir)
+		return install.Finalize(tmpDir, destDir)
 	}
 
 	//nolint:gosec // blobPath is content-addressed: FetchBlob names it after its own SHA256
@@ -140,23 +141,7 @@ func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, 
 	default:
 		return fmt.Errorf("download: %s: unrecognized archive format", url)
 	}
-	return finalizeInstall(tmpDir, destDir)
-}
-
-// finalizeInstall atomically publishes a completed install: tmpDir (scratch work done in a
-// sibling directory of destDir, so this stays on one filesystem -- os.Rename requires that) is
-// renamed into destDir only once every step has already succeeded. If destDir already exists, a
-// concurrent or earlier caller won the race and finished first -- that's success, not a conflict:
-// this caller's tmpDir is discarded and the winner's result is used as-is.
-func finalizeInstall(tmpDir, destDir string) error {
-	if err := os.Rename(tmpDir, destDir); err != nil {
-		if dirNonEmpty(destDir) {
-			_ = os.RemoveAll(tmpDir)
-			return nil
-		}
-		return err
-	}
-	return nil
+	return install.Finalize(tmpDir, destDir)
 }
 
 // extractTar walks a tar stream, stripping the first strip path components off every entry name

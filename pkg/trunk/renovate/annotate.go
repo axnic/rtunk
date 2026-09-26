@@ -10,6 +10,7 @@ import (
 	"regexp"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/trunk/runtime"
 )
 
 // Annotation is a resolved Renovate regex-manager target: the datasource and dependency name
@@ -22,10 +23,6 @@ type Annotation struct {
 	ExtractVersion string
 }
 
-// goVersionPrefix is the extractVersion for the go datasource: Go module versions are always
-// "v"-prefixed, but a trunk.yaml pin isn't (rtunk adds the "v" back right before `go install`).
-const goVersionPrefix = `^v(?<version>.+)$`
-
 // Comment renders a as the "# renovate: ..." line the regexManagers config in internal/cli
 // matches.
 func (a Annotation) Comment() string {
@@ -34,18 +31,6 @@ func (a Annotation) Comment() string {
 		c += " extractVersion=" + a.ExtractVersion
 	}
 	return c
-}
-
-// runtimeDatasources maps a Tool's Runtime ecosystem to the Renovate datasource that tracks
-// packages published to it -- a small, closed set (the only five ecosystems the real
-// trunk-io/plugins catalog uses for Runtime+Package tools as of this package's own design
-// research). An ecosystem not in this table is skipped, never guessed at.
-var runtimeDatasources = map[string]string{
-	"node":   "npm",
-	"python": "pypi",
-	"php":    "packagist",
-	"go":     "go",
-	"rust":   "crate",
 }
 
 // githubOwnerRepoRE extracts a GitHub (owner, repo) pair from a URL that either names a repo
@@ -100,15 +85,11 @@ func resolveToolAnnotation(cfg config.Config, tool config.Tool) (Annotation, str
 		return Annotation{Datasource: "github-releases", DepName: owner + "/" + repo}, tool.KnownGoodVersion, true
 	}
 	if tool.Runtime != "" && tool.Package != "" {
-		datasource, ok := runtimeDatasources[tool.Runtime]
-		if !ok {
+		rt, ok := runtime.Lookup(tool.Runtime)
+		if !ok || rt.Datasource == "" {
 			return Annotation{}, "", false
 		}
-		ann := Annotation{Datasource: datasource, DepName: tool.Package}
-		if tool.Runtime == "go" {
-			ann.ExtractVersion = goVersionPrefix
-		}
-		return ann, tool.KnownGoodVersion, true
+		return Annotation{Datasource: rt.Datasource, DepName: tool.Package, ExtractVersion: rt.ExtractVersion}, tool.KnownGoodVersion, true
 	}
 	return Annotation{}, "", false
 }

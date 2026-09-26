@@ -1,10 +1,12 @@
-package download
+package runtime
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/xunleii/rtunk/pkg/trunk/install"
 )
 
 // installRustPackage runs `cargo install --root <scratch> --version version pkg` using the cargo
@@ -12,7 +14,7 @@ import (
 // AGENTS.md "Reproducibility"). cargo's own --root convention places binaries at
 // <root>/bin/<name>, matching shimSearchPaths' existing bin/ check with no further changes.
 //
-// CARGO_TARGET_DIR points at its own sibling scratch dir, never at tmpDir (the dir finalizeInstall
+// CARGO_TARGET_DIR points at its own sibling scratch dir, never at tmpDir (the dir install.Finalize
 // renames into pkgInstallDir, the PERMANENT per-tool cache entry): tmpDir/bin is the only real
 // output; the build target dir is multi-hundred-MB-to-multi-GB build ephemera that must never be
 // kept forever, and would otherwise make every later `rtunk cache clean`/`prune` on this tool drag
@@ -20,7 +22,7 @@ import (
 func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
 	cargo := filepath.Join(runtimeInstallDir, "bin", "cargo")
 	if _, err := os.Stat(cargo); err != nil {
-		return fmt.Errorf("download: cargo not found at %s: %w", cargo, err)
+		return fmt.Errorf("runtime: cargo not found at %s: %w", cargo, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
@@ -44,7 +46,9 @@ func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("download: cargo install %s --version %s: %w: %s", pkg, version, err, out)
+		return fmt.Errorf("runtime: cargo install %s --version %s: %w: %s", pkg, version, err, out)
 	}
-	return finalizeInstall(tmpDir, pkgInstallDir)
+	return install.Finalize(tmpDir, pkgInstallDir)
 }
+
+var rustRuntime = Runtime{Install: installRustPackage, Datasource: "crate"}

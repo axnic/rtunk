@@ -1,10 +1,12 @@
-package download
+package runtime
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/xunleii/rtunk/pkg/trunk/install"
 )
 
 // installPythonPackage runs `pip install --prefix <scratch dir> pkg==version` using the pip
@@ -15,7 +17,7 @@ import (
 func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
 	pip := filepath.Join(runtimeInstallDir, "bin", "pip")
 	if _, err := os.Stat(pip); err != nil {
-		return fmt.Errorf("download: pip not found at %s: %w", pip, err)
+		return fmt.Errorf("runtime: pip not found at %s: %w", pip, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(pkgInstallDir), 0o750); err != nil {
 		return err
@@ -24,7 +26,7 @@ func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once finalizeInstall renames it into pkgInstallDir
+	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once install.Finalize renames it into pkgInstallDir
 
 	cmd := exec.Command(pip, "install", "--prefix", tmpDir, pkg+"=="+version)
 	cmd.Env = append(os.Environ(),
@@ -43,9 +45,9 @@ func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string)
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("download: pip install %s==%s: %w: %s", pkg, version, err, out)
+		return fmt.Errorf("runtime: pip install %s==%s: %w: %s", pkg, version, err, out)
 	}
-	return finalizeInstall(tmpDir, pkgInstallDir)
+	return install.Finalize(tmpDir, pkgInstallDir)
 }
 
 // pythonSitePackages returns the site-packages directory pip install --prefix wrote pkg into,
@@ -60,7 +62,21 @@ func pythonSitePackages(installDir string) (string, error) {
 		return "", err
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("download: no site-packages found under %s", installDir)
+		return "", fmt.Errorf("runtime: no site-packages found under %s", installDir)
 	}
 	return matches[0], nil
+}
+
+var pythonRuntime = Runtime{
+	Install:    installPythonPackage,
+	ShimEnv:    pythonShimEnv,
+	Datasource: "pypi",
+}
+
+func pythonShimEnv(installDir string) ([]string, error) {
+	sitePackages, err := pythonSitePackages(installDir)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"PYTHONPATH=" + sitePackages}, nil
 }
