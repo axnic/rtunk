@@ -44,8 +44,10 @@ type Runtime struct {
 	Install func(runtimeDir, pkgDir, pkg, version string) error
 	// InstallFile installs every dependency of a manifest (node's package.json only).
 	InstallFile func(runtimeDir, pkgDir, file string) error
-	// Env returns extra environment a package tool's shim needs (python's PYTHONPATH only).
-	Env func(installDir string) ([]string, error)
+	// ShimEnv returns environment an installed package tool's shim needs beyond the plugin's own
+	// runtime_environment/linter_environment: a value only known once the package is on disk,
+	// which those templates can't express (python's PYTHONPATH only).
+	ShimEnv func(installDir string) ([]string, error)
 	// Datasource is the Renovate datasource tracking this runtime's packages; "" = none.
 	Datasource string
 	// ExtractVersion is the Renovate extractVersion regex, when the datasource's versions
@@ -58,11 +60,12 @@ func Lookup(typ string) (Runtime, bool)
 ```
 
 The registry is one unexported `map[string]Runtime` in `runtime.go`, no `init()`
-registration, no blank imports.
+registration, no blank imports. Each runtime file defines its own `<x>Runtime` var; adding a
+runtime is that file plus one line in the map.
 
 One file per runtime, each with its test moved alongside:
 
-| File        | Install            | InstallFile | Env          | Datasource  | ExtractVersion      |
+| File        | Install            | InstallFile | ShimEnv      | Datasource  | ExtractVersion      |
 | ----------- | ------------------ | ----------- | ------------ | ----------- | ------------------- |
 | `go.go`     | `go install`       |             |              | `go`        | `^v(?<version>.+)$` |
 | `node.go`   | `npm install`      | yes         |              | `npm`       |                     |
@@ -82,7 +85,8 @@ manager, finalize). Error messages change prefix from `download:` to `runtime:`.
 ### `pkg/trunk/install` (new, leaf)
 
 `finalizeInstall` (`pkg/trunk/download/extract.go`) is used by every package install and by
-`InstallDownload`. `runtime` cannot import `download` (`download` imports `runtime`), so it moves
+`InstallDownload`. The "destDir already exists as a directory" check it needs is inlined (3
+lines) rather than dragging `download.dirNonEmpty` along. `runtime` cannot import `download` (`download` imports `runtime`), so it moves
 to a leaf package as `install.Finalize` and both import it. Exporting it from `runtime` for
 `download` to call was rejected: the dependency would read backwards.
 
@@ -100,14 +104,17 @@ to a leaf package as `install.Finalize` and both import it. Exporting it from `r
 
 ## Testing
 
-- Existing `runtime_*_test.go` move with their code; assertions are unchanged except any that
-  match the old `download:` error prefix.
-- New registry test: every runtime type above has an entry, and the `(type, Datasource,
-ExtractVersion)` triples equal the former `runtimeDatasources` table plus `goVersionPrefix`
-  (guards against silently dropping an annotation).
-- `renovate` tests stay as they are and must pass unmodified: this proves the annotations are
-  identical.
-- `go test ./...` and `golangci-lint` green before and after.
+- The `runtime_*_test.go` files in `download` stay where they are: they are external tests that
+  drive `download.InstallPackage` / `ExtraToolEnv` through the wrappers, which makes them the
+  behaviour guard for the move. No assertion matched the old `download:` error prefix, so none
+  changed.
+- New `runtime/runtime_test.go`: for every runtime type, `Install` is set and `Datasource`,
+  `ExtractVersion`, `InstallFile`, `ShimEnv` match what the former `runtimeDatasources` table,
+  `goVersionPrefix` and the three `switch`es said; `java` is absent.
+- `renovate` tests are unchanged except the one that referenced the deleted `goVersionPrefix`
+  constant, which now asserts the literal regex.
+- `go test ./...` green before and after. `golangci-lint` was not available in the session that
+  implemented this.
 
 ## Naming note
 
