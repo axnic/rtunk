@@ -96,8 +96,8 @@ clone` of a repo URL pinned to a tag or SHA — never a branch.
 
 Detail lives in [docs/cli.md](./docs/cli.md) (commands and run semantics) and
 [docs/ux.md](./docs/ux.md) (terminal UX). They are the target design, authoritative over older
-specs under `docs/superpowers/`, not a description of shipped behavior: only `.rtunk` over `.trunk`
-precedence, `logs list|show|clean` and ad hoc per-file stderr events are implemented today.
+specs under `docs/superpowers/`. Everything through `v0.8` is implemented today; `v0.9` (output and
+UX) and `v1.2` (`rtunk.lock`) remain planned, with ad hoc per-file stderr events until `v0.9`.
 
 - **Project root.** `check`, `fmt` and `run` refuse to run without a `.trunk`/`.rtunk` ancestor.
 - **Changed files by default.** No-path `check`/`fmt` process only changed files (merge-base diff,

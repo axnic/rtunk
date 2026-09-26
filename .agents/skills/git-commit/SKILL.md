@@ -88,7 +88,7 @@ like `project:*`/`catalog:*` would be.
 | `actions`  | Actions and git-hooks                                                              |
 | `upgrade`  | Self-upgrade command                                                               |
 | `init`     | `init`/`deinit` command                                                            |
-| `renovate` | Renovate annotation generation (`rtunk renovate`)                                  |
+| `renovate` | Renovate annotation generation (`rtunk toolbox renovate`)                          |
 | `cli`      | Top-level CLI wiring, flag compatibility, entrypoints                              |
 | `deps`     | Go module or tool version bumps                                                    |
 | `ci`       | `.github/` workflows, `.trunk/` dogfood config, `mise.toml`                        |

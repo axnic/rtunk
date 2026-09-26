@@ -25,10 +25,10 @@ The first milestone makes rtunk able to parse and reason about a `.trunk/trunk.y
 `.rtunk/rtunk.yaml`) configuration without touching the network or the filesystem beyond reading
 config. This validates the config model before anything downloads or executes.
 
-- **`rtunk config print [--output yaml|json] [--all]`** — Print the fully compiled/merged
+- **`rtunk config print [--output yaml|json]`** — Print the fully compiled/merged
   configuration: the result of resolving all config sources (base config, local overrides, plugin
-  definitions) into the single effective configuration rtunk would act on. `--all` prints the full
-  merged plugin catalog instead of only what is enabled and used.
+  definitions) into the single effective configuration rtunk would act on. The full merged plugin
+  catalog moved to `rtunk plugins print` in `v0.8` (`--all` removed).
 
 The originally planned `rtunk config {plugins,lint,actions,tools,runtimes} list|show` were never
 implemented and are dropped: `linters`/`actions` listing (`v0.9`) and `plugins print` (`v0.8`)
@@ -104,7 +104,7 @@ lifecycle events (for example, on commit or push). This milestone brings that co
 Nothing here adds a linter capability; it aligns the command surface and run semantics with the
 decisions recorded in AGENTS.md ("Behavioral decisions") and detailed in docs/cli.md, before the output layer (`v0.9`) is built
 on them. Implemented: `.rtunk` wins over `.trunk` with no merge, the project root rule, file
-selection, exit codes and `fmt` working-tree-only (marked below); the rest is not implemented yet. Full rules: [docs/cli.md](./docs/cli.md).
+selection, exit codes, `fmt` working-tree-only, and the whole command reshape below: all `v0.8` items are implemented, under internal/cli. Full rules: [docs/cli.md](./docs/cli.md).
 
 - **Project root rule (implemented).** `check`, `fmt` and `run` refuse to run unless an ancestor (itself
   included) contains `.trunk` or `.rtunk`, with an explicit message; this covers `rtunk check .` in
@@ -121,29 +121,37 @@ selection, exit codes and `fmt` working-tree-only (marked below); the rest is no
   otherwise `0`.
 - **`fmt` writes to the working tree only (implemented)** and never touches the index (no `git add`); partially
   staged files are skipped with a warning unless `--force`.
-- **`linters` / `actions` symmetry.** Replace `check enable|disable|list` with
+- **`linters` / `actions` symmetry (implemented).** Replace `check enable|disable|list` with
   `rtunk linters {list,enable,disable} <id>[@version]`, mirroring `actions {list,enable,disable}`;
   `check` and `fmt` take paths only. The filtered layout of `list` lands in `v0.9`.
-- **`rtunk git-hooks sync|unsync`** — Rename `install`/`uninstall` (`sync` is already an alias of
-  `install`; `unsync` does not exist).
-- **`rtunk plugins print`** — Print all configuration available across all plugins, resolved (a
-  registry dump, can be very large). Replaces `config print --all`.
-- **`toolbox` group (hidden).** Move and narrow the shipped commands: `download` ->
-  `rtunk toolbox download {runtime,tools} <id>[@<version>]`; `exec|x` ->
-  `rtunk toolbox exec {runtime,tools} <id>[@<version>] -- <cmd> [<args>...]` (`--interactive` binds
-  stdin/stdout); `where` -> `rtunk toolbox where {runtime,tools} <id>[@<version>]` (absolute path
-  of the item's directory, not its shim). `renovate annotate|config` (shipped in `v1.1`) become
-  `toolbox renovate enable|disable|config`.
-- **`rtunk logs list|show|clean`** — Inspect and clean the per-run logs written by `check`, `fmt`
+- **`rtunk git-hooks sync|unsync` (implemented)** — Renames `install`/`uninstall`; the old names and
+  the alias are removed, with no compat aliases.
+- **`rtunk plugins print` (implemented)** — Print all configuration available across all plugins,
+  resolved (a registry dump, can be very large). Replaces `config print --all`; `--all` is removed
+  from `config print`.
+- **`toolbox` group (hidden, implemented).** Moves and narrows the former top-level commands:
+  `download` -> `rtunk toolbox download {runtime,tools} <id>[@<version>]` (item required, no bare
+  download-everything); `exec|x` -> `rtunk toolbox exec {runtime,tools} <id>[@<version>] -- <cmd>
+[<args>...]` (`<cmd>` is the item's shim if equal to `<id>`, else an executable in its install
+  dir; `--interactive` binds stdin/stdout, otherwise stdin is unbound); `where` ->
+  `rtunk toolbox where {runtime,tools} <id>[@<version>]` (absolute install directory, not the
+  shim). `renovate annotate|config` (shipped in `v1.1`) become `toolbox renovate
+enable|disable|config`: `enable` is the former `annotate`, `disable` strips the annotations, and
+  both warn on stderr when no Renovate config file at the repo root contains the regexManager.
+- **`rtunk logs list|show|clean` (implemented)** — Inspect and clean the per-run logs written by `check`, `fmt`
   and `actions run` (`logs show <run>|latest`; see
   docs/superpowers/specs/2026-09-26-run-logs-design.md). The code already exists
-  (internal/cli/logs.go); this stage settles it in the reshaped command surface.
-- **Hidden commands.** `toolbox` and other internal commands stay callable but absent from default
-  help; `rtunk help --all` lists everything.
-- **Cache administration.** Rename `rtunk cache clean` -> `rtunk cache destroy`, and reshape
-  `rtunk cache prune` into `--older-than <duration>` (e.g. `30d`): each cache entry's mtime is
-  touched on every use. There is no project registry, so detecting truly unreferenced entries is
-  deliberately out of v1 (today's prune removes what the enabled config no longer references).
+  (internal/cli/logs.go), unchanged by the reshape.
+- **Hidden commands (implemented).** `toolbox` and other internal commands stay callable but absent
+  from default help; `rtunk help [--all]` lists everything with `--all`.
+- **Cache administration (implemented).** `rtunk cache clean` -> `rtunk cache destroy`, and
+  `rtunk cache prune --older-than <duration>` (required; Go durations plus a `d` suffix, e.g.
+  `30d`) removes `installs/<cat>/<id>/<version>` and `shims/<cat>/<id>/<version>` directories whose
+  mtime is older. Every use (check/fmt/actions runtime and tool resolution, `toolbox exec`) touches
+  those mtimes via `download.Touch`; caches created before this change look old until their next
+  use. Known gap: `--older-than` replaces the former prune of what the config no longer
+  references, and there is no project registry, so detecting truly unreferenced entries is
+  deliberately out of v1.
 
 ## v0.9 — Output and UX
 
@@ -180,13 +188,13 @@ docs/superpowers/specs/2026-09-17-renovate-annotations-design.md for why) — in
 the annotations [Renovate](https://docs.renovatebot.com/)'s regex manager needs to do that job on
 its own.
 
-- **`rtunk renovate annotate`** — Annotate `trunk.yaml`'s version-pinned entries with Renovate
+- **`rtunk toolbox renovate enable`** (formerly `renovate annotate`) — Annotate `trunk.yaml`'s version-pinned entries with Renovate
   regex-manager comments, wherever a datasource can be confidently named.
-- **`rtunk renovate config`** — Print the Renovate `regexManagers` config snippet to add.
+- **`rtunk toolbox renovate config`** (formerly `renovate config`) — Print the Renovate `regexManagers` config snippet to add.
 
-Renamed in `v0.8` to the hidden `rtunk toolbox renovate enable|disable|config` (enable/disable
-turn the annotations on or off and warn when the regexManager configuration is missing; `config`
-includes `postUpgradeTasks: rtunk lock` once `rtunk.lock` exists, `v1.2`).
+Renamed in `v0.8` (implemented) to the hidden `rtunk toolbox renovate enable|disable|config`
+(enable/disable turn the annotations on or off and warn when the regexManager configuration is
+missing; `config` will include `postUpgradeTasks: rtunk lock` once `rtunk.lock` exists, `v1.2`).
 
 ## v1.2 — Download integrity (`rtunk.lock`)
 

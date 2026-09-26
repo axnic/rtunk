@@ -5,12 +5,14 @@ semantics of `check`, `fmt` and `run`. It is authoritative over older specs unde
 `docs/superpowers/`. Terminal rendering lives in [ux.md](./ux.md); staging lives in
 [ROADMAP.md](../ROADMAP.md); project principles live in [AGENTS.md](../AGENTS.md).
 
-**Implementation status.** These are target decisions, not all of them shipped. Implemented today:
-`.rtunk` over `.trunk` precedence and the project root rule (`findTrunkYAML` in
-internal/cli/findtrunk.go), file selection and `--from` (internal/cli/selection.go), exit codes
-(`cmd/rtunk/main.go`), `fmt` working-tree-only behavior with `--force`, `logs list|show|clean`
-(internal/cli/logs.go), and ad hoc per-file events printed to stderr by `internal/cli/check.go`.
-Everything else below is planned: the rest of `v0.8` (CLI reshape), `v0.9` (output and UX, see [ux.md](./ux.md)), `v1.2` (`rtunk.lock`).
+**Implementation status.** `v0.8` (CLI reshape) is implemented, under internal/cli: `.rtunk` over
+`.trunk` precedence and the project root rule (`findTrunkYAML` in internal/cli/findtrunk.go), file
+selection and `--from` (internal/cli/selection.go), exit codes (`cmd/rtunk/main.go`), `fmt`
+working-tree-only behavior with `--force`, `linters {list,enable,disable}`, `git-hooks sync|unsync`,
+`plugins print`, the hidden `toolbox` group, `logs list|show|clean`, `help [--all]`, and
+`cache destroy|prune --older-than`. Ad hoc per-file events are still printed to stderr by
+`internal/cli/check.go`. Still planned: `v0.9` (output and UX, see [ux.md](./ux.md)) and `v1.2`
+(`rtunk.lock`).
 
 ## Cross-cutting rules
 
@@ -80,7 +82,7 @@ files are skipped with a warning unless `--force` is given. (Implemented.)
 ### Hidden commands
 
 `toolbox` and other internal commands are callable but absent from the default help. `rtunk help
---all` lists everything.
+--all` lists everything. (Implemented.)
 
 ## Everyday commands
 
@@ -99,13 +101,14 @@ rtunk check [--from <ref>] [--format ...] [<path>...]
 
 `rtunk [actions] run <id>` runs an action in the current directory.
 
-`check` and `fmt` take paths only. There are no trunk-style aliases.
+`check` and `fmt` take paths only. There are no trunk-style aliases. (Implemented.)
 
 ## Configuration inspection
 
 - **`rtunk config print`**: print the current, fully resolved configuration.
 - **`rtunk plugins print`**: print all configuration available across all plugins, resolved. Can
-  be very large; useful as a registry dump. Replaces `config print --all`.
+  be very large; useful as a registry dump. Replaces `config print --all`, which is removed.
+  (Implemented.)
 
 The originally planned `config {plugins,lint,actions,tools,runtimes} list|show` were never shipped
 and stay dropped: `linters`/`actions` listing and `plugins print` cover the need.
@@ -113,25 +116,32 @@ and stay dropped: `linters`/`actions` listing and `plugins print` cover the need
 ## Internal commands (advanced, hidden)
 
 - **`rtunk toolbox download {runtime,tools} <id>[@version]`**: download one specific runtime or
-  tool.
-- **`rtunk toolbox where {runtime,tools} <id>[@version]`**: absolute path of the item's directory
-  (not its shim).
-- **`rtunk toolbox exec {runtime,tools} <id>[@version] -- <cmd> [<args>...]`**: run the tool.
-  `--interactive` binds stdin/stdout, for instance to open a python or node shell from a runtime.
-- **`rtunk lock`**: see "Download integrity" below.
+  tool. The item is required; there is no bare download-everything.
+- **`rtunk toolbox where {runtime,tools} <id>[@version]`**: absolute path of the item's install
+  directory (not its shim).
+- **`rtunk toolbox exec|x {runtime,tools} <id>[@version] -- <cmd> [<args>...]`**: run `<cmd>`, which
+  is the item's shim when equal to `<id>`, else an executable in its install directory.
+  `--interactive` binds stdin/stdout, for instance to open a python or node shell from a runtime;
+  otherwise stdin is unbound.
+- **`rtunk lock`**: see "Download integrity" below (planned, `v1.2`).
 
-These replace the shipped top-level `download`, `exec|x` and `where` (`v0.2`), narrowed to
-`{runtime,tools}`.
+`toolbox download`, `exec` and `where` are implemented and replace the former top-level `download`,
+`exec|x` and `where` (`v0.2`), narrowed to `{runtime,tools}`; the old names are removed, with no
+compat aliases.
 
 ## Administration
 
 ### Cache
 
-- **`rtunk cache destroy`**: remove the entire cache (replaces `cache clean`).
-- **`rtunk cache prune --older-than 30d`**: remove entries unused for the given duration. Each
-  entry's mtime is touched on every use. There is deliberately no project registry, so detecting
-  truly unreferenced entries is out of v1. (Today's prune removes what the enabled config no longer
-  references.)
+- **`rtunk cache destroy`**: remove the entire cache (replaces `cache clean`). (Implemented.)
+- **`rtunk cache prune --older-than <duration>`** (required flag): remove entries unused for the
+  given duration. The duration accepts Go durations plus a `d` days suffix (`30d`). Removes the
+  `installs/<cat>/<id>/<version>` and `shims/<cat>/<id>/<version>` directories whose mtime is older.
+  Every use (check/fmt/actions runtime and tool resolution, and `toolbox exec`) touches those mtimes
+  via `download.Touch`; caches created before this change look old until their next use. Known gap:
+  `--older-than` replaces the former behavior of pruning what the config no longer references, and
+  there is deliberately no project registry, so detecting truly unreferenced entries is out of v1.
+  (Implemented.)
 
 ### Linters and actions
 
@@ -143,26 +153,28 @@ The two groups are symmetric:
   the history of actions in this repo (`history <id>`).
 
 `linters list` and `actions list` share one layout (see [ux.md](./ux.md)). `linters ...` replaces
-`check enable|disable|list`.
+`check enable|disable|list` (implemented; `check` takes paths only). The filtered layout of `list`
+lands in `v0.9`.
 
 ### Miscellaneous
 
-- **`rtunk git-hooks sync|unsync`**: enable or disable the git hooks defined by actions (renames
-  `install`/`uninstall`; `sync` is already an alias of `install`, `unsync` does not exist yet).
+- **`rtunk git-hooks sync|unsync`**: enable or disable the git hooks defined by actions (implemented;
+  `install`, `uninstall` and the alias are removed, with no compat aliases).
 - **`rtunk init`**: initialize a repository that has neither `.trunk` nor `.rtunk`.
 - **`rtunk logs list [<file>...]`**, **`rtunk logs show <uid>|latest [<file>...]`**,
   **`rtunk logs clean`**: inspect and clean per-run logs (see
-  `docs/superpowers/specs/2026-09-26-run-logs-design.md`). Implemented in internal/cli/logs.go;
-  scheduled with the `v0.8` CLI reshape.
+  `docs/superpowers/specs/2026-09-26-run-logs-design.md`). Implemented in internal/cli/logs.go.
 
 ## Renovate
 
 - **`rtunk toolbox renovate enable|disable`**: turn Renovate annotations in the configuration on or
-  off. Must warn when the regexManager configuration is missing.
+  off (`enable` is the former `annotate`; `disable` strips the annotations). Both warn on stderr when
+  no Renovate config file at the repo root contains the regexManager. (Implemented.)
 - **`rtunk toolbox renovate config`**: print the Renovate configuration with the custom
   regexManager used for version management. Eventually includes `postUpgradeTasks: rtunk lock`.
+  (Implemented, without the `postUpgradeTasks` entry.)
 
-These replace the shipped `rtunk renovate annotate|config` (`v1.1`).
+These replace the former `rtunk renovate annotate|config` (`v1.1`).
 
 ## Download integrity
 

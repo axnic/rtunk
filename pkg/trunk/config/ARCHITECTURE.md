@@ -236,7 +236,7 @@ Fields:
   glob patterns.
 - `tools` — the tool(s) (from `tools:`) this linter runs. When more than one, `main_tool`
   disambiguates which one drives versioning.
-- `description` — one-line summary shown by `check list`/`check enable`.
+- `description` — one-line summary shown by `linters list`/`linters enable`.
 - `commands` — one or more invocations (see below).
 - `direct_configs` — config filenames whose presence enables/influences this linter.
 - `affects_cache` — extra files that invalidate the lint cache beyond the target file itself (e.g.
@@ -398,8 +398,8 @@ trunk's own `config print` always renders the full, untrimmed catalog above — 
 narrow it. `rtunk config print` differs on purpose: by default it resolves via `Config.Resolve`,
 which trims `definitions:` (and `tools:`/`downloads:`) down to what's enabled plus whatever those
 enabled definitions reference transitively (`filterEnabled`) — the effective configuration a repo
-actually uses, rather than every definition a plugin source happens to contribute. `rtunk config
-print --all` resolves via `Config.ResolveAll` instead, matching trunk's own untrimmed view.
+actually uses, rather than every definition a plugin source happens to contribute. `rtunk plugins
+print` resolves via `Config.ResolveAll` instead, matching trunk's own untrimmed view.
 `Environments` and `Lint.CommentFormats` are identical either way (see above): they're global,
 not trunk.yaml-enableable, so there's nothing for `filterEnabled` to trim.
 
