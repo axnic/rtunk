@@ -14,8 +14,8 @@ import (
 // .trunk/trunk.yaml pins (not an arbitrary placeholder). Enabled lists are intentionally omitted
 // rather than written empty (`enabled: []`) -- trunkFile's own struct fields already default to
 // nil when absent, so there is no functional difference, and a shorter scaffold reads better as a
-// starting point built on via the already-existing `rtunk check enable`/`rtunk actions enable`/
-// `rtunk git-hooks install`.
+// starting point built on via the already-existing `rtunk linters enable`/`rtunk actions enable`/
+// `rtunk git-hooks sync`.
 const initScaffold = `version: "0.1"
 plugins:
   sources:
@@ -66,7 +66,7 @@ func (c *initCmd) Run(stdout io.Writer, stderr Stderr) error {
 	}
 
 	_, _ = fmt.Fprintf(stdout, "initialized rtunk at %s\n", configPath)
-	_, _ = fmt.Fprintln(stdout, "next: rtunk check enable <linter>, rtunk actions enable <action>, rtunk git-hooks install")
+	_, _ = fmt.Fprintln(stdout, "next: rtunk linters enable <linter>, rtunk actions enable <action>, rtunk git-hooks sync")
 	return nil
 }
 

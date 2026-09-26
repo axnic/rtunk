@@ -51,23 +51,6 @@ func TestGitHooksInstallCmd_WritesHooksForEnabledActions(t *testing.T) {
 	content := fmt.Sprintf("version: \"0.1\"\nactions:\n  enabled: [commitlint]\nplugins:\n  sources:\n    - id: trunk\n      local: %s\n", pluginRepoLocalFor(t, filepath.Dir(trunkYAMLPath)))
 	require.NoError(t, os.WriteFile(trunkYAMLPath, []byte(content), 0o644))
 
-	stdout, stderr, err := run2(t, "--config", trunkYAMLPath, "git-hooks", "install")
-	require.NoError(t, err, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "installed: commit-msg")
-	assert.FileExists(t, filepath.Join(repo, ".git", "hooks", "commit-msg"))
-}
-
-// TestGitHooksCmd_SyncAlias_MatchesInstall: real trunk's subcommand is `git-hooks sync`; rtunk's
-// is `git-hooks install` (same idempotent operation for rtunk's simpler model). aliases:"sync" on
-// the Install field's cmd tag makes both names resolve to the same gitHooksInstallCmd.
-func TestGitHooksCmd_SyncAlias_MatchesInstall(t *testing.T) {
-	repo := t.TempDir()
-	require.NoError(t, exec.Command("git", "-C", repo, "init", "-q").Run())
-	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".trunk"), 0o755))
-	trunkYAMLPath := filepath.Join(repo, ".trunk", "trunk.yaml")
-	content := fmt.Sprintf("version: \"0.1\"\nactions:\n  enabled: [commitlint]\nplugins:\n  sources:\n    - id: trunk\n      local: %s\n", pluginRepoLocalFor(t, filepath.Dir(trunkYAMLPath)))
-	require.NoError(t, os.WriteFile(trunkYAMLPath, []byte(content), 0o644))
-
 	stdout, stderr, err := run2(t, "--config", trunkYAMLPath, "git-hooks", "sync")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "installed: commit-msg")
@@ -82,10 +65,10 @@ func TestGitHooksUninstallCmd_RemovesInstalledHooks(t *testing.T) {
 	content := fmt.Sprintf("version: \"0.1\"\nactions:\n  enabled: [commitlint]\nplugins:\n  sources:\n    - id: trunk\n      local: %s\n", pluginRepoLocalFor(t, filepath.Dir(trunkYAMLPath)))
 	require.NoError(t, os.WriteFile(trunkYAMLPath, []byte(content), 0o644))
 
-	_, stderr, err := run2(t, "--config", trunkYAMLPath, "git-hooks", "install")
+	_, stderr, err := run2(t, "--config", trunkYAMLPath, "git-hooks", "sync")
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	stdout, stderr, err := run2(t, "--config", trunkYAMLPath, "git-hooks", "uninstall")
+	stdout, stderr, err := run2(t, "--config", trunkYAMLPath, "git-hooks", "unsync")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "removed: commit-msg")
 	assert.NoFileExists(t, filepath.Join(repo, ".git", "hooks", "commit-msg"))

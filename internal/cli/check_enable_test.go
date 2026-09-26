@@ -26,7 +26,7 @@ func writeScratchTrunkYAML(t *testing.T, content string) string {
 func TestCheckEnableCmd_AddsAndPreservesComments(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n# a leading comment, must survive\nlint:\n  enabled: []\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "enable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -38,7 +38,7 @@ func TestCheckEnableCmd_AddsAndPreservesComments(t *testing.T) {
 func TestCheckEnableCmd_Idempotent(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck]\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "enable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -49,7 +49,7 @@ func TestCheckEnableCmd_Idempotent(t *testing.T) {
 func TestCheckEnableCmd_VersionPinReplacesOldPin(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck@1.0.0]\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "enable", "shellcheck@2.0.0")
+	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck@2.0.0")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -61,7 +61,7 @@ func TestCheckEnableCmd_VersionPinReplacesOldPin(t *testing.T) {
 func TestCheckEnableCmd_NoLintKeyAtAll(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "enable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -72,7 +72,7 @@ func TestCheckEnableCmd_NoLintKeyAtAll(t *testing.T) {
 func TestCheckDisableCmd_RemovesEntry(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck, prettier]\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "disable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "disable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -84,7 +84,7 @@ func TestCheckDisableCmd_RemovesEntry(t *testing.T) {
 func TestCheckDisableCmd_AbsentIsNoOp(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [prettier]\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "disable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "disable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -100,7 +100,7 @@ func TestCheckDisableCmd_AbsentIsNoOp(t *testing.T) {
 func TestCheckEnableCmd_LintKeyWithNoValue(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "enable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -111,12 +111,12 @@ func TestCheckEnableCmd_LintKeyWithNoValue(t *testing.T) {
 
 // TestCheckDisableCmd_VersionedIDRemoves guards against disable silently no-op'ing when the id
 // passed on the command line still carries an @version pin (as copy-pasted straight out of
-// enabled: or `check list` output) -- removeEnabled must bare-compare its own ids too, not just
+// enabled: or `linters list` output) -- removeEnabled must bare-compare its own ids too, not just
 // the existing entries.
 func TestCheckDisableCmd_VersionedIDRemoves(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck@1.0.0, prettier]\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "disable", "shellcheck@1.0.0")
+	_, stderr, err := run2(t, "--config", path, "linters", "disable", "shellcheck@1.0.0")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -132,7 +132,7 @@ func TestCheckDisableCmd_VersionedIDRemoves(t *testing.T) {
 func TestCheckEnableCmd_PreservesSourceIndentWidth(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nruntimes:\n  enabled:\n    - node@22.18.0\nlint:\n  enabled:\n    - prettier\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "enable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -147,7 +147,7 @@ func TestCheckEnableCmd_NoAnnotations_BehaviorUnchanged(t *testing.T) {
 	// This is this plan's own proof the fix is genuinely opt-in.
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n# a leading comment, must survive\nlint:\n  enabled: []\n")
 
-	_, stderr, err := run2(t, "--config", path, "check", "enable", "shellcheck")
+	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(path)
@@ -166,7 +166,7 @@ func TestCheckEnableCmd_AnnotatedSurvivor_KeepsExactComment(t *testing.T) {
 	require.Contains(t, string(before), "# renovate: datasource=github-releases depName=acme/widget")
 
 	// An unrelated enable of a second, unresolvable id must not disturb fixture's own comment.
-	_, stderr, err = run2(t, "--config", cfgPath, "check", "enable", "unrelated")
+	_, stderr, err = run2(t, "--config", cfgPath, "linters", "enable", "unrelated")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	after, err := os.ReadFile(cfgPath)
@@ -192,7 +192,7 @@ func TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood(t 
 
 	// Re-enable bare, with no @version -- the old code kept the stale comment and the stale
 	// (missing) pin; the fix must re-pin to known_good_version and keep the annotation.
-	_, stderr, err = run2(t, "--config", cfgPath, "check", "enable", "fixture")
+	_, stderr, err = run2(t, "--config", cfgPath, "linters", "enable", "fixture")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(cfgPath)
@@ -234,7 +234,7 @@ lint:
 	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "pluginrepo", "linters", "second"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "pluginrepo", "linters", "second", "plugin.yaml"), []byte(secondPluginYAML), 0o644))
 
-	_, stderr, err = run2(t, "--config", cfgPath, "check", "enable", "second")
+	_, stderr, err = run2(t, "--config", cfgPath, "linters", "enable", "second")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(cfgPath)
@@ -247,7 +247,7 @@ func TestCheckEnableCmd_UnresolvableNewEntryInAnnotatedCategory_NoCommentNoForce
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "annotate")
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	_, stderr, err = run2(t, "--config", cfgPath, "check", "enable", "phantom")
+	_, stderr, err = run2(t, "--config", cfgPath, "linters", "enable", "phantom")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	got, err := os.ReadFile(cfgPath)

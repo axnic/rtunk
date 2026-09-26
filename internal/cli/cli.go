@@ -42,6 +42,8 @@ type CLI struct {
 	// make louder.
 	Verbose bool `short:"v" help:"Accepted for trunk compatibility; rtunk already prints this detail, this has no effect."`
 
+	LintersCmd  lintersCmd  `cmd:"" name:"linters" help:"List, enable and disable linters."`
+	PluginsCmd  pluginsCmd  `cmd:"" name:"plugins" help:"Inspect plugins."`
 	ConfigCmd   configCmd   `cmd:"" name:"config" help:"Query the resolved trunk configuration."`
 	DownloadCmd downloadCmd `cmd:"" name:"download" help:"Download enabled tools/runtimes into the local cache."`
 	WhereCmd    whereCmd    `cmd:"" name:"where" help:"Print a cached item's shim path."`

@@ -36,7 +36,7 @@ func TestConfigPrint(t *testing.T) {
 // the fixture plugin repo defines but nothing in trunk-with-plugins.yaml enables or references
 // (see TestConfigPrint above, and pkg/trunk/config's TestResolveAll_WithPluginRepo).
 func TestConfigPrint_All(t *testing.T) {
-	stdout, stderr, err := run2(t, "--config", trunkYAML, "config", "print", "--all")
+	stdout, stderr, err := run2(t, "--config", trunkYAML, "plugins", "print")
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "eslint")
 	assert.Contains(t, stdout, "shellcheck")

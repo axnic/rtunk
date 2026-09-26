@@ -18,11 +18,28 @@ type configCmd struct {
 
 type printCmd struct {
 	Output string `help:"Output format." enum:"yaml,json" default:"yaml"`
-	All    bool   `help:"Print the full merged plugin catalog instead of only enabled+used."`
 }
 
 func (c *printCmd) Run(cli *CLI, stdout io.Writer) error {
-	cfg, err := resolveConfig(cli.Config, cli.CacheDir, c.All)
+	cfg, err := resolveConfig(cli.Config, cli.CacheDir, false)
+	if err != nil {
+		return err
+	}
+	return printValue(stdout, cfg, c.Output)
+}
+
+// pluginsCmd is `rtunk plugins`: print dumps the full merged plugin catalog (a registry dump, can
+// be very large) instead of only what is enabled and used. Replaces `config print --all`.
+type pluginsCmd struct {
+	Print pluginsPrintCmd `cmd:"" help:"Print all configuration available across all plugins, resolved."`
+}
+
+type pluginsPrintCmd struct {
+	Output string `help:"Output format." enum:"yaml,json" default:"yaml"`
+}
+
+func (c *pluginsPrintCmd) Run(cli *CLI, stdout io.Writer) error {
+	cfg, err := resolveConfig(cli.Config, cli.CacheDir, true)
 	if err != nil {
 		return err
 	}
@@ -31,7 +48,7 @@ func (c *printCmd) Run(cli *CLI, stdout io.Writer) error {
 
 // resolveConfig finds (unless configPath is already set) and resolves the trunk.yaml in effect.
 // all selects ResolveAll (the full merged catalog) over Resolve (enabled+used only) -- only
-// `config print --all` sets it.
+// `plugins print` and `linters list`/`actions list` set it.
 func resolveConfig(configPath, cacheDir string, all bool) (config.Config, error) {
 	if configPath == "" {
 		found, err := findTrunkYAML()

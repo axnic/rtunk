@@ -12,13 +12,11 @@ import (
 )
 
 // gitHooksCmd is `rtunk git-hooks`: ROADMAP.md v0.5. "sync" is real trunk's own subcommand name
-// for the equivalent operation ("sync git hooks with trunk.yaml") -- rtunk's install is already
-// idempotent (re-running it just rewrites the same hook files), so the two names are the same
-// operation here; aliases:"sync" on this field makes both `git-hooks install` and `git-hooks
-// sync` resolve to gitHooksInstallCmd.Run.
+// for the equivalent operation ("sync git hooks with trunk.yaml"); it is idempotent (re-running it
+// just rewrites the same hook files). "unsync" removes what sync installed.
 type gitHooksCmd struct {
-	Install   gitHooksInstallCmd   `cmd:"" aliases:"sync" help:"Install git hooks for enabled actions."`
-	Uninstall gitHooksUninstallCmd `cmd:"" help:"Remove rtunk-installed git hooks."`
+	Sync   gitHooksInstallCmd   `cmd:"" help:"Install git hooks for enabled actions."`
+	Unsync gitHooksUninstallCmd `cmd:"" help:"Remove rtunk-installed git hooks."`
 }
 
 // gitRepoRoot resolves the real git repository top-level directory containing dir, via

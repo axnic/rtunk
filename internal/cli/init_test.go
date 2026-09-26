@@ -128,7 +128,7 @@ func TestDeinitCmd_RemovesRtunkDir(t *testing.T) {
 
 // TestDeinitCmd_RemovesInstalledGitHooks writes its own minimal local-plugin-source trunk.yaml
 // directly (rather than via `rtunk init`, whose own scaffold points at the real
-// https://github.com/trunk-io/plugins -- never resolved in a test) so `git-hooks install` has a
+// https://github.com/trunk-io/plugins -- never resolved in a test) so `git-hooks sync` has a
 // real, local, enabled action with a git_hooks trigger to work from, matching
 // pkg/trunk/githooks' own established real-git-repo test pattern.
 func TestDeinitCmd_RemovesInstalledGitHooks(t *testing.T) {
@@ -153,7 +153,7 @@ actions:
 `), 0o644))
 	chdir(t, repo)
 
-	_, stderr, err := run2(t, "git-hooks", "install")
+	_, stderr, err := run2(t, "git-hooks", "sync")
 	require.NoError(t, err, "stderr: %s", stderr)
 	require.FileExists(t, filepath.Join(repo, ".git", "hooks", "pre-commit"))
 
@@ -167,7 +167,7 @@ actions:
 // TestDeinitCmd_RemovesHookWithoutRtunkDir is the direct proof of the bug the final reviewer
 // reproduced live: a repo that only ever used .trunk/trunk.yaml (rtunk's own primary
 // drop-in-to-an-existing-trunk-repo use case, never running `rtunk init` at all) and ran
-// `rtunk git-hooks install` must still have its hook removed by `rtunk deinit`, and must NOT be
+// `rtunk git-hooks sync` must still have its hook removed by `rtunk deinit`, and must NOT be
 // told "nothing to deinit" -- deinit must not gate hook removal on .rtunk/ existing.
 func TestDeinitCmd_RemovesHookWithoutRtunkDir(t *testing.T) {
 	repo := initGitRepo(t)
@@ -191,7 +191,7 @@ actions:
 `), 0o644))
 	chdir(t, repo)
 
-	_, stderr, err := run2(t, "git-hooks", "install")
+	_, stderr, err := run2(t, "git-hooks", "sync")
 	require.NoError(t, err, "stderr: %s", stderr)
 	require.FileExists(t, filepath.Join(repo, ".git", "hooks", "pre-commit"))
 

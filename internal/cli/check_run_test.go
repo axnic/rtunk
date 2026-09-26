@@ -123,7 +123,7 @@ lint:
 	return filepath.Join(repoRoot, ".trunk", "trunk.yaml"), repoRoot
 }
 
-// TestCheckListCmd_ShowsDisabledLinters covers item 6: ROADMAP.md promises `rtunk check list`
+// TestCheckListCmd_ShowsDisabledLinters covers item 6: ROADMAP.md promises `rtunk linters list`
 // shows every linter available for the configuration, not only enabled ones. Before the fix,
 // checkListCmd.Run resolved enabled+used only (config.Resolve), so a defined-but-disabled linter
 // (here "beta") could never appear, and the "*" enabled marker was always "*" -- dead code.
@@ -135,7 +135,7 @@ func TestCheckListCmd_ShowsDisabledLinters(t *testing.T) {
       description: Beta linter
       files: [ALL]
 `)
-	stdout, stderr, err := run2(t, "--config", cfgPath, "check", "list")
+	stdout, stderr, err := run2(t, "--config", cfgPath, "linters", "list")
 	require.NoError(t, err, "stderr: %s", stderr)
 	want := "* alpha  Alpha linter\n  beta  Beta linter\n"
 	assert.Equal(t, want, stdout)

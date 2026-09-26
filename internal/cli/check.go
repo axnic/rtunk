@@ -20,13 +20,17 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/renovate"
 )
 
-// checkCmd is `rtunk check`: ROADMAP.md v0.3, running enabled linters read-only.
-// Bare `rtunk check [paths...]` is the default subcommand.
+// checkCmd is `rtunk check`: ROADMAP.md v0.3, running enabled linters read-only. Bare `rtunk check
+// [paths...]` is the default subcommand; listing and enabling linters lives in `rtunk linters`.
 type checkCmd struct {
-	Run     checkRunCmd     `cmd:"" default:"withargs" help:"Run enabled checks."`
+	Run checkRunCmd `cmd:"" default:"withargs" help:"Run enabled checks."`
+}
+
+// lintersCmd is `rtunk linters`, symmetric with `rtunk actions {list,enable,disable}`.
+type lintersCmd struct {
+	List    checkListCmd    `cmd:"" default:"withargs" help:"List all linters available for the current configuration."`
 	Enable  checkEnableCmd  `cmd:"" help:"Enable one or more linters."`
 	Disable checkDisableCmd `cmd:"" help:"Disable one or more linters."`
-	List    checkListCmd    `cmd:"" help:"List all linters available for the current configuration."`
 }
 
 // checkRunCmd is `rtunk check [paths...]`: given paths, or the whole repository if none.
@@ -296,7 +300,7 @@ func formatFinding(f output.Finding) string {
 	return fmt.Sprintf("%s %s %s", loc, f.Severity, msg)
 }
 
-// checkListCmd is `rtunk check list`.
+// checkListCmd is `rtunk linters list`.
 type checkListCmd struct{}
 
 func (c *checkListCmd) Run(cli *CLI, stdout io.Writer) error {
@@ -338,7 +342,7 @@ func formatLintList(cfg config.Config) string {
 	return b.String()
 }
 
-// checkEnableCmd is `rtunk check enable <id>[@version]...`.
+// checkEnableCmd is `rtunk linters enable <id>[@version]...`.
 type checkEnableCmd struct {
 	ID []string `arg:"" help:"Linter id(s) to enable, optionally @version."`
 }
@@ -349,7 +353,7 @@ func (c *checkEnableCmd) Run(cli *CLI) error {
 	})
 }
 
-// checkDisableCmd is `rtunk check disable <id>...`.
+// checkDisableCmd is `rtunk linters disable <id>...`.
 type checkDisableCmd struct {
 	ID []string `arg:"" help:"Linter id(s) to disable."`
 }
@@ -512,7 +516,7 @@ func addEnabled(existing, ids []string) []string {
 
 // removeEnabled drops every entry of existing whose bare id (ignoring an @version pin) matches
 // one of ids -- ids are bare-compared too, so a version-pinned removal id (e.g. copy-pasted
-// straight out of enabled: or `check list` output) still matches an entry pinned to a
+// straight out of enabled: or `linters list` output) still matches an entry pinned to a
 // different version.
 func removeEnabled(existing, ids []string) []string {
 	out := existing[:0:0]
