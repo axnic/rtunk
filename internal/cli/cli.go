@@ -63,6 +63,9 @@ type CLI struct {
 	// RenovateCmd is `rtunk renovate`: generates Renovate annotations for trunk.yaml's version
 	// pins (see docs/superpowers/specs/2026-09-17-renovate-annotations-design.md).
 	RenovateCmd renovateCmd `cmd:"" name:"renovate" help:"Generate Renovate annotations for trunk.yaml's version pins."`
+	// LogsCmd is `rtunk logs`: reads back the run logs check, fmt and actions run write (see
+	// docs/superpowers/specs/2026-09-26-run-logs-design.md).
+	LogsCmd logsCmd `cmd:"" name:"logs" help:"List, show and clean the logs of past runs."`
 }
 
 // exitPanic is a sentinel panic type used to signal that Kong called os.Exit without actually
