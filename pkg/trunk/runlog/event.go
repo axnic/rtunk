@@ -28,16 +28,15 @@ type Event struct {
 	TS string `json:"ts,omitempty"`
 	ID int    `json:"id,omitempty"`
 
-	// run_start (Argv and Cwd also on invocation; Argv also on parser; Env also on an
-	// invocation, where it is only the variables added on top of the run's environment).
-	Rtunk       string            `json:"rtunk,omitempty"`
-	Argv        []string          `json:"argv,omitempty"`
-	Cwd         string            `json:"cwd,omitempty"`
-	RepoRoot    string            `json:"repo_root,omitempty"`
-	Config      string            `json:"config,omitempty"`
-	Concurrency int               `json:"concurrency,omitempty"`
-	DryRun      bool              `json:"dry_run,omitempty"`
-	Env         map[string]string `json:"env,omitempty"`
+	// run_start (Argv and Cwd also on invocation; Argv also on parser). The process environment is
+	// deliberately never recorded: a log is meant to be shared.
+	Rtunk       string   `json:"rtunk,omitempty"`
+	Argv        []string `json:"argv,omitempty"`
+	Cwd         string   `json:"cwd,omitempty"`
+	RepoRoot    string   `json:"repo_root,omitempty"`
+	Config      string   `json:"config,omitempty"`
+	Concurrency int      `json:"concurrency,omitempty"`
+	DryRun      bool     `json:"dry_run,omitempty"`
 
 	// invocation (Template also on parser; Linter also on findings and linter_end)
 	Linter       string            `json:"linter,omitempty"`

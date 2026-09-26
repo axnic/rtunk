@@ -25,8 +25,6 @@ func Render(w io.Writer, events []Event) {
 			if ev.DryRun {
 				p("  dry run: yes\n")
 			}
-			p("  env:\n")
-			renderEnv(w, "    ", ev.Env)
 		case KindInvocation:
 			p("\n#%d %s\n", ev.ID, ev.Linter)
 			p("  $ %s\n", shellLine(ev.Argv))
@@ -45,10 +43,6 @@ func Render(w io.Writer, events []Event) {
 			}
 			if len(ev.Files) > 0 {
 				p("  files: %s\n", strings.Join(ev.Files, ", "))
-			}
-			if len(ev.Env) > 0 {
-				p("  extra env:\n")
-				renderEnv(w, "    ", ev.Env)
 			}
 		case KindOutput:
 			p("  %s%s:\n%s", ev.Stream, truncatedMark(ev.Truncated), indent(ev.Data, "    "))
@@ -84,17 +78,6 @@ func Render(w io.Writer, events []Event) {
 		case KindRunEnd:
 			p("\nstatus: %s in %dms\n", ev.Status, ev.Ms)
 		}
-	}
-}
-
-func renderEnv(w io.Writer, prefix string, env map[string]string) {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		_, _ = fmt.Fprintf(w, "%s%s=%s\n", prefix, k, env[k])
 	}
 }
 

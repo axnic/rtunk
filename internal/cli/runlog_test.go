@@ -59,7 +59,6 @@ func TestCheckRunCmd_WritesRunLog(t *testing.T) {
 	assert.Equal(t, cfgPath, start.Config)
 	assert.Equal(t, repoRoot, start.RepoRoot)
 	assert.True(t, filepath.IsAbs(start.RepoRoot))
-	assert.NotEmpty(t, start.Env["PATH"])
 
 	var inv, findings *runlog.Event
 	for i := range events {

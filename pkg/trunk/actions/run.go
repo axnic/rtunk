@@ -291,7 +291,7 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 	id := opts.Log.NextID()
 	opts.Log.Emit(runlog.Event{
 		T: runlog.KindInvocation, ID: id, Linter: action.ID, Template: action.Run, Argv: c.Args, Cwd: c.Dir,
-		PathPrefix: strings.Join(pathDirs, string(os.PathListSeparator)), Env: runlog.RedactEnv(extraEnv),
+		PathPrefix: strings.Join(pathDirs, string(os.PathListSeparator)),
 	})
 	c.Stdout = opts.Log.Tee(id, "stdout", stdout)
 	c.Stderr = opts.Log.Tee(id, "stderr", stderr)

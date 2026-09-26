@@ -85,16 +85,6 @@ func TestRun_LogsFailureBeforeExecAsLinterEnd(t *testing.T) {
 	assert.Contains(t, logged[1].Err, "${bogus}")
 }
 
-func TestRun_LogsExtraEnvironmentRedacted(t *testing.T) {
-	action := config.Action{ID: "env", Run: "true", Environment: []config.EnvironmentEntry{
-		{Name: "MY_VAR", Value: "hello"}, {Name: "MY_API_TOKEN", Value: "hunter2"},
-	}}
-	logged, _, err, _, _ := runLogged(t, action, t.TempDir())
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"MY_VAR": "hello", "MY_API_TOKEN": "<redacted>"}, logged[1].Env,
-		"the variables the action adds must be logged, secret-looking values masked")
-}
-
 func TestRun_NilLogStillWorks(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	_, err := actions.Run(context.Background(), config.Config{}, config.Action{ID: "x", Run: "echo ok"},

@@ -33,17 +33,8 @@ func TestNilWriterIsANoOp(t *testing.T) {
 	assert.Same(t, &buf, w.Tee(1, "stdout", &buf), "a nil writer's Tee must hand back dst itself")
 }
 
-func TestRedactEnv(t *testing.T) {
-	got := RedactEnv([]string{"HOME=/h", "GITHUB_TOKEN=abc", "aws_secret_access_key=z", "DB_PASSWORD=p", "URL=a=b", "noequals"})
-	assert.Equal(t, map[string]string{
-		"HOME": "/h", "GITHUB_TOKEN": "<redacted>", "aws_secret_access_key": "<redacted>",
-		"DB_PASSWORD": "<redacted>", "URL": "a=b",
-	}, got, "a value containing '=' must survive whole; an entry without '=' is dropped")
-}
-
 func TestStartWritesRunStartAndEndOK(t *testing.T) {
 	cache, repo := t.TempDir(), t.TempDir()
-	t.Setenv("MY_API_TOKEN", "hunter2")
 	w, warn := start(t, cache, repo, "check")
 	require.NotNil(t, w)
 	w.End(false)
@@ -60,7 +51,6 @@ func TestStartWritesRunStartAndEndOK(t *testing.T) {
 	require.Len(t, events, 2)
 	assert.Equal(t, KindRunStart, events[0].T)
 	assert.Equal(t, "9.9.9", events[0].Rtunk)
-	assert.Equal(t, "<redacted>", events[0].Env["MY_API_TOKEN"])
 	assert.Equal(t, KindRunEnd, events[1].T)
 	assert.Equal(t, "ok", events[1].Status)
 }
@@ -272,7 +262,7 @@ func TestRender(t *testing.T) {
 	zero, one := 0, 1
 	var buf bytes.Buffer
 	Render(&buf, []Event{
-		{T: KindRunStart, TS: "T0", Rtunk: "1.2.3", Argv: []string{"rtunk", "check"}, Cwd: "/repo", RepoRoot: "/repo", Concurrency: 2, Env: map[string]string{"B": "2", "A": "1"}},
+		{T: KindRunStart, TS: "T0", Rtunk: "1.2.3", Argv: []string{"rtunk", "check"}, Cwd: "/repo", RepoRoot: "/repo", Concurrency: 2},
 		{T: KindInvocation, ID: 1, Linter: "shellcheck", Argv: []string{"sh", "-c", "shellcheck -f json 'a.sh'"}, Template: "shellcheck -f json ${target}", Cwd: "/repo", PathPrefix: "/cache/shims", ToolVersions: map[string]string{"shellcheck": "0.10.0"}, Files: []string{"a.sh"}},
 		{T: KindOutput, ID: 1, Stream: "stdout", Data: "[{}]\n"},
 		{T: KindExit, ID: 1, Code: &one, Ms: 12, ParsedFrom: "stdout"},
@@ -286,9 +276,6 @@ func TestRender(t *testing.T) {
   cwd: /repo
   repo: /repo
   concurrency: 2
-  env:
-    A=1
-    B=2
 
 #1 shellcheck
   $ shellcheck -f json 'a.sh'

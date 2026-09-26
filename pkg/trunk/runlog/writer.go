@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,10 +25,6 @@ const (
 	// stampLayout names a run file; fixed width, so lexical order is chronological order.
 	stampLayout = "20060102T150405.000000000Z"
 )
-
-// secretName matches environment variable names whose value RedactEnv masks. Heuristic by
-// decision: a secret held in an innocuously named variable is not caught.
-var secretName = regexp.MustCompile(`(?i)TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH`)
 
 // Writer is one open run log. A nil *Writer is valid and every method on it is a no-op (Tee
 // returns its destination untouched), so call sites never need an `if log != nil`.
@@ -72,7 +67,7 @@ func Start(o StartOpts) *Writer {
 	cwd, _ := os.Getwd()
 	w.Emit(Event{
 		T: KindRunStart, Rtunk: o.Version, Argv: o.Argv, Cwd: cwd, RepoRoot: o.RepoRoot,
-		Config: o.Config, Concurrency: o.Concurrency, DryRun: o.DryRun, Env: RedactEnv(os.Environ()),
+		Config: o.Config, Concurrency: o.Concurrency, DryRun: o.DryRun,
 	})
 	return w
 }
@@ -245,23 +240,6 @@ func (w *Writer) End(failed bool) {
 	defer w.mu.Unlock()
 	w.dead = true
 	_ = w.f.Close()
-}
-
-// RedactEnv returns environ as a map, with the value of every variable whose name looks like a
-// secret replaced by "<redacted>".
-func RedactEnv(environ []string) map[string]string {
-	out := make(map[string]string, len(environ))
-	for _, kv := range environ {
-		k, v, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		if secretName.MatchString(k) {
-			v = "<redacted>"
-		}
-		out[k] = v
-	}
-	return out
 }
 
 // Clean deletes repoRoot's logs, or every repository's when repoRoot is "".
