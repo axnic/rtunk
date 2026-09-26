@@ -17,6 +17,7 @@ import (
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/trunk/runlog"
 )
 
 // RunOptions carries everything Run needs beyond the action/config themselves.
@@ -26,6 +27,9 @@ type RunOptions struct {
 	Hook     string    // git hook name for ${hook}; "" for a manual `rtunk actions run <id>`
 	Args     []string  // positional args forwarded from the git hook's own argv; ${1}.., ${@}
 	Stdin    io.Reader // hook's stdin, read lazily only if ${hook_stdin_path} appears in Run
+	// Log, when non-nil, records this run's command, output and exit (see pkg/trunk/runlog). The
+	// caller owns it and may share one across every action of a `--hook` run.
+	Log *runlog.Writer
 }
 
 // Result is one action run's outcome.
@@ -106,10 +110,10 @@ func substituteVars(run, hook, cwd, plugin, hookStdinPath string, args []string)
 	return strings.NewReplacer(pairs...).Replace(run)
 }
 
-// isInteractive reports whether os.Stdin is a real terminal -- the standard Go idiom (a pipe/file
+// IsInteractive reports whether os.Stdin is a real terminal -- the standard Go idiom (a pipe/file
 // redirect never sets the character-device mode bit). Windows console detection differs and is
 // deliberately not handled: this project has already ruled out full Windows shim support.
-func isInteractive() bool {
+func IsInteractive() bool {
 	info, err := os.Stdin.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
@@ -190,11 +194,13 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 	}
 	fail := func(err error) (Result, error) {
 		result.Err = err.Error()
+		opts.Log.Emit(runlog.Event{T: runlog.KindLinterEnd, Linter: action.ID, Phase: "Failed", Err: err.Error()})
 		return finish(), err
 	}
 
-	if action.Interactive == "true" && !isInteractive() {
+	if action.Interactive == "true" && !IsInteractive() {
 		result.Skipped = true
+		opts.Log.Emit(runlog.Event{T: runlog.KindLinterEnd, Linter: action.ID, Phase: "Skipped", Note: "non-interactive context"})
 		return finish(), nil
 	}
 
@@ -276,13 +282,21 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 	if len(pathDirs) > 0 {
 		path = strings.Join(pathDirs, string(os.PathListSeparator)) + string(os.PathListSeparator) + path
 	}
-	env := append(os.Environ(), "PATH="+path)
-	env = append(env, download.BuildEnv(action.Environment, nil)...)
-	c.Env = env
-	c.Stdout = stdout
-	c.Stderr = stderr
+	extraEnv := download.BuildEnv(action.Environment, nil)
+	c.Env = append(append(os.Environ(), "PATH="+path), extraEnv...)
+
+	// stdout/stderr stay live streams (an action may be interactive); Tee copies what passes
+	// through into the log. With a non-nil Log the child therefore sees pipes, not the terminal.
+	id := opts.Log.NextID()
+	opts.Log.Emit(runlog.Event{
+		T: runlog.KindInvocation, ID: id, Linter: action.ID, Template: action.Run, Argv: c.Args, Cwd: c.Dir,
+		PathPrefix: strings.Join(pathDirs, string(os.PathListSeparator)), Env: runlog.RedactEnv(extraEnv),
+	})
+	c.Stdout = opts.Log.Tee(id, "stdout", stdout)
+	c.Stderr = opts.Log.Tee(id, "stderr", stderr)
 	c.Stdin = os.Stdin
 
+	execStart := time.Now()
 	runErr := c.Run()
 	if runErr != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
@@ -291,6 +305,7 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 			return fail(runErr)
 		}
 	}
+	opts.Log.Emit(runlog.Event{T: runlog.KindExit, ID: id, Code: &result.ExitCode, Ms: time.Since(execStart).Milliseconds()})
 
 	res := finish()
 	if result.ExitCode != 0 {
