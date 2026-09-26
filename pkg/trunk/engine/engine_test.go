@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2133,4 +2134,121 @@ func TestRun_FailedEventCarriesTheWholeFileSet(t *testing.T) {
 		}
 	}
 	assert.ElementsMatch(t, []string{"a.txt", "b.txt", "c.txt"}, failed.Files, "a failed linter's files still count as checked")
+}
+
+func TestRun_PlannedAndJobDoneEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	cacheDir := fakeToolCache(t)
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	off := false
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"perfile": {
+						Name: "perfile", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool passfail ${target}", Output: "pass_fail", ErrorCodes: []int{1}}},
+					},
+					"batched": {
+						Name: "batched", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool passfail ${target}", Output: "pass_fail", ErrorCodes: []int{1}, Batch: true}},
+					},
+					"off": {
+						Name: "off", Files: []string{"ALL"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool passfail ${target}", Output: "pass_fail", Enabled: &off}},
+					},
+				},
+			},
+		},
+	}
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	planned := map[string]Event{}
+	running := map[string][]string{}
+	jobDone := map[string][]string{}
+	terminalSeen := map[string]bool{}
+	for ev := range events {
+		switch ev.Phase {
+		case Planned:
+			planned[ev.Linter] = ev
+		case Running:
+			running[ev.Linter] = append(running[ev.Linter], ev.File)
+		case JobDone:
+			assert.False(t, terminalSeen[ev.Linter], "a JobDone never follows its linter's terminal event")
+			jobDone[ev.Linter] = append(jobDone[ev.Linter], ev.File)
+		case Done, Skipped, Failed:
+			terminalSeen[ev.Linter] = true
+		}
+	}
+
+	assert.Equal(t, 3, planned["perfile"].Total)
+	assert.False(t, planned["perfile"].Batch)
+	assert.ElementsMatch(t, []string{"a.txt", "b.txt", "c.txt"}, planned["perfile"].Files)
+	assert.Equal(t, 1, planned["batched"].Total)
+	assert.True(t, planned["batched"].Batch)
+	assert.NotContains(t, planned, "off", "a linter that only got Skipped is never planned")
+	assert.ElementsMatch(t, running["perfile"], jobDone["perfile"], "every Running is paired with a JobDone")
+	assert.ElementsMatch(t, running["batched"], jobDone["batched"])
+}
+
+func TestForwardInstall_TranslatesAndBalances(t *testing.T) {
+	ref := func(id string) download.Ref { return download.Ref{Category: "tools", ID: id} }
+	evs := make(chan download.Event, 8)
+	evs <- download.Event{Ref: ref("shfmt"), Phase: download.Started}
+	evs <- download.Event{Ref: ref("shfmt"), Phase: download.Progress, Bytes: 5, Total: 10}
+	evs <- download.Event{Ref: ref("shfmt"), Phase: download.Done}
+	evs <- download.Event{Ref: ref("cached"), Phase: download.Cached}
+	close(evs)
+
+	var got []Event
+	require.NoError(t, forwardInstall(evs, func(ev Event) { got = append(got, ev) }))
+	require.Len(t, got, 3, "Cached emits nothing")
+	assert.Equal(t, Event{Phase: InstallStart, Item: "tools/shfmt", BytesTotal: -1}, got[0])
+	assert.Equal(t, Event{Phase: InstallProgress, Item: "tools/shfmt", Bytes: 5, BytesTotal: 10}, got[1])
+	assert.Equal(t, Event{Phase: InstallDone, Item: "tools/shfmt"}, got[2])
+
+	// A Failed for an item that never started (a tool whose runtime failed first) closes no row,
+	// and still returns the error; a started one is closed.
+	evs = make(chan download.Event, 4)
+	evs <- download.Event{Ref: ref("started"), Phase: download.Started}
+	evs <- download.Event{Ref: ref("started"), Phase: download.Failed, Err: errors.New("boom")}
+	close(evs)
+	got = nil
+	err := forwardInstall(evs, func(ev Event) { got = append(got, ev) })
+	assert.EqualError(t, err, "boom")
+	require.Len(t, got, 2)
+	assert.Equal(t, InstallDone, got[1].Phase)
+
+	evs = make(chan download.Event, 2)
+	evs <- download.Event{Ref: ref("never"), Phase: download.Failed, Err: errors.New("boom2")}
+	close(evs)
+	got = nil
+	assert.EqualError(t, forwardInstall(evs, func(ev Event) { got = append(got, ev) }), "boom2")
+	assert.Empty(t, got, "no InstallDone for an item that never started")
+}
+
+func TestLogLinterEnd_IgnoresTheNewPhases(t *testing.T) {
+	cache, repo := t.TempDir(), t.TempDir()
+	log := runlog.Start(runlog.StartOpts{CacheDir: cache, RepoRoot: repo, Cmd: "check", Version: "t", Argv: []string{"rtunk"}})
+	require.NotNil(t, log)
+	for _, ph := range []Phase{Planned, JobDone, InstallStart, InstallProgress, InstallDone} {
+		logLinterEnd(log, Event{Linter: "x", Phase: ph})
+	}
+	log.End(false)
+	runs, err := runlog.List(cache, repo)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	events, err := runlog.Load(runs[0].Path)
+	require.NoError(t, err)
+	for _, ev := range events {
+		assert.NotEqual(t, runlog.KindLinterEnd, ev.T)
+	}
 }

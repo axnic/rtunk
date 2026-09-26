@@ -79,10 +79,12 @@ func TestRun_LogsInvocationOutputsExitAndLinterEnd(t *testing.T) {
 	assert.Equal(t, "Done", logged[5].Phase)
 	assert.Equal(t, "echoer", logged[5].Linter)
 
-	// The public stream is unchanged by logging: one Running, then the terminal Done.
-	require.Len(t, streamed, 2)
-	assert.Equal(t, Running, streamed[0].Phase)
-	assert.Equal(t, Done, streamed[1].Phase)
+	// The public stream is unchanged by logging: plan, one Running, its JobDone, the terminal Done.
+	require.Len(t, streamed, 4)
+	assert.Equal(t, Planned, streamed[0].Phase)
+	assert.Equal(t, Running, streamed[1].Phase)
+	assert.Equal(t, JobDone, streamed[2].Phase)
+	assert.Equal(t, Done, streamed[3].Phase)
 }
 
 func TestRun_LogsFailedLinterEndWithError(t *testing.T) {
@@ -209,5 +211,5 @@ func TestRun_NilLogChangesNothing(t *testing.T) {
 	for range events {
 		n++
 	}
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 4, n, "Planned, Running, JobDone, Done")
 }

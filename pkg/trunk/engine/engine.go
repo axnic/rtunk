@@ -52,6 +52,13 @@ const (
 	Done                 // Findings is set (possibly empty -- the command ran clean)
 	Skipped              // an unsupported feature; Note says which -- never an error
 	Failed               // the command itself errored; Err is set
+	// The phases below are non-terminal progress for the live view; every consumer that only
+	// cares about outcomes ignores them.
+	Planned         // once per linter, after buildJobs, when it queued at least one job (Total, Batch, Files)
+	JobDone         // one job finished, any outcome, after runBatch (File is the same string as its Running)
+	InstallStart    // a download began for Item
+	InstallProgress // Bytes/BytesTotal update for Item
+	InstallDone     // the download for Item ended (success or failure)
 )
 
 // Event reports one linter's run progress or outcome, streamed on the channel Run returns. A
@@ -67,7 +74,12 @@ type Event struct {
 	Note         string           // Skipped (why) or Failed (which command)
 	Err          error            // Failed only
 	File         string           // Running only -- the file (or comma-joined batch) about to be checked
-	Files        []string         // Done, Skipped and Failed only (once files are matched) -- repoRoot-relative: every file the linter matched
+	Files        []string         // Done, Skipped, Failed and Planned only (once files are matched) -- repoRoot-relative: every file the linter matched
+	Total        int              // Planned only -- number of jobs queued for the linter
+	Batch        bool             // Planned only -- true when any of the linter's jobs has more than one file in its batch
+	Item         string           // Install* only -- "category/id", e.g. "tools/shfmt"
+	Bytes        int64            // InstallProgress only -- bytes received so far
+	BytesTotal   int64            // InstallStart|InstallProgress -- Content-Length, -1 when unknown
 }
 
 // templateVarRE matches every ${...} placeholder in a Command.Run string.
@@ -198,6 +210,11 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 			}
 			states[name] = &linterState{remaining: len(linterJobs)}
 			jobs = append(jobs, linterJobs...)
+			batch := false
+			for _, j := range linterJobs {
+				batch = batch || len(j.batch) > 1
+			}
+			events <- Event{Linter: name, Phase: Planned, Total: len(linterJobs), Batch: batch, Files: linterJobs[0].files}
 		}
 
 		jobCh := make(chan job, len(jobs))
@@ -267,6 +284,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 	var pathEnv string
 	pathEnvResolved := false
 	versions := toolVersions(cfg, linter.Tools)
+	emit := func(ev Event) { events <- ev }
 	parserPathEnvByRuntime := map[string]string{}
 
 	for _, cmd := range linter.Commands {
@@ -298,7 +316,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			}
 			dir, cached := parserPathEnvByRuntime[cmd.Parser.Runtime]
 			if !cached {
-				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime)
+				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime, emit)
 				if err != nil {
 					events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("parser runtime %q unavailable: %v", cmd.Parser.Runtime, err), Files: relFiles}
 					continue
@@ -337,7 +355,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		}
 
 		if !pathEnvResolved {
-			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools)
+			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools, emit)
 			if err != nil {
 				events <- Event{Linter: name, Phase: Failed, Note: "resolving tools", Err: err, Files: relFiles}
 				return nil
@@ -457,6 +475,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
 	id := log.NextID()
 	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu, log, id)
+	events <- Event{Linter: j.linterName, Phase: JobDone, File: strings.Join(j.batch, ", ")}
 	if err == nil && len(findings) > 0 {
 		log.Emit(runlog.Event{T: runlog.KindFindings, ID: id, Linter: j.linterName, Findings: findings})
 	}
@@ -779,10 +798,38 @@ func remapPaths(paths []string, base, repoRoot string) []string {
 	return out
 }
 
+// forwardInstall translates a download's events into engine Install* events through emit and
+// returns the first failure's error (as the callers always did). Cached refs emit nothing, and a
+// Done or Failed only closes an item whose InstallStart was emitted (a tool whose runtime failed
+// first gets a Failed for a ref that never started), so starts and dones stay balanced.
+func forwardInstall(evs <-chan download.Event, emit func(Event)) error {
+	started := map[string]bool{}
+	for ev := range evs {
+		item := ev.Ref.Category + "/" + ev.Ref.ID
+		switch ev.Phase {
+		case download.Started:
+			started[item] = true
+			emit(Event{Phase: InstallStart, Item: item, BytesTotal: -1})
+		case download.Progress:
+			emit(Event{Phase: InstallProgress, Item: item, Bytes: ev.Bytes, BytesTotal: ev.Total})
+		case download.Done:
+			if started[item] {
+				emit(Event{Phase: InstallDone, Item: item})
+			}
+		case download.Failed:
+			if started[item] {
+				emit(Event{Phase: InstallDone, Item: item})
+			}
+			return ev.Err
+		}
+	}
+	return nil
+}
+
 // resolveShimDirs resolves (downloading first if not already cached) every tool id's shim, and
 // returns the directory each shim lives in -- a Command.Run string references its tool(s) by bare
 // name, so those directories become the PATH prefix that lets `sh -c` find them.
-func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string) ([]string, error) {
+func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string, emit func(Event)) ([]string, error) {
 	dirs := make([]string, 0, len(toolIDs))
 	for _, id := range toolIDs {
 		tool, ok := cfg.Tools[id]
@@ -796,10 +843,8 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 			if err != nil {
 				return nil, err
 			}
-			for ev := range evs {
-				if ev.Phase == download.Failed {
-					return nil, ev.Err
-				}
+			if err := forwardInstall(evs, emit); err != nil {
+				return nil, err
 			}
 		}
 		download.Touch(root, "tools", id, version)
@@ -820,7 +865,7 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string)
 // never gets a shim written for it at all (see fetchRuntimeRef), so resolving one here would
 // return a directory that was never created; this is a known, real gap for that specific
 // combination, left unhandled since no real catalog Command.Parser reaches it today.
-func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) (string, error) {
+func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string, emit func(Event)) (string, error) {
 	rt, ok := cfg.Runtimes.Definitions[runtimeID]
 	if !ok {
 		return "", fmt.Errorf("engine: parser runtime %q referenced but not found in resolved config", runtimeID)
@@ -835,10 +880,8 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) 
 		if err != nil {
 			return "", err
 		}
-		for ev := range evs {
-			if ev.Phase == download.Failed {
-				return "", ev.Err
-			}
+		if err := forwardInstall(evs, emit); err != nil {
+			return "", err
 		}
 	}
 	download.Touch(root, "runtimes", runtimeID, version)

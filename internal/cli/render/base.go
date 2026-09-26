@@ -31,8 +31,8 @@ func newBase(stdout, stderr io.Writer, opts Options) base {
 }
 
 func (b *base) Event(ev engine.Event) {
-	if ev.Phase == engine.Running {
-		return
+	if ev.Phase != engine.Done && ev.Phase != engine.Skipped && ev.Phase != engine.Failed {
+		return // Running and the live-view phases (Planned, JobDone, Install*) are not outcomes
 	}
 	b.linters[ev.Linter] = true
 	for _, f := range ev.Files {
