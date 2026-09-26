@@ -312,3 +312,19 @@ status: ok in 50ms
 `
 	assert.Equal(t, want, buf.String())
 }
+
+func TestNameIsTheStemListReports(t *testing.T) {
+	cache, repo := t.TempDir(), t.TempDir()
+	w, _ := start(t, cache, repo, "check")
+	require.NotNil(t, w)
+	w.End(false)
+
+	runs, err := List(cache, repo)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, runs[0].Name, w.Name())
+	assert.NotEmpty(t, w.Name())
+
+	var nilW *Writer
+	assert.Equal(t, "", nilW.Name())
+}

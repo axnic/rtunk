@@ -41,6 +41,7 @@ type Writer struct {
 	dead   bool // set on the first write error, or by End
 	nextID atomic.Int64
 	start  time.Time
+	name   string // file name without ".jsonl"
 }
 
 // StartOpts is everything Start records in the run_start event and needs to place the file.
@@ -93,7 +94,7 @@ func open(o StartOpts) (*Writer, error) {
 	prune(dir)
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false) // keep "<redacted>" and shell redirections readable
-	return &Writer{f: f, enc: enc, warn: o.Warn, start: time.Now()}, nil
+	return &Writer{f: f, enc: enc, warn: o.Warn, start: time.Now(), name: strings.TrimSuffix(name, ".jsonl")}, nil
 }
 
 // logsRoot is <cache>/logs, a sibling of download.Root's <cache>/downloads: `rtunk cache destroy`
@@ -138,6 +139,15 @@ func prune(dir string) {
 	for _, n := range names[:max(0, len(names)-keepRuns)] {
 		_ = os.Remove(filepath.Join(dir, n))
 	}
+}
+
+// Name is the run's uid: the file name without ".jsonl", what `rtunk logs list` prints and
+// `rtunk logs show` accepts. A nil Writer (logging disabled) returns "".
+func (w *Writer) Name() string {
+	if w == nil {
+		return ""
+	}
+	return w.name
 }
 
 // NextID allocates the id that ties one invocation's events together, unique across the whole run
