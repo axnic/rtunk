@@ -370,6 +370,11 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			continue
 		}
 
+		if cmd.Target != "" && cmd.Target != "${file}" && cmd.Target != "${parent}" {
+			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported target %q", cmd.Target), Files: relFiles}
+			continue
+		}
+
 		if !pathEnvResolved {
 			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools, failed, emit)
 			if err != nil {
@@ -382,6 +387,12 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 
 		for _, dir := range sortedKeys(groups) {
 			relFiles := groups[dir]
+			targets := relFiles
+			if cmd.Target == "${parent}" {
+				// Tools like golangci-lint must see a whole package: handed a lone file they
+				// compile it without its siblings and report bogus "undefined:" errors.
+				targets = parentDirs(relFiles)
+			}
 			var batches [][]string
 			if cmd.Batch || !strings.Contains(cmd.Run, "${target}") {
 				// A Run string with no ${target} placeholder can't distinguish between files --
@@ -389,9 +400,9 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 				// the exact same invocation N times, reporting the exact same findings N times
 				// (real catalog examples: tflint's and brakeman's first commands). One invocation
 				// per resolved directory is what such a command can actually tell apart.
-				batches = [][]string{relFiles}
+				batches = [][]string{targets}
 			} else {
-				for _, f := range relFiles {
+				for _, f := range targets {
 					batches = append(batches, []string{f})
 				}
 			}
@@ -404,6 +415,21 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		}
 	}
 	return jobs
+}
+
+// parentDirs maps files (relative to one resolved directory) to their sorted, deduplicated
+// parent directories, "." standing for the resolved directory itself.
+func parentDirs(files []string) []string {
+	seen := map[string]bool{}
+	var dirs []string
+	for _, f := range files {
+		if d := filepath.Dir(f); !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	sort.Strings(dirs)
+	return dirs
 }
 
 // groupByRunFrom resolves runFrom for every file in files (absolute paths, already matched under

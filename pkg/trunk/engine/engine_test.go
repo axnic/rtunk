@@ -937,6 +937,64 @@ func TestRun_RunFromAndSandbox(t *testing.T) {
 		"want repoRoot-relative batch1/one.bs and batch2/two.bs, got %v", gotFiles)
 }
 
+// TestRun_TargetParentRunsOncePerDirectory covers target: ${parent} (golangci-lint's own
+// definition): the tool must get each matched file's directory, not the file itself, and files
+// sharing a directory must collapse into a single invocation.
+func TestRun_TargetParentRunsOncePerDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, f := range []string{"pa/one.tp", "pa/two.tp", "pb/three.tp"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, filepath.Dir(f)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, f), []byte("x\n"), 0o644))
+	}
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{"tp": {Name: "tp", Extensions: []string{"tp"}}},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"parent-linter": {
+						Name: "parent-linter", Files: []string{"tp"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool sarif ${target}", Output: "sarif", Target: "${parent}",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var running int
+	var done Event
+	for ev := range events {
+		switch ev.Phase {
+		case Running:
+			running++
+		case Done:
+			done = ev
+		}
+	}
+	assert.Equal(t, 2, running, "pa/ holds two files but must be linted once, pb/ once")
+	require.Len(t, done.Findings, 2)
+	got := []string{done.Findings[0].File, done.Findings[1].File}
+	assert.ElementsMatch(t, []string{"pa", "pb"}, got)
+}
+
 // TestRun_SandboxAbsolutePathFindingIsRemapped covers a final-review finding: a sandboxed tool
 // that echoes an absolute path (into the throwaway sandbox directory) for artifactLocation.uri,
 // instead of the relative path substituted into ${target}, must not leak that temp directory
