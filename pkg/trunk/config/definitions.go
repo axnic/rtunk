@@ -135,7 +135,7 @@ type Command struct {
 	SandboxType    string `yaml:"sandbox_type,omitempty"`
 	RunFrom        string `yaml:"run_from,omitempty"`
 	Target         string `yaml:"target,omitempty"`
-	ParseRegex    string `yaml:"parse_regex,omitempty"`
+	ParseRegex     string `yaml:"parse_regex,omitempty"`
 	Version        string `yaml:"version,omitempty"`
 	InPlace        bool   `yaml:"in_place,omitempty"`
 	Formatter      bool   `yaml:"formatter,omitempty"`
