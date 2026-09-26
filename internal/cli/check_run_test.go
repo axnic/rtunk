@@ -10,38 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
-
-func TestPrintReport_FindingsSortedAndFormatted(t *testing.T) {
-	var buf strings.Builder
-	findings := []output.Finding{
-		{File: "b.go", Line: 2, Severity: "error", RuleID: "r2", Message: "msg2"},
-		{File: "a.go", Line: 5, Column: 3, Severity: "warning", RuleID: "r1", Message: "msg1", URL: "https://example.com/r1"},
-		{File: "a.go", Line: 1, Severity: "error", Message: "no rule"},
-	}
-	printReport(&buf, findings, nil)
-
-	want := "a.go:1 error no rule\n" +
-		"a.go:5:3 warning [r1] msg1 (https://example.com/r1)\n" +
-		"b.go:2 error [r2] msg2\n" +
-		"\n" +
-		"3 issue(s) in 2 file(s)\n"
-	assert.Equal(t, want, buf.String())
-}
-
-func TestPrintReport_Clean(t *testing.T) {
-	var buf strings.Builder
-	printReport(&buf, nil, nil)
-	assert.Equal(t, "\n0 issue(s) in 0 file(s)\n", buf.String())
-}
-
-func TestPrintReport_Skipped(t *testing.T) {
-	var buf strings.Builder
-	printReport(&buf, nil, []string{`circleci [unsupported run_from ""]`, `cspell [unsupported output format "regex"]`})
-	want := "\n0 issue(s) in 0 file(s) (2 linter(s) skipped: circleci [unsupported run_from \"\"], cspell [unsupported output format \"regex\"])\n"
-	assert.Equal(t, want, buf.String())
-}
 
 func TestFormatLintList(t *testing.T) {
 	cfg := config.Config{
@@ -86,10 +55,11 @@ func TestCheckRunCmd_SkipsUnsupportedFormats(t *testing.T) {
 	cacheDir := t.TempDir()
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err, "stderr: %s", stderr)
-	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: unsupported-fmt [unsupported output format \"xml\"])\n"
-	assert.Equal(t, want, stdout)
-	assert.Equal(t, "skipped unsupported-fmt: unsupported output format \"xml\"\n", stderr,
-		"the Skipped event must stream to stderr as it happens; formatter-only produces no event at all")
+	assert.Contains(t, stdout, "Skipped  1 linter: unsupported-fmt [unsupported output format \"xml\"]\n")
+	assert.Contains(t, stdout, "✔ no issues\n")
+	assert.Contains(t, stderr, "unsupported-fmt")
+	assert.Contains(t, stderr, "skipped")
+	assert.NotContains(t, stderr, "formatter-only", "formatter-only produces no event at all")
 }
 
 // writeLinterFixture builds a trunk.yaml + local plugin source under t.TempDir(), laid out the
@@ -143,7 +113,7 @@ func TestCheckListCmd_ShowsDisabledLinters(t *testing.T) {
 
 // TestCheckRunCmd_FailedLinterKeepsOtherFindings covers item 4: a Failed event used to return
 // immediately from inside the events loop, discarding every Finding already collected from other
-// linters in the same run and skipping printReport entirely. "alpha" always reports a finding
+// linters in the same run and skipping the report entirely. "alpha" always reports a finding
 // (pass_fail, exit 1, no error_codes); "beta" always crashes (exit 1, error_codes: [1]) --
 // cfg.Lint.Definitions is a Go map, so whichever event Run() happens to send first, alpha's
 // finding must still reach the printed report, and the command must still return a non-nil error.
@@ -172,18 +142,17 @@ func TestCheckRunCmd_FailedLinterKeepsOtherFindings(t *testing.T) {
 	require.Error(t, err)
 	assert.EqualError(t, err, "engine: beta: check exited 1: ")
 
-	want := "work/file.txt error file did not pass\n\n1 issue(s) in 1 file(s)\n"
-	assert.Equal(t, want, stdout, "alpha's finding must still be printed despite beta's Failed event")
+	assert.Contains(t, stdout, "ISSUES   1 in 1 file\n", "alpha's finding must still be printed despite beta's Failed event")
+	assert.Contains(t, stdout, "work/file.txt  (1)\n  0:0  high    file did not pass  alpha\n")
+	assert.Contains(t, stdout, "FAILURES\n  ✖ beta  failed to run  rtunk logs show ")
 
-	// cfg.Lint.Definitions is a Go map, so alpha/beta's lines can interleave in either order --
-	// only each linter's own two lines (Running then its terminal event) are ordered.
+	// cfg.Lint.Definitions is a Go map, so alpha/beta's lines can interleave in either order;
+	// one progress line per finished linter (no running lines).
 	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
-	assert.ElementsMatch(t, []string{
-		"running alpha: work/file.txt",
-		"done alpha: 1 issue(s)",
-		"running beta: work/file.txt",
-		"failed: engine: beta: check exited 1: ",
-	}, lines, "every streamed event must reach stderr")
+	require.Len(t, lines, 2, "stderr: %s", stderr)
+	assert.Contains(t, stderr, "alpha")
+	assert.Contains(t, stderr, "done     1 issue")
+	assert.Contains(t, stderr, "failed   engine: beta: check exited 1: ")
 }
 
 // TestCheckRunCmd_DedupesSkippedByLinter covers item 8: a linter with several unsupported
@@ -216,8 +185,7 @@ func TestCheckRunCmd_DedupesSkippedByLinter(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	want := "\n0 issue(s) in 0 file(s) (1 linter(s) skipped: multiskip [unsupported template var \"${workspace}\"])\n"
-	assert.Equal(t, want, stdout)
+	assert.Contains(t, stdout, "Skipped  1 linter: multiskip [unsupported template var \"${workspace}\"]\n")
 }
 
 // TestCheckRunCmd_DoesNotRunInPlaceCommands proves the read-only contract: check must never
@@ -244,7 +212,7 @@ func TestCheckRunCmd_DoesNotRunInPlaceCommands(t *testing.T) {
 	cacheDir := t.TempDir()
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
-	assert.Equal(t, "\n0 issue(s) in 0 file(s)\n", stdout)
+	assert.Regexp(t, `^Checked 0 files with 0 linters in \d+\.\ds\n✔ no issues\n$`, stdout)
 	assert.Empty(t, stderr, "an in_place command excluded from both predicates must produce no event at all")
 
 	data, err := os.ReadFile(target)
@@ -280,7 +248,7 @@ func TestCheckRunCmd_Fix_AppliesFixesBeforeReporting(t *testing.T) {
 	// Without --fix: the checking command reports the file as failing.
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
 	require.Error(t, err, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "1 issue(s) in 1 file(s)")
+	assert.Contains(t, stdout, "ISSUES   1 in 1 file\n")
 
 	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644)) // reset for the --fix run
 
@@ -288,8 +256,8 @@ func TestCheckRunCmd_Fix_AppliesFixesBeforeReporting(t *testing.T) {
 	// the finding that showed up above must be absent here.
 	stdout, stderr, err = run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", "--fix", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "1 file(s) reformatted")
-	assert.Contains(t, stdout, "0 issue(s) in 0 file(s)")
+	assert.Contains(t, stdout, "REFORMATTED   1 file\n")
+	assert.Contains(t, stdout, "✔ no issues\n")
 
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
@@ -406,4 +374,27 @@ func TestCheckRunCmd_Filter_UnknownLinter_ReturnsUsageError(t *testing.T) {
 	_, _, err := run2(t, "--config", cfgPath, "check", "--filter", "nope")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"nope"`)
+}
+
+func TestCheckRunCmd_NoProgressSilencesStderr(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"alpha"}, `    - name: alpha
+      description: Alpha linter
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+          error_codes: [1]
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "f.txt"), []byte("x\n"), 0o644))
+	cache := t.TempDir()
+
+	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cache, "check", repoRoot)
+	assert.Error(t, err)
+	assert.Contains(t, stderr, "alpha")
+
+	stdout, quiet, err := run2(t, "--config", cfgPath, "--cache-dir", cache, "check", "--no-progress", repoRoot)
+	assert.Error(t, err, "exit code is unchanged")
+	assert.Empty(t, quiet)
+	assert.Contains(t, stdout, "FAILURES\n  ✖ alpha  failed to run  rtunk logs show ")
 }

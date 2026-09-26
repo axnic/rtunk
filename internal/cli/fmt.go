@@ -7,7 +7,9 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
+	"time"
 
+	"github.com/xunleii/rtunk/internal/cli/render"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/engine"
 )
@@ -22,6 +24,7 @@ import (
 // change.
 type fmtCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to format (default: changed files, see --from)."`
+	NoProgress   bool     `help:"Do not print the per-linter progress lines on stderr."`
 	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
 	Force        bool     `help:"Also format files with both staged and unstaged changes (skipped with a warning by default)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
@@ -79,15 +82,25 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	defer func() { log.End(runFailed) }()
 	env.Log = log
 
+	kind := render.Fmt
+	if c.Check {
+		kind = render.FmtCheck
+	}
+	started := time.Now()
+	r := render.NewPlain(stdout, stderr, render.Options{Command: kind, NoProgress: c.NoProgress, NoColor: render.NoColorFromEnv()})
+	summary := func(changed, skipped []string) render.Summary {
+		return render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped, Changed: changed}
+	}
+
 	if c.Check {
 		env.DryRun = true
 		events, err := engine.Run(context.Background(), env, files, func(cmd config.Command) bool { return cmd.Formatter })
 		if err != nil {
 			return err
 		}
-		_, wouldChange, skipped, failed := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, events)
+		_, wouldChange, skipped, failed := drainRunEvents(r.Event, events)
 		runFailed = failed != nil
-		printFmtCheckReport(stdout, wouldChange, skipped)
+		_ = r.Close(summary(wouldChange, skipped))
 		if failed != nil {
 			return failed
 		}
@@ -98,15 +111,15 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	}
 
 	if c.VerifyStable {
-		changed, skipped, err := runStableFormat(context.Background(), env, files, stderr)
+		changed, skipped, err := runStableFormat(context.Background(), env, files, r.Event)
 		runFailed = runFailedBy(err)
-		printFmtReport(stdout, changed, skipped)
+		_ = r.Close(summary(changed, skipped))
 		return err
 	}
 
-	changed, skipped, err := runFormatOnce(context.Background(), env, files, repoRoot, stderr)
+	changed, skipped, err := runFormatOnce(context.Background(), env, files, repoRoot, stderr, r.Event)
 	runFailed = runFailedBy(err)
-	printFmtReport(stdout, changed, skipped)
+	_ = r.Close(summary(changed, skipped))
 	return err
 }
 

@@ -11,9 +11,11 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/xunleii/rtunk/internal/cli/render"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/engine"
 	"github.com/xunleii/rtunk/pkg/trunk/output"
@@ -36,6 +38,7 @@ type lintersCmd struct {
 // checkRunCmd is `rtunk check [paths...]`: given paths, or the whole repository if none.
 type checkRunCmd struct {
 	Paths        []string `arg:"" optional:"" help:"Paths to check (default: changed files, see --from)."`
+	NoProgress   bool     `help:"Do not print the per-linter progress lines on stderr."`
 	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
 	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
 	Fix          bool     `short:"y" help:"Apply automatic fixes (formatter commands) before reporting."`
@@ -46,7 +49,7 @@ type checkRunCmd struct {
 	// fixes unless --fix/-y is given, so --no-fix asks for check's existing default.
 	NoFix bool `short:"n" help:"Accepted for trunk compatibility; check never auto-fixes without --fix, this has no effect. Note: --fix always wins if both are given."`
 	// PrintFailures is accepted for trunk compatibility and has no effect: check already always
-	// prints Failed events to stderr unconditionally (see printEvent).
+	// prints Failed events to stderr unconditionally (the FAILURES section and progress lines, see internal/cli/render).
 	PrintFailures bool `help:"Accepted for trunk compatibility; check already always prints failures, this has no effect."`
 }
 
@@ -100,25 +103,29 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	// has never stopped its siblings from running).
 	var fixFailed error
 	if c.Fix {
+		started := time.Now()
+		fixR := render.NewPlain(stdout, stderr, render.Options{Command: render.Fmt, NoProgress: c.NoProgress, NoColor: render.NoColorFromEnv()})
 		var changed, fixSkipped []string
 		var ffErr error
 		if c.VerifyStable {
-			changed, fixSkipped, ffErr = runStableFormat(context.Background(), env, files, stderr)
+			changed, fixSkipped, ffErr = runStableFormat(context.Background(), env, files, fixR.Event)
 		} else {
-			changed, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr)
+			changed, fixSkipped, ffErr = runFormatOnce(context.Background(), env, files, repoRoot, stderr, fixR.Event)
 		}
 		fixFailed = ffErr
-		printFmtReport(stdout, changed, fixSkipped)
+		_ = fixR.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: fixSkipped, Changed: changed})
 	}
 
+	started := time.Now()
+	r := render.NewPlain(stdout, stderr, render.Options{Command: render.Check, NoProgress: c.NoProgress, NoColor: render.NoColorFromEnv()})
 	events, err := engine.Run(context.Background(), env, files, func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace })
 	if err != nil {
 		return err
 	}
-	findings, _, skipped, failed := drainRunEvents(func(ev engine.Event) { printEvent(stderr, ev) }, events)
+	findings, _, skipped, failed := drainRunEvents(r.Event, events)
 	runFailed = failed != nil || runFailedBy(fixFailed)
 
-	printReport(stdout, findings, skipped)
+	_ = r.Close(render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped})
 	if fixFailed != nil {
 		return fixFailed
 	}
@@ -172,132 +179,6 @@ func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (fin
 		}
 	}
 	return findings, changed, skipped, failed
-}
-
-// printEvent prints every event Run streams -- including in-progress Running events -- to w
-// (stderr) as it arrives, so a long check run shows live which linter and file is currently being
-// checked instead of going silent until the final report. This is separate from printReport
-// (stdout, the final findings summary) so stdout's contract stays exact and machine-parseable.
-func printEvent(w io.Writer, ev engine.Event) {
-	switch ev.Phase {
-	case engine.Running:
-		_, _ = fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
-	case engine.Done:
-		_, _ = fmt.Fprintf(w, "done %s: %d issue(s)\n", ev.Linter, len(ev.Findings))
-	case engine.Skipped:
-		_, _ = fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
-	case engine.Failed:
-		_, _ = fmt.Fprintf(w, "failed: %v\n", ev.Err)
-	}
-}
-
-// printFmtEvent is printEvent's fmt/--fix-pass equivalent: a Done event here reports how many
-// files a formatter actually changed (Event.ChangedFiles), not how many issues it found -- a
-// Formatter command has nothing to report as a Finding.
-func printFmtEvent(w io.Writer, ev engine.Event) {
-	switch ev.Phase {
-	case engine.Running:
-		_, _ = fmt.Fprintf(w, "running %s: %s\n", ev.Linter, ev.File)
-	case engine.Done:
-		_, _ = fmt.Fprintf(w, "done %s: %d file(s) changed\n", ev.Linter, len(ev.ChangedFiles))
-	case engine.Skipped:
-		_, _ = fmt.Fprintf(w, "skipped %s: %s\n", ev.Linter, ev.Note)
-	case engine.Failed:
-		_, _ = fmt.Fprintf(w, "failed: %v\n", ev.Err)
-	}
-}
-
-// printReport prints findings (sorted by file, then line, then column) one per line, then a
-// trailing summary line -- always printed, with a skipped-linters parenthetical only when
-// skipped is non-empty.
-func printReport(w io.Writer, findings []output.Finding, skipped []string) {
-	sort.Slice(findings, func(i, j int) bool {
-		if findings[i].File != findings[j].File {
-			return findings[i].File < findings[j].File
-		}
-		if findings[i].Line != findings[j].Line {
-			return findings[i].Line < findings[j].Line
-		}
-		return findings[i].Column < findings[j].Column
-	})
-
-	for _, f := range findings {
-		_, _ = fmt.Fprintln(w, formatFinding(f))
-	}
-
-	files := map[string]bool{}
-	for _, f := range findings {
-		files[f.File] = true
-	}
-
-	summary := fmt.Sprintf("%d issue(s) in %d file(s)", len(findings), len(files))
-	if len(skipped) > 0 {
-		sorted := append([]string(nil), skipped...)
-		sort.Strings(sorted)
-		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sorted), strings.Join(sorted, ", "))
-	}
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, summary)
-}
-
-// printFmtReport is printReport's fmt/--fix-pass equivalent: lists which files were actually
-// changed (sorted), then a trailing summary line, mirroring printReport's own shape (one line per
-// item, then a blank line, then the summary) so the two report kinds read consistently. changed is
-// expected to already be deduplicated by its producer (drainRunEvents) -- see that function's doc
-// comment for why the dedup lives there rather than here.
-func printFmtReport(w io.Writer, changed []string, skipped []string) {
-	sorted := append([]string(nil), changed...)
-	sort.Strings(sorted)
-	for _, f := range sorted {
-		_, _ = fmt.Fprintln(w, f)
-	}
-
-	summary := fmt.Sprintf("%d file(s) reformatted", len(sorted))
-	if len(skipped) > 0 {
-		sortedSkipped := append([]string(nil), skipped...)
-		sort.Strings(sortedSkipped)
-		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sortedSkipped), strings.Join(sortedSkipped, ", "))
-	}
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, summary)
-}
-
-// printFmtCheckReport is printFmtReport's standalone-dry-run equivalent: same shape (one file per
-// line, then a blank line, then a summary), but with truthful "would be reformatted" wording,
-// since --check never actually writes anything.
-func printFmtCheckReport(w io.Writer, wouldChange []string, skipped []string) {
-	sorted := append([]string(nil), wouldChange...)
-	sort.Strings(sorted)
-	for _, f := range sorted {
-		_, _ = fmt.Fprintln(w, f)
-	}
-
-	summary := fmt.Sprintf("%d file(s) would be reformatted", len(sorted))
-	if len(skipped) > 0 {
-		sortedSkipped := append([]string(nil), skipped...)
-		sort.Strings(sortedSkipped)
-		summary += fmt.Sprintf(" (%d linter(s) skipped: %s)", len(sortedSkipped), strings.Join(sortedSkipped, ", "))
-	}
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, summary)
-}
-
-func formatFinding(f output.Finding) string {
-	loc := f.File
-	if f.Line > 0 {
-		loc += fmt.Sprintf(":%d", f.Line)
-		if f.Column > 0 {
-			loc += fmt.Sprintf(":%d", f.Column)
-		}
-	}
-	msg := f.Message
-	if f.RuleID != "" {
-		msg = fmt.Sprintf("[%s] %s", f.RuleID, msg)
-	}
-	if f.URL != "" {
-		msg += fmt.Sprintf(" (%s)", f.URL)
-	}
-	return fmt.Sprintf("%s %s %s", loc, f.Severity, msg)
 }
 
 // checkListCmd is `rtunk linters list`.

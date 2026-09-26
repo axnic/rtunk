@@ -37,9 +37,9 @@ type CLI struct {
 	// "CI mode" to switch into -- it is already the only mode.
 	CI bool `help:"Accepted for trunk compatibility; rtunk is always CI-safe, this has no effect."`
 	// Verbose is accepted for trunk compatibility and has no effect: rtunk already
-	// unconditionally streams per-file running/done progress to stderr for every check/fmt run
-	// (see internal/cli/check.go's printEvent) -- there is no quieter default this flag would
-	// make louder.
+	// streams one progress line per finished linter to stderr for every check/fmt run (see
+	// internal/cli/render; --no-progress silences it) -- there is no louder mode this flag would
+	// switch on.
 	Verbose bool `short:"v" help:"Accepted for trunk compatibility; rtunk already prints this detail, this has no effect."`
 
 	LintersCmd  lintersCmd  `cmd:"" name:"linters" help:"List, enable and disable linters."`

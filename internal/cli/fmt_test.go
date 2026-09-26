@@ -33,8 +33,8 @@ func TestFmtCmd_ReportsOnlyChangedFiles(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	want := "work/messy.txt\n\n1 file(s) reformatted\n"
-	assert.Equal(t, want, stdout)
+	assert.Contains(t, stdout, "REFORMATTED   1 file\n\n  work/messy.txt\n")
+	assert.Contains(t, stdout, "✔ 1 file reformatted\n")
 }
 
 // TestFmtCmd_DedupesFilesChangedByMultipleLinters proves the same file reported changed by two
@@ -77,8 +77,8 @@ func TestFmtCmd_DedupesFilesChangedByMultipleLinters(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	want := "work/shared.txt\n\n1 file(s) reformatted\n"
-	assert.Equal(t, want, stdout, "the same file changed by two different linters must be listed once, not twice")
+	want := "REFORMATTED   1 file\n\n  work/shared.txt\n"
+	assert.Contains(t, stdout, want, "the same file changed by two different linters must be listed once, not twice")
 }
 
 func TestFmtCmd_NoFixAlias_MatchesCheckFlag(t *testing.T) {
@@ -150,4 +150,15 @@ func TestFmtCmd_Exclude_SkipsExcludedFormatter(t *testing.T) {
 	_, stderr, _ := run2(t, "--config", cfgPath, "fmt", "--exclude", "drop-me", filepath.Dir(filepath.Dir(cfgPath)))
 	assert.Contains(t, stderr, "keep-me")
 	assert.NotContains(t, stderr, "drop-me")
+}
+
+func TestFmtCmd_NoProgress(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"fx"}, fmtFixture)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("messy\n"), 0o644))
+	cache := t.TempDir()
+
+	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cache, "fmt", "--no-progress", filepath.Join(repoRoot, "a.txt"))
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, "REFORMATTED   1 file\n")
 }

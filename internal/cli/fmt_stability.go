@@ -69,7 +69,7 @@ func mergeSortedUnique(a, b []string) []string {
 
 // dedupeSortedFiles flattens a map[linter][]file's values into one deduplicated, sorted []string
 // -- used to turn collectChangedByLinter's per-linter attribution into the same flat shape
-// printFmtReport already expects.
+// render.Summary.Changed expects.
 func dedupeSortedFiles(byLinter map[string][]string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -160,7 +160,7 @@ func runFailedBy(err error) bool {
 // the "nothing written" early return means no dry-run round ever runs. Callers (fmtCmd.Run's
 // non-Check branch, checkRunCmd.Run's --fix branch) pass the SAME env they'd otherwise pass to a
 // single engine.Run call.
-func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr io.Writer) (changed []string, skipped []string, err error) {
+func runStableFormat(ctx context.Context, env engine.Env, paths []string, onEvent func(engine.Event)) (changed []string, skipped []string, err error) {
 	// runStableFormat always starts with a real (writing) round -- reset any DryRun the caller's
 	// env might carry so this can never accidentally sandbox what's supposed to be a real write;
 	// its own two dry-run rounds set DryRun on a local copy (checkEnv) instead.
@@ -171,7 +171,7 @@ func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr
 	if err != nil {
 		return nil, nil, err
 	}
-	round1, skipped1, failed1 := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, round1Events)
+	round1, skipped1, failed1 := collectChangedByLinter(onEvent, round1Events)
 	skipped = skipped1
 	changed = dedupeSortedFiles(round1)
 	if failed1 != nil {
@@ -187,10 +187,10 @@ func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr
 	if err != nil {
 		return changed, skipped, err
 	}
-	_, wouldChange1, checkSkipped1, checkFailed1 := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, check1Events)
+	_, wouldChange1, checkSkipped1, checkFailed1 := drainRunEvents(onEvent, check1Events)
 	_ = checkFailed1 // a dry-run check's own failure doesn't abort the loop (fail-open: the real
-	// write from the preceding round already succeeded) -- printFmtEvent above
-	// already surfaced it to the user via the Failed event's own stderr line.
+	// write from the preceding round already succeeded) -- the renderer above
+	// already surfaced it to the user via the Failed event's own progress line.
 	skipped = mergeSortedUnique(skipped, checkSkipped1)
 	if len(wouldChange1) == 0 {
 		return changed, skipped, nil // stable after 1 round
@@ -200,7 +200,7 @@ func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr
 	if err != nil {
 		return changed, skipped, err
 	}
-	round2, skipped2, failed2 := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, round2Events)
+	round2, skipped2, failed2 := collectChangedByLinter(onEvent, round2Events)
 	skipped = mergeSortedUnique(skipped, skipped2)
 	changed = dedupeSortedFiles(mergeChangedByLinter(round1, round2))
 	if failed2 != nil {
@@ -211,7 +211,7 @@ func runStableFormat(ctx context.Context, env engine.Env, paths []string, stderr
 	if err != nil {
 		return changed, skipped, err
 	}
-	_, wouldChange2, checkSkipped2, checkFailed2 := drainRunEvents(func(ev engine.Event) { printFmtEvent(stderr, ev) }, check2Events)
+	_, wouldChange2, checkSkipped2, checkFailed2 := drainRunEvents(onEvent, check2Events)
 	_ = checkFailed2 // same fail-open rationale as checkFailed1 above.
 	skipped = mergeSortedUnique(skipped, checkSkipped2)
 	if len(wouldChange2) == 0 {
@@ -231,7 +231,7 @@ const recentRunWindow = 30 * time.Second
 // files against whatever the previous run for this repo (if any, and if recent) touched, and warns
 // on stderr about any overlap -- the same "is this actually converging" question, answered cheaply
 // across two separate invocations instead of rigorously within one.
-func runFormatOnce(ctx context.Context, env engine.Env, paths []string, repoRoot string, stderr io.Writer) (changed []string, skipped []string, err error) {
+func runFormatOnce(ctx context.Context, env engine.Env, paths []string, repoRoot string, stderr io.Writer, onEvent func(engine.Event)) (changed []string, skipped []string, err error) {
 	env.DryRun = false
 	formatterPredicate := func(cmd config.Command) bool { return cmd.Formatter }
 
@@ -239,7 +239,7 @@ func runFormatOnce(ctx context.Context, env engine.Env, paths []string, repoRoot
 	if err != nil {
 		return nil, nil, err
 	}
-	byLinter, skipped, failed := collectChangedByLinter(func(ev engine.Event) { printFmtEvent(stderr, ev) }, events)
+	byLinter, skipped, failed := collectChangedByLinter(onEvent, events)
 	changed = dedupeSortedFiles(byLinter)
 
 	warnIfRecentOverlap(env.CacheDir, repoRoot, byLinter, stderr)

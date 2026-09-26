@@ -34,8 +34,8 @@ func TestFmtCmd_Check_NeverWritesAndReportsWouldChange(t *testing.T) {
 	require.Error(t, err, "stderr: %s", stderr)
 	assert.Equal(t, "rtunk: fmt --check found 1 file(s) needing reformatting", err.Error())
 
-	want := "work/messy.txt\n\n1 file(s) would be reformatted\n"
-	assert.Equal(t, want, stdout)
+	assert.Contains(t, stdout, "WOULD REFORMAT   1 file\n\n  work/messy.txt\n")
+	assert.Contains(t, stdout, "✖ 1 file would be reformatted\n")
 
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
@@ -65,8 +65,7 @@ func TestFmtCmd_StableAfterOneRealRound(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	want := "work/messy.txt\n\n1 file(s) reformatted\n"
-	assert.Equal(t, want, stdout)
+	assert.Contains(t, stdout, "REFORMATTED   1 file\n\n  work/messy.txt\n")
 
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
@@ -130,8 +129,8 @@ func TestFmtCmd_StableAfterSecondRound(t *testing.T) {
 	// machinery specifically, which is now opt-in rather than plain fmt's default.
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", "--verify-stable", "-j", "1", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
-	assert.Equal(t, "work/shared.txt\n\n1 file(s) reformatted\n", stdout)
-	assert.Equal(t, 3, strings.Count(stderr, "done fmtA: 1 file(s) changed"), "must take exactly 2 real rounds to stabilize (plus 1 dry-run check that still found a residual diff); stderr: %s", stderr)
+	assert.Contains(t, stdout, "REFORMATTED   1 file\n\n  work/shared.txt\n")
+	assert.Equal(t, 3, strings.Count(stderr, "▲ fmtA "), "must take exactly 2 real rounds to stabilize (plus 1 dry-run check that still found a residual diff); stderr: %s", stderr)
 
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
@@ -177,7 +176,7 @@ func TestFmtCmd_UnstableReportsConflictingLinters(t *testing.T) {
 	// fmt pass has no dry-run check to disagree with in the first place).
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", "--verify-stable", "-j", "1", filepath.Join(repoRoot, "work"))
 	require.Error(t, err, "stderr: %s", stderr)
-	assert.Equal(t, "work/oscillating.txt\n\n1 file(s) reformatted\n", stdout)
+	assert.Contains(t, stdout, "REFORMATTED   1 file\n\n  work/oscillating.txt\n")
 	assert.Equal(t, "fmt did not converge after 2 attempts. Still unstable:\n  work/oscillating.txt (conflicting: fmtA, fmtB)", err.Error())
 }
 
@@ -201,7 +200,7 @@ func TestFmtCmd_ReportsSkippedLinterEvenWhenNothingChanged(t *testing.T) {
 	cacheDir := t.TempDir()
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "linter(s) skipped: badfmt")
+	assert.Contains(t, stdout, "Skipped  1 linter: badfmt")
 }
 
 // TestFmtCmd_UnstableSingleSuspectWording proves the "only one linter's own real rounds ever
@@ -264,8 +263,8 @@ func TestFmtCmd_DryRunCheckFailureIsVisibleButDoesNotAbort(t *testing.T) {
 	cacheDir := t.TempDir()
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "fmt", "--verify-stable", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "1 file(s) reformatted")
-	assert.Contains(t, stderr, "failed:", "the dry-run check's own failure must be visible, not silently swallowed")
+	assert.Contains(t, stdout, "REFORMATTED   1 file")
+	assert.Contains(t, stderr, "failed", "the dry-run check's own failure must be visible, not silently swallowed")
 }
 
 // TestFmtCmd_WarnsOnRecentOverlapWithPreviousRun proves plain fmt's default (single pass, no

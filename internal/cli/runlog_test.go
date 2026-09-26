@@ -232,7 +232,7 @@ func TestUnwritableCacheDir_WarnsOnceAndTheRunStillWorks(t *testing.T) {
 	stdout, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", filepath.Join(blocker, "cache"), "check", work)
 	require.Error(t, err)
 	assert.EqualError(t, err, "rtunk: check found 1 issue(s)", "the run itself must behave exactly as without a log")
-	assert.Contains(t, stdout, "1 issue(s)")
+	assert.Contains(t, stdout, "1 issue")
 	assert.Equal(t, 1, strings.Count(stderr, "run log disabled"))
 }
 
