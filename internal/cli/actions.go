@@ -235,9 +235,10 @@ func (c *actionsRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv
 	// repoRoot above (the git root), so `rtunk logs` finds all three commands' runs together.
 	// No log when stdin is a terminal: Tee would turn the action's stdout/stderr into pipes, which
 	// breaks colors and TTY-only prompts for an action a person is running by hand. A nil log is a
-	// valid no-op writer.
+	// valid no-op writer. Nor when nothing matched (a stale hook): an empty log would only evict
+	// real check/fmt runs from the retention.
 	var log *runlog.Writer
-	if !stdinIsTerminal() {
+	if len(matched) > 0 && !stdinIsTerminal() {
 		log = startLog(cli, "actions-run", filepath.Dir(filepath.Dir(configPath)), configPath, argv, 1, false, stderr)
 	}
 	runFailed := true // cleared once every action has run; an error return keeps it

@@ -58,6 +58,7 @@ func TestCheckRunCmd_WritesRunLog(t *testing.T) {
 	assert.Equal(t, []string{"rtunk", "--config", cfgPath, "--cache-dir", cacheDir, "check", work}, start.Argv)
 	assert.Equal(t, cfgPath, start.Config)
 	assert.Equal(t, repoRoot, start.RepoRoot)
+	assert.True(t, filepath.IsAbs(start.RepoRoot))
 	assert.NotEmpty(t, start.Env["PATH"])
 
 	var inv, findings *runlog.Event
@@ -194,6 +195,21 @@ func TestActionsRunCmd_WritesRunLog(t *testing.T) {
 	assert.Equal(t, "greet", inv.Linter)
 	require.NotNil(t, out)
 	assert.Equal(t, "hello\n", out.Data)
+}
+
+// A stale hook (its action disabled or gone) matches nothing; it must not push real check/fmt
+// runs out of the 50-run retention with empty logs.
+func TestActionsRunCmd_HookMatchingNothingWritesNoLog(t *testing.T) {
+	pinStdinTerminal(t, false)
+	cfgPath, repoRoot := writeActionFixture(t, `"echo hello"`)
+	cacheDir := t.TempDir()
+
+	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "actions", "run", "--hook", "pre-commit")
+	require.NoError(t, err, "stderr: %s", stderr)
+
+	runs, err := runlog.List(cacheDir, repoRoot)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
 }
 
 func TestActionsRunCmd_NonZeroExitMarksRunFailed(t *testing.T) {
