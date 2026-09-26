@@ -13,8 +13,10 @@ working-tree-only behavior with `--force`, `linters {list,enable,disable}`, `git
 `cache destroy|prune --older-than`. `v0.9` item 1 is implemented: `check` and `fmt` render through
 the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with `--no-progress`; this is a
 breaking change, the former `file:line severity [rule] message` lines and `N issue(s) in M file(s)`
-summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and ANSI color. Still
-planned: the rest of `v0.9` (TTY live view, filtered `list`) and `v1.2` (`rtunk.lock`).
+summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and ANSI color. `v0.9` item 4
+is implemented: the filtered `linters list` / `actions list` (internal/cli/list.go), a breaking
+change, the former `* name  description` format is gone. Still planned: the TTY live view (`v0.9`
+item 3) and `v1.2` (`rtunk.lock`).
 
 ## Cross-cutting rules
 
@@ -166,14 +168,17 @@ compat aliases.
 
 The two groups are symmetric:
 
-- **`rtunk linters {list,enable,disable} <id>[@version]`**: list available linters (active and
-  inactive); add or remove a linter in the config.
-- **`rtunk actions {list,enable,disable,history}`**: list actions; enable or disable them; show
+- **`rtunk linters {list,enable,disable} <id>[@version]`**: list linters grouped as enabled
+  (`id@version`), available for this repo (matching at least one repository file, not enabled) and,
+  with `--all`, the rest; add or remove a linter in the config. `list [--all] [--format
+human|json]`. (`list` implemented, internal/cli/list.go.)
+- **`rtunk actions {list,enable,disable,history}`**: list actions (`list [--format human|json]`,
+  groups `Enabled` and `Available (not enabled)`, no `--all`); enable or disable them; show
   the history of actions in this repo (`history <id>`).
 
 `linters list` and `actions list` share one layout (see [ux.md](./ux.md)). `linters ...` replaces
-`check enable|disable|list` (implemented; `check` takes paths only). The filtered layout of `list`
-lands in `v0.9` (item 4).
+`check enable|disable|list` (implemented; `check` takes paths only). File counts come from every
+repository file matched against the linter's `files:` criteria.
 
 ### Miscellaneous
 

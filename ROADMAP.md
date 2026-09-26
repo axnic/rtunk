@@ -156,8 +156,7 @@ enable|disable|config`: `enable` is the former `annotate`, `disable` strips the 
 ## v0.9 — Output and UX
 
 `check` and `fmt` emit an event stream; renderers consume it and hold no business logic. Item 1 is
-implemented (`internal/cli/render`), as is item 2; the TTY live view and the filtered `list` do not
-exist yet. Design: [docs/ux.md](./docs/ux.md). Implemented in this order:
+implemented (`internal/cli/render`), as are items 2 and 4; the TTY live view does not exist yet. Design: [docs/ux.md](./docs/ux.md). Implemented in this order:
 
 1. **Event stream + plain renderer** (implemented) — needed for CI and tests. Out of TTY: one line per finished
    linter, then findings; honors `NO_COLOR` and `--no-progress`. Every issue line is printed, files
@@ -173,10 +172,13 @@ message` lines and `N issue(s) in M file(s)` summary are gone; stable machine ou
 3. **TTY live view** — hand-written renderer (no bubbletea): header bar, per-linter tree, install
    lines with byte progress, `--live-height` / `RTUNK_LIVE_HEIGHT`, ASCII fallback (`--ascii`,
    `TERM=dumb`, non-UTF-8 locale), Ctrl+C and SIGWINCH handling.
-4. **Filtered `linters list` / `actions list`** — `rtunk linters list [--all] [--format json]`
-   groups linters as enabled (with pinned version), available for this repo (matching files, not
-   enabled) and, with `--all`, the rest; the footer hints `rtunk linters enable <id>`.
-   `rtunk actions list` uses the same layout.
+4. **Filtered `linters list` / `actions list`** (implemented, internal/cli/list.go; file matching
+   via `engine.Matches` in pkg/trunk/engine/match.go) — `rtunk linters list [--all] [--format
+human|json]` groups linters as enabled (with pinned version, even with 0 matching files),
+   available for this repo (matching at least one repository file, not enabled) and, with `--all`,
+   the rest; the footer hints `rtunk linters enable <id>`. `rtunk actions list [--format
+human|json]` has two groups only, `Enabled` and `Available (not enabled)`. Breaking: the old
+   `* name  description` format is gone. No color or ASCII fallback yet (item 3).
 
 Later: color themes, detailed byte-progress style, clickable OSC 8 links, sort by severity.
 

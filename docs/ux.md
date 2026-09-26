@@ -8,8 +8,9 @@ This document specifies the terminal UX of `check` and `fmt`. Command semantics 
 renderer (see "Non-TTY fallback" and "Issues output"). Engine terminal events carry the matched
 `Files`, and `runlog.Writer.Name()` exposes the run uid used in the failures section. Item 2
 (`--format human|sarif|json` and color) is implemented: color applies to `human` only, when stdout
-is a terminal and `NO_COLOR` is empty (see "Issues output"). Still planned: the TTY live view
-(item 3), the filtered `linters list` (item 4). UI carries no compatibility constraint with trunk:
+is a terminal and `NO_COLOR` is empty (see "Issues output"). Item 4 (filtered `linters list` /
+`actions list`) is implemented, in internal/cli/list.go, with per-linter file counts from
+`engine.Matches` (pkg/trunk/engine/match.go). Still planned: the TTY live view (item 3). UI carries no compatibility constraint with trunk:
 the former `file:line severity [rule] message` lines and the `N issue(s) in M file(s)` summary are
 gone; stable machine output is `--format json|sarif`.
 
@@ -164,27 +165,42 @@ only kong, yaml.v3 and testify.
 
 ## `rtunk linters list` / `rtunk actions list`
 
-Replaces trunk's flat 130-line listing (most of it empty) with a grouped output:
+Implemented (internal/cli/list.go). Replaces trunk's flat 130-line listing (most of it empty) and
+the former `* name  description` format (gone, breaking) with a grouped output:
 
 ```text
 Enabled
-  ✔ gofmt            153 go files
-  ✔ markdownlint      47 markdown files
+  ✔ gofmt@1.25.0            153 go files
+  ✔ markdownlint@0.44.0      47 markdown files
 Available for this repo (not enabled)
-  ◯ golangci-lint    153 go files
-  ◯ gitleaks         230 files
+  ◯ golangci-lint           153 go files
+  ◯ gitleaks                230 files
 (97 other linters don't match any file here — rtunk linters list --all)
+
+Enable one with: rtunk linters enable <id>
 ```
 
-Enabled linters first (with pinned version), then non-enabled ones that match files in the repo,
-the rest only with `--all`; footer with the hint `rtunk linters enable <id>`; `--format json`
-supported; `actions list` follows the same layout.
+- **Groups.** `Enabled` (`✔`, `id@version` with the pinned version, shown even with 0 matching
+  files), then `Available for this repo (not enabled)` (`◯`, linters matching at least one
+  repository file). With `--all`, a third group `Other (no matching file)` replaces the
+  parenthetical, which otherwise reads `(N other linters don't match any file here — rtunk
+linters list --all)`.
+- **Counts.** From every file of the repository (`git ls-files -co --exclude-standard` in git, a
+  walk skipping `.git` otherwise), matched with the linter's `files:` criteria. The label is
+  `N <type> files` for a linter with a single non-`ALL` file type (`2 go files`, `1 markdown
+file`), else `N files`. Names are padded to align.
+- **`actions list`** has two groups only, `Enabled` and `Available (not enabled)` (actions have no
+  matching files and no `--all`), and the footer `Enable one with: rtunk actions enable <id>`.
+- **`--format json`** prints `{"enabled": [...], "available": [...], "other": [...]}`, entries being
+  `{id, version, files, description}`; `other` is only filled with `--all`, arrays are never
+  `null`, and `files` is omitted for actions.
+- No color and no ASCII fallback yet (planned with the TTY live view, item 3).
 
 ## Implementation order
 
 1. Event stream + plain renderer (needed for CI and tests). Implemented.
 2. `--format human|sarif|json` and color. Implemented.
 3. TTY live view.
-4. Filtered `linters list`.
+4. Filtered `linters list` / `actions list`. Implemented.
 
 Later: color themes, detailed byte-progress style.
