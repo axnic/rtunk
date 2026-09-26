@@ -60,6 +60,9 @@ type StartOpts struct {
 // newest keepRuns runs, and writes the run_start event. It never fails the run: on any error it
 // prints one warning to o.Warn and returns nil, which is a valid no-op Writer.
 func Start(o StartOpts) *Writer {
+	if o.Warn == nil {
+		o.Warn = io.Discard
+	}
 	w, err := open(o)
 	if err != nil {
 		_, _ = fmt.Fprintf(o.Warn, "rtunk: run log disabled: %v\n", err)
@@ -104,10 +107,14 @@ func logsRoot(cacheDir string) (string, error) {
 }
 
 // repoKey is the per-repository directory name: the SHA-256 of the absolute repo root, the same
-// keying actions history uses.
+// keying actions history uses, with symlinks resolved.
 func repoKey(repoRoot string) string {
 	if abs, err := filepath.Abs(repoRoot); err == nil {
 		repoRoot = abs
+		// Physical path, so /tmp and /private/tmp (macOS) key the same repo; keep abs if it cannot resolve.
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			repoRoot = real
+		}
 	}
 	sum := sha256.Sum256([]byte(repoRoot))
 	return hex.EncodeToString(sum[:])
@@ -149,12 +156,12 @@ func (w *Writer) Emit(ev Event) {
 	if w == nil {
 		return
 	}
-	ev.TS = time.Now().UTC().Format(time.RFC3339Nano)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.dead {
 		return
 	}
+	ev.TS = time.Now().UTC().Format(time.RFC3339Nano) // under the lock: line order is timestamp order
 	if err := w.enc.Encode(ev); err != nil {
 		w.dead = true
 		_, _ = fmt.Fprintf(w.warn, "rtunk: run log disabled: %v\n", err)

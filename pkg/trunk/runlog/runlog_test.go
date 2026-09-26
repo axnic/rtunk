@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -62,6 +63,53 @@ func TestStartWritesRunStartAndEndOK(t *testing.T) {
 	assert.Equal(t, "<redacted>", events[0].Env["MY_API_TOKEN"])
 	assert.Equal(t, KindRunEnd, events[1].T)
 	assert.Equal(t, "ok", events[1].Status)
+}
+
+func TestStartNilWarnDoesNotPanic(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+	assert.NotPanics(t, func() {
+		assert.Nil(t, Start(StartOpts{CacheDir: blocker, RepoRoot: t.TempDir(), Cmd: "check"}))
+	})
+}
+
+func TestRepoKeyResolvesSymlinks(t *testing.T) {
+	cache := t.TempDir()
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	w, _ := start(t, cache, link, "check")
+	require.NotNil(t, w)
+	w.End(false)
+	w, _ = start(t, cache, real, "fmt")
+	require.NotNil(t, w)
+	w.End(false)
+
+	for _, root := range []string{link, real} {
+		runs, err := List(cache, root)
+		require.NoError(t, err)
+		assert.Len(t, runs, 2, "repo root %s", root)
+	}
+}
+
+func TestStartFileModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	cache, repo := t.TempDir(), t.TempDir()
+	w, _ := start(t, cache, repo, "check")
+	require.NotNil(t, w)
+	w.End(false)
+	runs, err := List(cache, repo)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	fi, err := os.Stat(runs[0].Path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+	di, err := os.Stat(filepath.Dir(runs[0].Path))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o750), di.Mode().Perm())
 }
 
 func TestEndFailedAndEmitAfterEndIsIgnored(t *testing.T) {
