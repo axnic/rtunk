@@ -107,6 +107,18 @@ type Linter struct {
 	RunTimeout         string          `yaml:"run_timeout,omitempty"`
 	CacheResults       *bool           `yaml:"cache_results,omitempty"`
 	VersionCommand     *VersionCommand `yaml:"version_command,omitempty"`
+	// Deprecated is a human-readable migration message naming this linter's replacement (real
+	// catalog example: linters/black/plugin.yaml's black-py, linters/rubocop/plugin.yaml's
+	// rubocop-fmt) -- surfaced as a warning by CheckDeprecations for any enabled linter that
+	// carries it.
+	Deprecated string `yaml:"deprecated,omitempty"`
+	// LegacyType/LegacyCommand are the old, single-command declaration shape a small number of
+	// deprecated linter ids still use directly on the linter, instead of a commands: list (real
+	// catalog example: linters/rubocop/plugin.yaml's rubocop-fmt: `type: rewrite`, `command:
+	// [rubocop, --fix-layout, "${target}"]`). rtunk has no execution path for this shape;
+	// CheckDeprecations hard-refuses any enabled id that carries either field.
+	LegacyType    string   `yaml:"type,omitempty"`
+	LegacyCommand []string `yaml:"command,omitempty"`
 
 	// SourceDir is this linter's own directory, relative to its plugin source's root (e.g.
 	// "linters/trufflehog") -- how ${cwd} resolves relative to ${plugin} in a Command.Run or
