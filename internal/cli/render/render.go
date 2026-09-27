@@ -1,7 +1,8 @@
 // Package render turns the engine's event stream into terminal output in one of three formats
 // (human, json, sarif). A Renderer holds
 // presentation state only (grouping, counting); it makes no decision about what to run or what
-// the exit code is. See docs/superpowers/specs/2026-09-26-v0.9.1-event-stream-plain-renderer-design.md.
+// the exit code is. NewLive is a decorator over any of them: on a terminal it draws a live area on
+// stderr while the run progresses and erases it before the inner renderer writes its report. See docs/superpowers/specs/2026-09-26-v0.9.1-event-stream-plain-renderer-design.md.
 package render
 
 import (
