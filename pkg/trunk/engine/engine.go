@@ -319,8 +319,8 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("unsupported output format %q", cmd.Output), Files: relFiles}
 			continue
 		}
-		if cmd.Formatter && !cmd.InPlace && (cmd.Output == "rewrite" || cmd.Output == "shfmt") {
-			events <- Event{Linter: name, Phase: Skipped, Note: "formatter without in_place has no supported effect (stdin/stdout-based formatters are unsupported)", Files: relFiles}
+		if cmd.Formatter && !cmd.InPlace && (cmd.Output == "rewrite" || cmd.Output == "shfmt") && cmd.SandboxType != "" {
+			events <- Event{Linter: name, Phase: Skipped, Note: "stdin/stdout formatter combined with sandbox_type is unsupported (writes would be lost)", Files: relFiles}
 			continue
 		}
 
@@ -556,6 +556,16 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // after-hash cycle over the same file. A dry run (job.dryRun) never reaches the real file at all
 // -- see the sandboxType computation below.
 func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
+	// A stdin/stdout formatter (Formatter, not InPlace, rewrite/shfmt output) never touches its
+	// own target directly -- it reads content on stdin and writes the reformatted result to its
+	// own stdout, so none of the InPlace hashing/sandboxing/mutex machinery below applies; it gets
+	// its own dedicated per-file loop instead.
+	if j.cmd.Formatter && !j.cmd.InPlace && (j.cmd.Output == "rewrite" || j.cmd.Output == "shfmt") {
+		pluginDir := j.linter.SourceRoot
+		cwdDir := filepath.Join(j.linter.SourceRoot, j.linter.SourceDir)
+		return runStdinFormatter(ctx, j, repoRoot, pluginDir, cwdDir, log, id)
+	}
+
 	workDir := j.resolvedDir
 	// A dry run stages InPlace commands into a throwaway sandbox copy regardless of the command's
 	// own SandboxType (always empty in practice for InPlace commands -- see the InPlace+SandboxType
@@ -621,36 +631,11 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 
 	readFrom := outputSource(j.cmd)
 	inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: j.linterName, ToolVersions: j.toolVersions, Sandbox: sandboxType}
-	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir, log, inv)
+	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir, log, inv, "")
 	if err != nil {
 		return nil, nil, err
 	}
-	if slices.Contains(j.cmd.ErrorCodes, exitCode) {
-		msg := strings.TrimSpace(out)
-		if errText := strings.TrimSpace(stderr); errText != "" {
-			if msg == "" {
-				msg = errText
-			} else {
-				msg += "\n" + errText
-			}
-		}
-		return nil, nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
-	}
-
-	// Real catalog formatters specify SuccessCodes, not ErrorCodes -- without this, an exit code
-	// outside a rewrite/shfmt command's own SuccessCodes fell through as a clean success with the
-	// failure completely swallowed (stderr included). Other Output formats already have their own
-	// separate failure signal (pass_fail turns a nonzero exit into a finding; sarif/json formats
-	// fail to parse on garbage output), so this is scoped to rewrite/shfmt only.
-	if (j.cmd.Output == "rewrite" || j.cmd.Output == "shfmt") && len(j.cmd.SuccessCodes) > 0 && !slices.Contains(j.cmd.SuccessCodes, exitCode) {
-		msg := strings.TrimSpace(out)
-		if errText := strings.TrimSpace(stderr); errText != "" {
-			if msg == "" {
-				msg = errText
-			} else {
-				msg += "\n" + errText
-			}
-		}
+	if msg, failed := commandFailed(j.cmd, out, stderr, exitCode); failed {
 		return nil, nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
 	}
 
@@ -783,6 +768,75 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	security.RemapFindings(findings, j.resolvedDir, repoRoot)
 	output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
 	return findings, changedFiles, nil
+}
+
+// commandFailed reports whether exitCode is a genuine failure for cmd: a declared ErrorCodes
+// match, or -- for rewrite/shfmt output specifically -- an exit code outside a declared
+// SuccessCodes list (real catalog formatters specify SuccessCodes, not ErrorCodes; without this
+// second check, an exit code outside SuccessCodes fell through as a clean success with the
+// failure completely swallowed, stderr included). Other Output formats already have their own
+// separate failure signal (pass_fail turns a nonzero exit into a finding; sarif/json formats fail
+// to parse on garbage output), so the second check is scoped to rewrite/shfmt only. msg is
+// out/stderrOut combined and trimmed, for the caller's own error text.
+func commandFailed(cmd config.Command, out, stderrOut string, exitCode int) (msg string, failed bool) {
+	successMismatch := (cmd.Output == "rewrite" || cmd.Output == "shfmt") &&
+		len(cmd.SuccessCodes) > 0 && !slices.Contains(cmd.SuccessCodes, exitCode)
+	if !slices.Contains(cmd.ErrorCodes, exitCode) && !successMismatch {
+		return "", false
+	}
+	msg = strings.TrimSpace(out)
+	if errText := strings.TrimSpace(stderrOut); errText != "" {
+		if msg == "" {
+			msg = errText
+		} else {
+			msg += "\n" + errText
+		}
+	}
+	return msg, true
+}
+
+// runStdinFormatter runs a stdin/stdout-only formatter (Formatter && !InPlace, Output
+// rewrite/shfmt): the tool reads a file's content from stdin and writes the reformatted result to
+// its own stdout, rather than rewriting the file directly (real catalog example: many formatters'
+// non-`--write` invocation, e.g. terraform fmt, stylua, perltidy). One invocation per file in
+// j.batch -- stdin carries exactly one file's content, so this can never be a true multi-file
+// batch invocation the way InPlace/Batch: true commands are (buildJobs only ever puts more than
+// one file in a stdin-formatter's own batch when the command itself sets Batch: true, which real
+// catalog stdin-formatters don't). A file whose formatted stdout differs from its own current
+// content is rewritten, unless j.dryRun (still reported as changed, never written). No sandbox is
+// ever in play here (buildJobs skips this shape combined with SandboxType), so workDir is always
+// j.resolvedDir directly -- the real file.
+func runStdinFormatter(ctx context.Context, j job, repoRoot, pluginDir, cwdDir string, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
+	workDir := j.resolvedDir
+	var changedFiles []string
+	for i, f := range j.batch {
+		if i > 0 {
+			id = log.NextID() // the caller reserved one id for this job; each further invocation needs its own
+		}
+		path := filepath.Join(workDir, f)
+		before, err := os.ReadFile(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: j.linterName, ToolVersions: j.toolVersions}
+		out, stderrOut, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, []string{f}, pluginDir, cwdDir, log, inv, string(before))
+		if err != nil {
+			return nil, nil, err
+		}
+		if msg, failed := commandFailed(j.cmd, out, stderrOut, exitCode); failed {
+			return nil, nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
+		}
+		if out == string(before) {
+			continue
+		}
+		if !j.dryRun {
+			if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+				return nil, nil, err
+			}
+		}
+		changedFiles = append(changedFiles, f)
+	}
+	return nil, remapPaths(changedFiles, j.resolvedDir, repoRoot), nil
 }
 
 // dedupeStrings returns ss with duplicates removed, preserving first-occurrence order -- used for
@@ -1071,7 +1125,7 @@ func baseEnv() []string {
 // A non-nil log records the invocation (inv arrives pre-filled by the caller with its id, linter,
 // tool versions and sandbox, and is completed here with the command line actually run), both raw
 // output streams, and the exit; a nil log records nothing.
-func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string, pluginDir, cwdDir string, log *runlog.Writer, inv runlog.Event) (out, stderrOut string, exitCode int, err error) {
+func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string, pluginDir, cwdDir string, log *runlog.Writer, inv runlog.Event, stdin string) (out, stderrOut string, exitCode int, err error) {
 	target := strings.Join(quoteAll(files), " ")
 
 	var tmpfile string
@@ -1092,6 +1146,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)
 	c.Dir = workDir
+	c.Stdin = strings.NewReader(stdin)
 	path := os.Getenv("PATH")
 	if pathEnv != "" {
 		path = pathEnv + string(os.PathListSeparator) + path

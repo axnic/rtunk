@@ -66,6 +66,11 @@ func main() {
 	case "crashstderr":
 		fmt.Fprintln(os.Stderr, "boom: disk on fire")
 		os.Exit(43)
+	case "stdinfmt":
+		// A stdin/stdout formatter: reads the target's content from stdin, writes the
+		// reformatted result to stdout -- never touches the file itself.
+		data, _ := io.ReadAll(os.Stdin)
+		fmt.Print(strings.ToUpper(string(data)))
 	case "hadolint":
 		fmt.Print("[{\"line\":1,\"code\":\"DL3006\",\"message\":\"pin a version\",\"column\":1,\"file\":\"" + args[1] + "\",\"level\":\"warning\"}]")
 	case "sarifuri":
@@ -641,7 +646,7 @@ func TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent(t *testing.T) {
 	repoRoot := t.TempDir()
 	cmd := config.Command{Name: "check", Run: "echo \"$PATH\"", Output: "pass_fail"}
 
-	out, stderr, exitCode, err := runOneInvocation(context.Background(), cmd, repoRoot, "", nil, "", "", nil, runlog.Event{})
+	out, stderr, exitCode, err := runOneInvocation(context.Background(), cmd, repoRoot, "", nil, "", "", nil, runlog.Event{}, "")
 	require.NoError(t, err)
 	assert.Equal(t, 0, exitCode)
 	assert.Empty(t, stderr)
@@ -659,7 +664,7 @@ func TestRunOneInvocation_MarkdownlintReadsStderr(t *testing.T) {
 
 	cmd := config.Command{Name: "lint", Run: "echo '[]' >&2", Output: "markdownlint"}
 
-	out, _, _, err := runOneInvocation(context.Background(), cmd, t.TempDir(), "", nil, "", "", nil, runlog.Event{})
+	out, _, _, err := runOneInvocation(context.Background(), cmd, t.TempDir(), "", nil, "", "", nil, runlog.Event{}, "")
 	require.NoError(t, err)
 	assert.Equal(t, "[]\n", out, "markdownlint --json reports on stderr")
 }
@@ -1995,14 +2000,12 @@ func TestRun_RewriteCommandFailingSuccessCodesReportsFailed(t *testing.T) {
 	assert.ErrorContains(t, got.Err, "boom: disk on fire", "stderr must be surfaced in the error")
 }
 
-// TestRun_FormatterWithoutInPlaceAndRewriteOutputIsSkipped covers 9 real catalog counterexamples
-// (terraform fmt, tofu fmt, stylua, opa, perltidy, sql-formatter, pragma-once,
-// markdown-table-prettify) this feature's design spec didn't account for: Formatter: true,
-// Output: rewrite/shfmt, but NO InPlace -- these are stdin/stdout-based formatters this engine
-// can't meaningfully run (it neither feeds them stdin nor captures useful stdout), so running
-// them anyway would silently accomplish nothing (or worse, litter side files) while reporting
-// clean success. Must be Skipped instead.
-func TestRun_FormatterWithoutInPlaceAndRewriteOutputIsSkipped(t *testing.T) {
+// TestRun_StdinStdoutFormatter_RewritesFile covers real catalog examples (terraform fmt, tofu
+// fmt, stylua, opa, perltidy, sql-formatter, pragma-once, markdown-table-prettify): Formatter:
+// true, Output: rewrite/shfmt, but no InPlace -- the tool reads a file's content from stdin and
+// writes the reformatted result to its own stdout, rather than rewriting the file directly.
+func TestRun_StdinStdoutFormatter_RewritesFile(t *testing.T) {
+	binPath := buildFakeToolBinary(t)
 	cfg := config.Config{
 		Lint: config.LintConfig{
 			Files: map[string]config.FileType{},
@@ -2011,8 +2014,167 @@ func TestRun_FormatterWithoutInPlaceAndRewriteOutputIsSkipped(t *testing.T) {
 					"fakestdoutfmt": {
 						Name: "fakestdoutfmt", Files: []string{"ALL"},
 						Commands: []config.Command{{
-							Name: "format", Run: "faketool rewrite ${target}", Output: "rewrite",
+							Name: "format", Run: "faketool stdinfmt", Output: "rewrite",
 							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("messy"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Equal(t, Done, got.Phase)
+	assert.Equal(t, []string{"a.txt"}, got.ChangedFiles)
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "MESSY", string(data))
+}
+
+// TestRun_StdinStdoutFormatter_AlreadyFormattedIsNotChanged: the tool's own stdout, when it
+// matches the file's current content byte for byte, means nothing to write and nothing changed --
+// same "only report a real change" contract InPlace formatters already have via hashFiles.
+func TestRun_StdinStdoutFormatter_AlreadyFormattedIsNotChanged(t *testing.T) {
+	binPath := buildFakeToolBinary(t)
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool stdinfmt", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("ALREADY-UPPER"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Equal(t, Done, got.Phase)
+	assert.Empty(t, got.ChangedFiles)
+}
+
+// TestRun_StdinStdoutFormatter_DryRunReportsWithoutWriting: dry-run (check --fix/fmt --check's own
+// probe mode) must still detect the change, but never touch the real file.
+func TestRun_StdinStdoutFormatter_DryRunReportsWithoutWriting(t *testing.T) {
+	binPath := buildFakeToolBinary(t)
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool stdinfmt", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("messy"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1, DryRun: true}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Equal(t, Done, got.Phase)
+	assert.Equal(t, []string{"a.txt"}, got.ChangedFiles, "dry-run must still report the file as would-change")
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "messy", string(data), "dry-run must never write the real file")
+}
+
+// TestRun_StdinStdoutFormatter_SuccessCodesMismatchIsFailed: mirrors the single-invocation path's
+// own SuccessCodes check for rewrite/shfmt output (real catalog formatters declare SuccessCodes,
+// not ErrorCodes).
+func TestRun_StdinStdoutFormatter_SuccessCodesMismatchIsFailed(t *testing.T) {
+	binPath := buildFakeToolBinary(t)
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool crash", Output: "rewrite",
+							Formatter: true, InPlace: false, SuccessCodes: []int{0},
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Failed {
+			got = ev
+		}
+	}
+	assert.Equal(t, Failed, got.Phase)
+}
+
+// TestRun_StdinStdoutFormatterWithSandboxTypeIsSkipped: a stdin/stdout formatter never touches the
+// real file directly -- writing its own stdout into a sandbox copy would rewrite a file nobody
+// ever reads, silently discarding the result, so this combination is refused up front instead of
+// running and doing nothing (mirrors the pre-existing InPlace+SandboxType skip).
+func TestRun_StdinStdoutFormatterWithSandboxTypeIsSkipped(t *testing.T) {
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool stdinfmt", Output: "rewrite",
+							Formatter: true, InPlace: false, SandboxType: "copy_targets",
 						}},
 					},
 				},
@@ -2030,7 +2192,7 @@ func TestRun_FormatterWithoutInPlaceAndRewriteOutputIsSkipped(t *testing.T) {
 		got = ev
 	}
 	assert.Equal(t, Skipped, got.Phase)
-	assert.Equal(t, "formatter without in_place has no supported effect (stdin/stdout-based formatters are unsupported)", got.Note)
+	assert.Equal(t, "stdin/stdout formatter combined with sandbox_type is unsupported (writes would be lost)", got.Note)
 }
 
 // TestRun_DryRunNeverWritesRealFile is the load-bearing test for this whole feature: a DryRun

@@ -187,11 +187,11 @@ func TestFmtCmd_UnstableReportsConflictingLinters(t *testing.T) {
 // common real case (an already-formatted tree with one unsupported/disabled formatter present).
 func TestFmtCmd_ReportsSkippedLinterEvenWhenNothingChanged(t *testing.T) {
 	cfgPath, repoRoot := writeLinterFixture(t, []string{"badfmt"}, `    - name: badfmt
-      description: A formatter with no in_place effect -- always Skipped
+      description: A formatter with an unsupported template var -- always Skipped
       files: [ALL]
       commands:
         - name: format
-          run: echo unused
+          run: echo ${nonsense}
           output: rewrite
           formatter: true
 `)
