@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -338,6 +340,94 @@ chmod +x node_modules/.bin/commitlint
 	out, err := exec.Command(shimTarget).CombinedOutput()
 	require.NoError(t, err, "output: %s", out)
 	assert.Equal(t, "ran-commitlint\n", string(out))
+}
+
+// actionPackagesConfig builds a "node" runtime config (no tools) -- the shape
+// TestDownload_ActionPackagesRef_InstallsAndDedupesByContentHash needs: an action-packages ref
+// only needs a runtime to install its manifest through, not a named tool/package.
+func actionPackagesConfig(nodeArchiveURL string) config.Config {
+	return config.Config{
+		Downloads: map[string]config.Download{
+			"node": {Downloads: []config.DownloadEntry{{
+				OS:  config.OSSpec{"linux": "linux", "macos": "macos", "windows": "windows"},
+				CPU: config.OSSpec{"x86_64": "x86_64", "arm_64": "arm_64"},
+				URL: nodeArchiveURL, StripComponents: 1,
+			}}},
+		},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"node": {Type: "node", Download: "node", KnownGoodVersion: "18.0.0"},
+			},
+		},
+	}
+}
+
+// TestDownload_ActionPackagesRef_InstallsAndDedupesByContentHash drives a Ref{Category:
+// "action-packages"} through the real Download() end to end: installing an action's packages_file
+// manifest through its runtime, exactly the same claimInstall-guarded, registry-visible path tools
+// and runtimes already use (Task 2). A second action with a byte-identical manifest (different
+// path, different action ID) must dedupe to the SAME on-disk install and report Cached, not
+// re-run npm -- the guarantee resolvePackagesFileBinDir's own doc comment already promised before
+// this task, which this task must not regress.
+func TestDownload_ActionPackagesRef_InstallsAndDedupesByContentHash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("npm stub is a POSIX shell script")
+	}
+
+	npmScript := `#!/bin/sh
+mkdir -p node_modules/.bin
+cat > node_modules/.bin/commitlint <<'EOS'
+#!/bin/sh
+echo ran-commitlint
+EOS
+chmod +x node_modules/.bin/commitlint
+`
+	archive := tarGzBytes(t, "node-18.0.0", "bin/npm", npmScript)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	}))
+	defer srv.Close()
+
+	manifestContent := []byte(`{"dependencies":{"@commitlint/cli":"^19.0"}}`)
+	manifest1 := filepath.Join(t.TempDir(), "package.json")
+	require.NoError(t, os.WriteFile(manifest1, manifestContent, 0o644))
+	manifest2 := filepath.Join(t.TempDir(), "package.json") // different path, identical content
+	require.NoError(t, os.WriteFile(manifest2, manifestContent, 0o644))
+
+	cfg := actionPackagesConfig(srv.URL + "/node.tar.gz")
+	cfg.Actions = config.CategoryConfig[config.Action]{
+		Definitions: map[string]config.Action{
+			"commitlint":   {ID: "commitlint", Runtime: "node", PackagesFile: manifest1},
+			"other-action": {ID: "other-action", Runtime: "node", PackagesFile: manifest2},
+		},
+	}
+
+	cacheDir := t.TempDir()
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "action-packages", ID: "commitlint"})
+	require.NoError(t, err)
+	var phases []download.Phase
+	for ev := range events {
+		require.NoError(t, ev.Err, "event: %+v", ev)
+		phases = append(phases, ev.Phase)
+	}
+	assert.Contains(t, phases, download.Done)
+
+	events2, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "action-packages", ID: "other-action"})
+	require.NoError(t, err)
+	var phases2 []download.Phase
+	for ev := range events2 {
+		require.NoError(t, ev.Err, "event: %+v", ev)
+		phases2 = append(phases2, ev.Phase)
+	}
+	assert.Equal(t, []download.Phase{download.Cached}, phases2,
+		"a byte-identical manifest from a different action must dedupe, not re-run npm")
+
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	sum := sha256.Sum256(manifestContent)
+	installDir := download.InstallDir(root, "action-packages", hex.EncodeToString(sum[:]), "manifest")
+	shimTarget := filepath.Join(installDir, "node_modules", ".bin", "commitlint")
+	require.FileExists(t, shimTarget)
 }
 
 func TestInstallPackagesFile_UnsupportedRuntime(t *testing.T) {

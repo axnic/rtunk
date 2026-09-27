@@ -53,6 +53,22 @@ func resolvedRefs(cfg config.Config) []Ref {
 		version := ResolveVersion(cfg.Runtimes.Enabled, id, rt.KnownGoodVersion)
 		refs = append(refs, Ref{Category: "runtimes", ID: id, Version: version})
 	}
+	for _, action := range cfg.Actions.Definitions {
+		if action.PackagesFile == "" {
+			continue
+		}
+		// Keyed by the manifest's own content hash, not the action's ID: that's what
+		// fetchActionPackagesRef installs by (two actions sharing one manifest share one on-disk
+		// install), and it's the only identity Prune's generic installs/<category>/*/* sweep can
+		// match back against that on-disk layout (installs/action-packages/<hash>/manifest). A
+		// manifest that can't be read (e.g. a plugin checkout gone stale) is skipped rather than
+		// failing the whole registry write -- RecordUsage is best-effort by convention.
+		hash, err := actionPackagesHash(action)
+		if err != nil {
+			continue
+		}
+		refs = append(refs, Ref{Category: "action-packages", ID: hash, Version: "manifest"})
+	}
 	return refs
 }
 

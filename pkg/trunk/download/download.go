@@ -2,6 +2,8 @@ package download
 
 import (
 	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -151,6 +153,8 @@ func fetchOne(cfg config.Config, root, repoRoot string, ref Ref, events chan<- E
 		fetchLintRef(cfg, root, repoRoot, ref, events)
 	case "actions":
 		fetchActionRef(cfg, root, repoRoot, ref, events)
+	case "action-packages":
+		fetchActionPackagesRef(cfg, root, repoRoot, ref, events)
 	case "plugins":
 		fetchPluginRef(cfg, ref, events)
 	default:
@@ -417,6 +421,96 @@ func fetchActionRef(cfg config.Config, root, repoRoot string, ref Ref, events ch
 		return
 	}
 	_ = fetchRuntimeRef(cfg, root, repoRoot, Ref{Category: "runtimes", ID: a.Runtime}, events) // failure already emitted as a Failed event
+}
+
+// actionPackagesFilePath resolves action.PackagesFile against its SourceRoot/SourceDir -- the same
+// join pkg/trunk/actions.Run's own cwd resolution already does, duplicated here (not imported: this
+// package cannot depend on pkg/trunk/actions) so fetchActionPackagesRef and resolvedRefs read the
+// exact same manifest path.
+func actionPackagesFilePath(action config.Action) string {
+	if action.SourceRoot == "" {
+		return action.PackagesFile
+	}
+	return filepath.Join(action.SourceRoot, action.SourceDir, action.PackagesFile)
+}
+
+// actionPackagesHash reads action's packages_file manifest and returns its content's sha256 hex --
+// the identity fetchActionPackagesRef installs by (InstallDir(root, "action-packages", hash,
+// "manifest")). resolvedRefs/Prune must key their keep-set on this same hash, not on the action's
+// own ID: two actions sharing one byte-identical manifest share one on-disk install, so the action
+// ID alone would either double-count or (worse) never match what's actually on disk.
+func actionPackagesHash(action config.Action) (string, error) {
+	data, err := os.ReadFile(actionPackagesFilePath(action))
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// ActionPackagesBinDir returns actionID's packages_file install's node_modules/.bin dir, for a
+// caller (pkg/trunk/actions.Run) that has just confirmed via Download that the install exists.
+// Recomputes the same content-hash path fetchActionPackagesRef used rather than threading it back
+// out of the Event stream, matching how every other resolve*Dir function in this codebase
+// recomputes its own path rather than parsing it out of an Event.
+func ActionPackagesBinDir(cfg config.Config, root, actionID string) (string, error) {
+	action, ok := cfg.Actions.Definitions[actionID]
+	if !ok {
+		return "", fmt.Errorf("download: unknown action %q", actionID)
+	}
+	hash, err := actionPackagesHash(action)
+	if err != nil {
+		return "", err
+	}
+	installDir := InstallDir(root, "action-packages", hash, "manifest")
+	return filepath.Join(installDir, "node_modules", ".bin"), nil
+}
+
+// fetchActionPackagesRef installs ref.ID's (an action id) packages_file manifest, deduped by the
+// manifest's own content hash so two actions sharing one manifest install once -- mirrors
+// fetchToolRef's runtime+package branch, just keyed by content hash instead of a declared version.
+func fetchActionPackagesRef(cfg config.Config, root, repoRoot string, ref Ref, events chan<- Event) {
+	action, ok := cfg.Actions.Definitions[ref.ID]
+	if !ok || action.PackagesFile == "" {
+		events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: action %q has no packages_file", ref.ID)}
+		return
+	}
+	rt, ok := cfg.Runtimes.Definitions[action.Runtime]
+	if !ok {
+		events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: action %q: no runtime %q", ref.ID, action.Runtime)}
+		return
+	}
+	runtimeVersion := ResolveVersion(cfg.Runtimes.Enabled, action.Runtime, rt.KnownGoodVersion)
+	runtimeInstallDir := InstallDir(root, "runtimes", action.Runtime, runtimeVersion)
+	if !dirNonEmpty(runtimeInstallDir) {
+		if err := fetchRuntimeRef(cfg, root, repoRoot, Ref{Category: "runtimes", ID: action.Runtime, Version: runtimeVersion}, events); err != nil {
+			events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: action %q: runtime %q: %w", ref.ID, action.Runtime, err)}
+			return
+		}
+	}
+
+	hash, err := actionPackagesHash(action)
+	if err != nil {
+		events <- Event{Ref: ref, Phase: Failed, Err: err}
+		return
+	}
+	installDir := InstallDir(root, "action-packages", hash, "manifest")
+	if dirNonEmpty(installDir) {
+		events <- Event{Ref: ref, Phase: Cached}
+		return
+	}
+
+	release, _ := claimInstall(ref, installDir, repoRoot, events)
+	if release == nil {
+		return
+	}
+	defer release()
+	events <- Event{Ref: ref, Phase: Started}
+	if err := InstallPackagesFile(rt, runtimeInstallDir, installDir, actionPackagesFilePath(action)); err != nil {
+		events <- Event{Ref: ref, Phase: Failed, Err: err}
+		return
+	}
+	events <- Event{Ref: ref, Phase: Done}
 }
 
 // fetchPluginRef reports a "plugins" ref as always Cached: by the time cfg exists, resolving it

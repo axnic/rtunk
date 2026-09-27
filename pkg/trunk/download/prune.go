@@ -53,8 +53,8 @@ func Prune(cacheDir string) error {
 		}
 	}
 
-	for _, base := range []string{"installs", "shims"} {
-		for _, category := range []string{"tools", "runtimes"} {
+	sweep := func(base string, categories []string) error {
+		for _, category := range categories {
 			matches, globErr := filepath.Glob(filepath.Join(root, base, category, "*", "*"))
 			if globErr != nil {
 				return globErr
@@ -69,6 +69,15 @@ func Prune(cacheDir string) error {
 				}
 			}
 		}
+		return nil
+	}
+	// action-packages installs have no shims/ counterpart -- they're consumed via their
+	// node_modules/.bin dir directly, not a shim -- so only the installs sweep covers them.
+	if err := sweep("installs", []string{"tools", "runtimes", "action-packages"}); err != nil {
+		return err
+	}
+	if err := sweep("shims", []string{"tools", "runtimes"}); err != nil {
+		return err
 	}
 
 	pluginsRoot := filepath.Join(filepath.Dir(root), "plugins")

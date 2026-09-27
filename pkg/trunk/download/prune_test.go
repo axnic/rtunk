@@ -68,6 +68,32 @@ func TestPrune_KeepsInstallForExistingRepoAndDropsUnreferenced(t *testing.T) {
 	assert.NoDirExists(t, unreferenced)
 }
 
+// TestPrune_KeepsReferencedActionPackagesAndDropsUnreferenced closes the gap the previous plan's
+// final review flagged and deliberately parked: action-packages installs (keyed by their
+// manifest's content hash, not an action ID -- see registry.go's resolvedRefs) used to be
+// invisible to cache prune and grew forever. It also proves the "installs" sweep, not "shims",
+// covers action-packages (they have no shim counterpart).
+func TestPrune_KeepsReferencedActionPackagesAndDropsUnreferenced(t *testing.T) {
+	cacheDir := t.TempDir()
+	root, err := Root(cacheDir)
+	require.NoError(t, err)
+	liveRepo := t.TempDir()
+
+	writeRegistryEntry(t, cacheDir, registryEntry{
+		RepoRoot: liveRepo,
+		Refs:     []Ref{{Category: "action-packages", ID: "referencedhash", Version: "manifest"}},
+	})
+	kept := InstallDir(root, "action-packages", "referencedhash", "manifest")
+	unreferenced := InstallDir(root, "action-packages", "unreferencedhash", "manifest")
+	require.NoError(t, os.MkdirAll(kept, 0o755))
+	require.NoError(t, os.MkdirAll(unreferenced, 0o755))
+
+	require.NoError(t, Prune(cacheDir))
+
+	assert.DirExists(t, kept, "an action-packages install still referenced by a live repo must survive")
+	assert.NoDirExists(t, unreferenced, "an unreferenced action-packages install must be pruned")
+}
+
 func TestPrune_UnionsKeepSetAcrossLiveRepos(t *testing.T) {
 	cacheDir := t.TempDir()
 	root, err := Root(cacheDir)
