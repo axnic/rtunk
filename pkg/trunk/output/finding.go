@@ -4,6 +4,16 @@ package output
 
 import "strings"
 
+// InlineFix is a computer-applicable replacement a tool attaches directly to one of its own
+// findings (real example: ESLint's `--format json` messages[].fix), rather than through a
+// separate fix command (see Command.InPlace+!Formatter for that case, ROADMAP.md v0.10 "Fix-only
+// linters actually fix"). Range is a byte offset pair [start, end) into the file's content at the
+// time the tool produced it; Text replaces that span verbatim.
+type InlineFix struct {
+	Range [2]int
+	Text  string
+}
+
 // Finding is one normalized check result.
 type Finding struct {
 	Linter   string
@@ -14,6 +24,9 @@ type Finding struct {
 	RuleID   string
 	Message  string
 	URL      string // filled by ApplyIssueURL when both IssueURLFormat and RuleID are set
+	// Fix is this finding's own computer-applied replacement, when its tool reported one inline
+	// (nil otherwise). Applied by engine.ApplyInlineFixes under check --fix.
+	Fix *InlineFix
 }
 
 // ApplyIssueURL fills each finding's URL from format (a config.Linter.IssueURLFormat, using "{}"

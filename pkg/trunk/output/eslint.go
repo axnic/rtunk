@@ -13,6 +13,10 @@ type eslintFileResult struct {
 		Message  string `json:"message"`
 		Line     int    `json:"line"`
 		Column   int    `json:"column"`
+		Fix      *struct {
+			Range []int  `json:"range"`
+			Text  string `json:"text"`
+		} `json:"fix,omitempty"`
 	} `json:"messages"`
 }
 
@@ -27,10 +31,14 @@ func ParseESLint(data []byte, linter string) ([]Finding, error) {
 	var findings []Finding
 	for _, file := range raw {
 		for _, m := range file.Messages {
-			findings = append(findings, Finding{
+			f := Finding{
 				Linter: linter, File: file.FilePath, Line: m.Line, Column: m.Column,
 				Severity: eslintSeverity(m.Severity), RuleID: m.RuleID, Message: m.Message,
-			})
+			}
+			if m.Fix != nil && len(m.Fix.Range) == 2 {
+				f.Fix = &InlineFix{Range: [2]int{m.Fix.Range[0], m.Fix.Range[1]}, Text: m.Fix.Text}
+			}
+			findings = append(findings, f)
 		}
 	}
 	return findings, nil
