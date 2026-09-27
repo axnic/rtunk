@@ -198,3 +198,18 @@ func TestDownload_ConcurrentSameRef_NeverRacesBlobRemoval(t *testing.T) {
 		}
 	})
 }
+
+// A lock left behind by an earlier, killed rtunk whose PID we now reuse (always the case for PID 1
+// in a container) must be reclaimed, not reported as held by ourselves forever.
+func TestAcquireInstallLock_OwnPIDLeftoverIsReclaimed(t *testing.T) {
+	installDir := filepath.Join(t.TempDir(), "tools", "eslint", "1.0.0")
+	lockPath := installDir + ".lock"
+	require.NoError(t, os.MkdirAll(filepath.Dir(lockPath), 0o755))
+	claim := fmt.Sprintf(`{"PID":%d,"Repo":"/repo/crashed"}`, os.Getpid())
+	require.NoError(t, os.WriteFile(lockPath, []byte(claim), 0o644))
+
+	release, err := acquireInstallLock(installDir, "/repo/c")
+	require.NoError(t, err, "a leftover carrying our own PID that we don't hold must be reclaimed")
+	release()
+	assert.NoFileExists(t, lockPath)
+}

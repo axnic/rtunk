@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 )
 
@@ -19,6 +20,15 @@ type lockClaim struct {
 	PID  int
 	Repo string
 }
+
+// heldLocks records which lock paths this process currently holds, guarded by heldMu. A lock file
+// carrying our own PID is otherwise ambiguous: signal 0 says "alive" whether we really hold it or
+// it's a leftover from an earlier, killed rtunk that happened to get our PID (always the case for
+// PID 1 in a container, and Ctrl-C skips the deferred release). Only heldLocks tells them apart.
+var (
+	heldMu    sync.Mutex
+	heldLocks = map[string]bool{}
+)
 
 // acquireInstallLock claims installDir's lock, or reports who already holds it. The caller must
 // call release exactly once it is done installing (success or failure) if err is nil.
@@ -49,10 +59,20 @@ func acquireInstallLock(installDir, repoRoot string) (release func(), err error)
 		return nil, werr
 	}
 
+	// Held across the whole claim loop (never across an install): a claim-then-record, or a
+	// self-PID stale check, must not interleave with another goroutine's release or claim.
+	heldMu.Lock()
+	defer heldMu.Unlock()
 	for {
 		linkErr := os.Link(tmp.Name(), lockPath)
 		if linkErr == nil {
-			return func() { _ = os.Remove(lockPath) }, nil
+			heldLocks[lockPath] = true
+			return func() {
+				heldMu.Lock()
+				defer heldMu.Unlock()
+				delete(heldLocks, lockPath)
+				_ = os.Remove(lockPath)
+			}, nil
 		}
 		if !os.IsExist(linkErr) {
 			return nil, linkErr
@@ -66,7 +86,7 @@ func acquireInstallLock(installDir, repoRoot string) (release func(), err error)
 			return nil, readErr
 		}
 		var held lockClaim
-		if json.Unmarshal(existing, &held) == nil && processAlive(held.PID) {
+		if json.Unmarshal(existing, &held) == nil && holderAlive(held.PID, lockPath) {
 			return nil, fmt.Errorf("download: repository %q is already installing %s (pid %d); retry later",
 				held.Repo, installDir, held.PID)
 		}
@@ -78,6 +98,15 @@ func acquireInstallLock(installDir, repoRoot string) (release func(), err error)
 			return nil, rmErr
 		}
 	}
+}
+
+// holderAlive reports whether a claim by pid on lockPath is still live. For our own PID that is
+// exactly "this process holds it right now" (heldMu must be held); any other PID is probed.
+func holderAlive(pid int, lockPath string) bool {
+	if pid == os.Getpid() {
+		return heldLocks[lockPath]
+	}
+	return processAlive(pid)
 }
 
 // processAlive reports whether pid names a still-running process, using signal 0 (the standard
