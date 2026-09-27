@@ -56,7 +56,11 @@ func (c *execCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr) error {
 	}
 	shimPath := download.ShimPath(root, category, id, version, id)
 	if _, statErr := os.Stat(shimPath); statErr != nil {
-		events, err := download.Download(cfg, cli.CacheDir, download.Ref{Category: category, ID: id, Version: version})
+		repoRoot, err := logsRepoRoot(cli)
+		if err != nil {
+			return err
+		}
+		events, err := download.Download(cfg, cli.CacheDir, repoRoot, download.Ref{Category: category, ID: id, Version: version})
 		if err != nil {
 			return err
 		}

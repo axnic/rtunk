@@ -57,7 +57,7 @@ func TestDownload_Runtime(t *testing.T) {
 	}
 
 	cacheDir := t.TempDir()
-	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "shellcheck"})
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "runtimes", ID: "shellcheck"})
 	require.NoError(t, err)
 
 	var phases []download.Phase
@@ -98,7 +98,7 @@ func TestDownload_RemovesBlobAfterInstall(t *testing.T) {
 	}
 
 	cacheDir := t.TempDir()
-	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "shellcheck"})
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "runtimes", ID: "shellcheck"})
 	require.NoError(t, err)
 
 	for ev := range events {
@@ -129,7 +129,7 @@ func TestDownload_Runtime_AlreadyCached(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(download.InstallDir(root, "runtimes", "shellcheck", "1.0.0"), 0o755))
 
-	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "shellcheck"})
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "runtimes", ID: "shellcheck"})
 	require.NoError(t, err)
 	var phases []download.Phase
 	for ev := range events {
@@ -145,7 +145,7 @@ func TestDownload_Runtime_SystemVersion(t *testing.T) {
 			Definitions: map[string]config.Runtime{"php": {Type: "php", SystemVersion: ">=8.0.0"}},
 		},
 	}
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "runtimes", ID: "php"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "runtimes", ID: "php"})
 	require.NoError(t, err)
 	var phases []download.Phase
 	for ev := range events {
@@ -156,7 +156,7 @@ func TestDownload_Runtime_SystemVersion(t *testing.T) {
 }
 
 func TestDownload_UnknownRef(t *testing.T) {
-	events, err := download.Download(config.Config{}, t.TempDir(), download.Ref{Category: "runtimes", ID: "nope"})
+	events, err := download.Download(config.Config{}, t.TempDir(), "/repo", download.Ref{Category: "runtimes", ID: "nope"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Failed, ev.Phase)
@@ -188,7 +188,7 @@ func TestDownload_LintRef_ExpandsToTools(t *testing.T) {
 		},
 	}
 
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "lint", ID: "actionlint"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "lint", ID: "actionlint"})
 	require.NoError(t, err)
 	var sawToolDone bool
 	for ev := range events {
@@ -284,7 +284,7 @@ chmod +x "$3/node_modules/.bin/eslint"
 
 	cfg := nodeToolConfig(srv.URL + "/node.tar.gz")
 	cacheDir := t.TempDir()
-	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "tools", ID: "eslint"})
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "tools", ID: "eslint"})
 	require.NoError(t, err)
 
 	var phases []download.Phase
@@ -418,7 +418,7 @@ chmod +x "$prefix/bin/black"
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(cacheDir) })
 
-	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "tools", ID: "black"})
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "tools", ID: "black"})
 	require.NoError(t, err)
 
 	var phases []download.Phase
@@ -449,7 +449,7 @@ func TestDownload_ToolRuntimePackage_RuntimeFetchFailure(t *testing.T) {
 	defer srv.Close()
 
 	cfg := nodeToolConfig(srv.URL + "/node.tar.gz")
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "tools", ID: "eslint"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "tools", ID: "eslint"})
 	require.NoError(t, err)
 
 	var toolFailed *download.Event
@@ -500,7 +500,7 @@ func TestDownload_Runtime_FailedInstallNotPoisoned(t *testing.T) {
 	}
 	cacheDir := t.TempDir()
 
-	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "shellcheck"})
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "runtimes", ID: "shellcheck"})
 	require.NoError(t, err)
 	var sawFailed bool
 	for ev := range events {
@@ -510,7 +510,7 @@ func TestDownload_Runtime_FailedInstallNotPoisoned(t *testing.T) {
 	}
 	require.True(t, sawFailed, "the corrupt archive must fail the first attempt")
 
-	events, err = download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "shellcheck"})
+	events, err = download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "runtimes", ID: "shellcheck"})
 	require.NoError(t, err)
 	var phases []download.Phase
 	for ev := range events {
@@ -556,7 +556,7 @@ func TestDownload_Runtime_WithArgsDerivedSemver(t *testing.T) {
 	}
 
 	cacheDir := t.TempDir()
-	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "taplo"})
+	events, err := download.Download(cfg, cacheDir, "/repo", download.Ref{Category: "runtimes", ID: "taplo"})
 	require.NoError(t, err)
 
 	var phases []download.Phase
@@ -574,14 +574,14 @@ func TestDownload_PluginsRef_AlwaysCached(t *testing.T) {
 		Sources map[string]config.PluginSource
 	}{Sources: map[string]config.PluginSource{"trunk": {ID: "trunk"}}}}
 
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "plugins", ID: "trunk"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "plugins", ID: "trunk"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Cached, ev.Phase, "resolving cfg already fetched every plugin source it references")
 }
 
 func TestDownload_PluginsRef_UnknownSource(t *testing.T) {
-	events, err := download.Download(config.Config{}, t.TempDir(), download.Ref{Category: "plugins", ID: "nope"})
+	events, err := download.Download(config.Config{}, t.TempDir(), "/repo", download.Ref{Category: "plugins", ID: "nope"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Failed, ev.Phase)
@@ -589,7 +589,7 @@ func TestDownload_PluginsRef_UnknownSource(t *testing.T) {
 }
 
 func TestDownload_LintRef_UnknownDefinition(t *testing.T) {
-	events, err := download.Download(config.Config{}, t.TempDir(), download.Ref{Category: "lint", ID: "nope"})
+	events, err := download.Download(config.Config{}, t.TempDir(), "/repo", download.Ref{Category: "lint", ID: "nope"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Failed, ev.Phase)
@@ -597,7 +597,7 @@ func TestDownload_LintRef_UnknownDefinition(t *testing.T) {
 }
 
 func TestDownload_ActionRef_UnknownAction(t *testing.T) {
-	events, err := download.Download(config.Config{}, t.TempDir(), download.Ref{Category: "actions", ID: "nope"})
+	events, err := download.Download(config.Config{}, t.TempDir(), "/repo", download.Ref{Category: "actions", ID: "nope"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Failed, ev.Phase)
@@ -612,7 +612,7 @@ func TestDownload_ActionRef_NoRuntime_Cached(t *testing.T) {
 			Definitions: map[string]config.Action{"go-mod-tidy": {ID: "go-mod-tidy"}},
 		},
 	}
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "actions", ID: "go-mod-tidy"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "actions", ID: "go-mod-tidy"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Cached, ev.Phase)
@@ -630,7 +630,7 @@ func TestDownload_ActionRef_ExpandsToRuntime(t *testing.T) {
 			Definitions: map[string]config.Runtime{"node": {Type: "node", SystemVersion: ">=18.0.0"}},
 		},
 	}
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "actions", ID: "commitlint"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "actions", ID: "commitlint"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Cached, ev.Phase, "expanded into the runtime's own fetch, which is Cached for system_version")
@@ -640,7 +640,7 @@ func TestDownload_ToolRef_UnknownDownloadRecipe(t *testing.T) {
 	cfg := config.Config{
 		Tools: map[string]config.Tool{"foo": {Name: "foo", Download: "missing-recipe", KnownGoodVersion: "1.0.0"}},
 	}
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "tools", ID: "foo"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "tools", ID: "foo"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Failed, ev.Phase)
@@ -651,7 +651,7 @@ func TestDownload_ToolRef_RuntimePackage_UnknownRuntime(t *testing.T) {
 	cfg := config.Config{
 		Tools: map[string]config.Tool{"black": {Name: "black", Runtime: "missing-runtime", Package: "black", KnownGoodVersion: "1.0.0"}},
 	}
-	events, err := download.Download(cfg, t.TempDir(), download.Ref{Category: "tools", ID: "black"})
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "tools", ID: "black"})
 	require.NoError(t, err)
 	ev := <-events
 	assert.Equal(t, download.Failed, ev.Phase)
@@ -676,7 +676,7 @@ func TestDownload_AllRefs_DefaultsToEveryToolAndRuntime(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(download.InstallDir(root, "tools", "actionlint", "1.0.0"), 0o755))
 
-	events, err := download.Download(cfg, cacheDir)
+	events, err := download.Download(cfg, cacheDir, "/repo")
 	require.NoError(t, err)
 
 	seen := map[download.Ref]download.Phase{}

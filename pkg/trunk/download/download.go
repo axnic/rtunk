@@ -51,7 +51,7 @@ const maxParallel = 4
 // channel of lifecycle events, closed once every ref reaches Cached/Done/Failed; a non-nil error
 // return is a setup failure only (e.g. an unwritable cacheDir), never a per-item failure -- those
 // are Failed events on the channel.
-func Download(cfg config.Config, cacheDir string, refs ...Ref) (<-chan Event, error) {
+func Download(cfg config.Config, cacheDir, repoRoot string, refs ...Ref) (<-chan Event, error) {
 	root, err := Root(cacheDir)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func Download(cfg config.Config, cacheDir string, refs ...Ref) (<-chan Event, er
 			go func(ref Ref) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				fetchOne(cfg, root, ref, events)
+				fetchOne(cfg, root, repoRoot, ref, events)
 			}(ref)
 		}
 		wg.Wait()
@@ -141,16 +141,16 @@ func allRefs(cfg config.Config) []Ref {
 	return refs
 }
 
-func fetchOne(cfg config.Config, root string, ref Ref, events chan<- Event) {
+func fetchOne(cfg config.Config, root, repoRoot string, ref Ref, events chan<- Event) {
 	switch ref.Category {
 	case "runtimes":
-		_ = fetchRuntimeRef(cfg, root, ref, events) // failure already emitted as a Failed event
+		_ = fetchRuntimeRef(cfg, root, repoRoot, ref, events) // failure already emitted as a Failed event
 	case "tools":
-		fetchToolRef(cfg, root, ref, events)
+		fetchToolRef(cfg, root, repoRoot, ref, events)
 	case "lint":
-		fetchLintRef(cfg, root, ref, events)
+		fetchLintRef(cfg, root, repoRoot, ref, events)
 	case "actions":
-		fetchActionRef(cfg, root, ref, events)
+		fetchActionRef(cfg, root, repoRoot, ref, events)
 	case "plugins":
 		fetchPluginRef(cfg, ref, events)
 	default:
@@ -164,7 +164,7 @@ func fetchOne(cfg config.Config, root string, ref Ref, events chan<- Event) {
 // error whenever it emitted a Failed event, so fetchToolRef's runtime+package branch can bail out
 // on a real runtime failure instead of proceeding to InstallPackage with no runtime on disk (see
 // Fix 4: that used to surface a confusing "npm not found" instead of the real cause).
-func fetchRuntimeRef(cfg config.Config, root string, ref Ref, events chan<- Event) error {
+func fetchRuntimeRef(cfg config.Config, root, repoRoot string, ref Ref, events chan<- Event) error {
 	rt, ok := cfg.Runtimes.Definitions[ref.ID]
 	if !ok {
 		err := fmt.Errorf("download: unknown runtime %q", ref.ID)
@@ -198,6 +198,11 @@ func fetchRuntimeRef(cfg config.Config, root string, ref Ref, events chan<- Even
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return err
 	}
+	release, err := claimInstall(ref, installDir, repoRoot, events)
+	if release == nil {
+		return err
+	}
+	defer release()
 	if err := fetchDownload(root, ref, dl, version, installDir, events); err != nil {
 		return err // fetchDownload already emitted the Failed event
 	}
@@ -219,7 +224,7 @@ func fetchRuntimeRef(cfg config.Config, root string, ref Ref, events chan<- Even
 // fetchToolRef fetches a "tools" ref: a download-recipe tool follows the same path as a runtime;
 // a runtime+package tool ensures its runtime is fetched first, then installs the package through
 // it (Task 8), writing an environment-injecting shim (Task 5/6) instead of a plain one.
-func fetchToolRef(cfg config.Config, root string, ref Ref, events chan<- Event) {
+func fetchToolRef(cfg config.Config, root, repoRoot string, ref Ref, events chan<- Event) {
 	tool, ok := cfg.Tools[ref.ID]
 	if !ok {
 		events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: unknown tool %q", ref.ID)}
@@ -242,6 +247,11 @@ func fetchToolRef(cfg config.Config, root string, ref Ref, events chan<- Event) 
 			events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: tool %q: no download recipe %q", ref.ID, tool.Download)}
 			return
 		}
+		release, _ := claimInstall(ref, installDir, repoRoot, events)
+		if release == nil {
+			return
+		}
+		defer release()
 		if err := fetchDownload(root, ref, dl, version, installDir, events); err != nil {
 			return
 		}
@@ -269,12 +279,17 @@ func fetchToolRef(cfg config.Config, root string, ref Ref, events chan<- Event) 
 	runtimeVersion := ResolveVersion(cfg.Runtimes.Enabled, tool.Runtime, rt.KnownGoodVersion)
 	runtimeInstallDir := InstallDir(root, "runtimes", tool.Runtime, runtimeVersion)
 	if !dirNonEmpty(runtimeInstallDir) {
-		if err := fetchRuntimeRef(cfg, root, Ref{Category: "runtimes", ID: tool.Runtime, Version: runtimeVersion}, events); err != nil {
+		if err := fetchRuntimeRef(cfg, root, repoRoot, Ref{Category: "runtimes", ID: tool.Runtime, Version: runtimeVersion}, events); err != nil {
 			events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: tool %q: runtime %q: %w", ref.ID, tool.Runtime, err)}
 			return
 		}
 	}
 
+	release, _ := claimInstall(ref, installDir, repoRoot, events)
+	if release == nil {
+		return
+	}
+	defer release()
 	events <- Event{Ref: ref, Phase: Started}
 	if err := InstallPackage(rt, runtimeInstallDir, installDir, tool.Package, version); err != nil {
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
@@ -346,6 +361,25 @@ func fetchDownload(root string, ref Ref, dl config.Download, version, installDir
 	return nil
 }
 
+// claimInstall takes installDir's cross-process install lock (see acquireInstallLock) for ref. A
+// nil release means ref already got its terminal event and the caller must return err as is:
+// Failed (err set) when another process holds the lock, or Cached (err nil) when another process
+// finished installing it between the caller's own dirNonEmpty check and this claim. Otherwise the
+// caller installs, then calls release.
+func claimInstall(ref Ref, installDir, repoRoot string, events chan<- Event) (release func(), err error) {
+	release, err = acquireInstallLock(installDir, repoRoot)
+	if err != nil {
+		events <- Event{Ref: ref, Phase: Failed, Err: err}
+		return nil, err
+	}
+	if dirNonEmpty(installDir) {
+		release()
+		events <- Event{Ref: ref, Phase: Cached}
+		return nil, nil
+	}
+	return release, nil
+}
+
 // dirNonEmpty reports whether path already exists as a directory -- how fetchOne skips straight
 // to Cached instead of re-fetching an already-installed version. Existence, not contents, is the
 // signal: InstallDir's own directory is only ever created by a completed InstallDownload/
@@ -358,20 +392,20 @@ func dirNonEmpty(path string) bool {
 // fetchLintRef expands a "lint" ref into its underlying tool(s) (Linter.Tools) -- a linter has no
 // binary of its own to fetch. Events land against Ref{Category: "tools", ...} for each, not this
 // wrapper ref.
-func fetchLintRef(cfg config.Config, root string, ref Ref, events chan<- Event) {
+func fetchLintRef(cfg config.Config, root, repoRoot string, ref Ref, events chan<- Event) {
 	l, ok := cfg.Lint.Definitions[ref.ID]
 	if !ok {
 		events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: unknown lint definition %q", ref.ID)}
 		return
 	}
 	for _, toolID := range l.Tools {
-		fetchToolRef(cfg, root, Ref{Category: "tools", ID: toolID}, events)
+		fetchToolRef(cfg, root, repoRoot, Ref{Category: "tools", ID: toolID}, events)
 	}
 }
 
 // fetchActionRef expands an "actions" ref into its runtime, if it names one (some actions, like
 // go-mod-tidy, shell out directly with no runtime: field -- ARCHITECTURE.md "actions:").
-func fetchActionRef(cfg config.Config, root string, ref Ref, events chan<- Event) {
+func fetchActionRef(cfg config.Config, root, repoRoot string, ref Ref, events chan<- Event) {
 	a, ok := cfg.Actions.Definitions[ref.ID]
 	if !ok {
 		events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: unknown action %q", ref.ID)}
@@ -381,7 +415,7 @@ func fetchActionRef(cfg config.Config, root string, ref Ref, events chan<- Event
 		events <- Event{Ref: ref, Phase: Cached}
 		return
 	}
-	_ = fetchRuntimeRef(cfg, root, Ref{Category: "runtimes", ID: a.Runtime}, events) // failure already emitted as a Failed event
+	_ = fetchRuntimeRef(cfg, root, repoRoot, Ref{Category: "runtimes", ID: a.Runtime}, events) // failure already emitted as a Failed event
 }
 
 // fetchPluginRef reports a "plugins" ref as always Cached: by the time cfg exists, resolving it

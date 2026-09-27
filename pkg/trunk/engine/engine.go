@@ -222,7 +222,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 			filesByName[name] = files
 			refs = append(refs, requiredRefs(linter, include)...)
 		}
-		failed := prefetch(env.Cfg, root, env.CacheDir, refs, func(ev Event) { events <- ev })
+		failed := prefetch(env.Cfg, root, env.CacheDir, repoRoot, refs, func(ev Event) { events <- ev })
 
 		states := make(map[string]*linterState, len(names))
 		var jobs []job
@@ -334,7 +334,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			}
 			dir, cached := parserPathEnvByRuntime[cmd.Parser.Runtime]
 			if !cached {
-				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, cmd.Parser.Runtime, failed, emit)
+				resolved, err := resolveRuntimeShimDir(cfg, root, cacheDir, repoRoot, cmd.Parser.Runtime, failed, emit)
 				if err != nil {
 					events <- Event{Linter: name, Phase: Skipped, Note: fmt.Sprintf("parser runtime %q unavailable: %v", cmd.Parser.Runtime, err), Files: relFiles}
 					continue
@@ -378,7 +378,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		}
 
 		if !pathEnvResolved {
-			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, linter.Tools, failed, emit)
+			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, repoRoot, linter.Tools, failed, emit)
 			if err != nil {
 				events <- Event{Linter: name, Phase: Failed, Note: "resolving tools", Err: err, Files: relFiles}
 				return nil
@@ -1013,7 +1013,7 @@ func requiredRefs(linter config.Linter, include func(config.Command) bool) []dow
 // item count first so the live view's total is fixed before the first install starts. It returns
 // each failed item's error keyed by "category/id"; those linters then fail in resolveShimDirs
 // without a second attempt.
-func prefetch(cfg config.Config, root, cacheDir string, refs []download.Ref, emit func(Event)) map[string]error {
+func prefetch(cfg config.Config, root, cacheDir, repoRoot string, refs []download.Ref, emit func(Event)) map[string]error {
 	// Same "is it there" test as resolveShimDirs/resolveRuntimeShimDir: a shim on disk wins.
 	var missing []download.Ref
 	for _, r := range refs {
@@ -1035,7 +1035,7 @@ func prefetch(cfg config.Config, root, cacheDir string, refs []download.Ref, emi
 		return nil
 	}
 	emit(Event{Phase: InstallPlanned, Total: len(pending)})
-	evs, err := download.Download(cfg, cacheDir, pending...)
+	evs, err := download.Download(cfg, cacheDir, repoRoot, pending...)
 	if err != nil {
 		failed := map[string]error{}
 		for _, r := range pending {
@@ -1050,7 +1050,7 @@ func prefetch(cfg config.Config, root, cacheDir string, refs []download.Ref, emi
 // resolveShimDirs resolves (downloading first if not already cached) every tool id's shim, and
 // returns the directory each shim lives in -- a Command.Run string references its tool(s) by bare
 // name, so those directories become the PATH prefix that lets `sh -c` find them.
-func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string, failed map[string]error, emit func(Event)) ([]string, error) {
+func resolveShimDirs(cfg config.Config, root, cacheDir, repoRoot string, toolIDs []string, failed map[string]error, emit func(Event)) ([]string, error) {
 	dirs := make([]string, 0, len(toolIDs))
 	for _, id := range toolIDs {
 		tool, ok := cfg.Tools[id]
@@ -1063,7 +1063,7 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string,
 			return nil, err // already attempted (and reported) by prefetch
 		}
 		if _, statErr := os.Stat(shimPath); statErr != nil {
-			evs, err := download.Download(cfg, cacheDir, download.Ref{Category: "tools", ID: id, Version: version})
+			evs, err := download.Download(cfg, cacheDir, repoRoot, download.Ref{Category: "tools", ID: id, Version: version})
 			if err != nil {
 				return nil, err
 			}
@@ -1089,7 +1089,7 @@ func resolveShimDirs(cfg config.Config, root, cacheDir string, toolIDs []string,
 // never gets a shim written for it at all (see fetchRuntimeRef), so resolving one here would
 // return a directory that was never created; this is a known, real gap for that specific
 // combination, left unhandled since no real catalog Command.Parser reaches it today.
-func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string, failed map[string]error, emit func(Event)) (string, error) {
+func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, repoRoot, runtimeID string, failed map[string]error, emit func(Event)) (string, error) {
 	rt, ok := cfg.Runtimes.Definitions[runtimeID]
 	if !ok {
 		return "", fmt.Errorf("engine: parser runtime %q referenced but not found in resolved config", runtimeID)
@@ -1103,7 +1103,7 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string, 
 		return "", err // already attempted (and reported) by prefetch
 	}
 	if _, statErr := os.Stat(shimPath); statErr != nil {
-		evs, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
+		evs, err := download.Download(cfg, cacheDir, repoRoot, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
 		if err != nil {
 			return "", err
 		}

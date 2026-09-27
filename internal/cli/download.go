@@ -32,7 +32,11 @@ func (c *downloadCmd) Run(cli *CLI, stdout io.Writer) error {
 	}
 
 	id, version, _ := cutVersion(c.ID)
-	events, err := download.Download(cfg, cli.CacheDir, download.Ref{Category: toolboxCategory(c.Category), ID: id, Version: version})
+	repoRoot, err := logsRepoRoot(cli)
+	if err != nil {
+		return err
+	}
+	events, err := download.Download(cfg, cli.CacheDir, repoRoot, download.Ref{Category: toolboxCategory(c.Category), ID: id, Version: version})
 	if err != nil {
 		return err
 	}

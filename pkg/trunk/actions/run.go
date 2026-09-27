@@ -121,7 +121,7 @@ func IsInteractive() bool {
 // resolveRuntimeShimDir is pkg/trunk/engine's own resolveRuntimeShimDir, copied rather than
 // exported across the package boundary for this one call site (same reasoning as this package's
 // local quoteOne/quoteAll: a ~15 line helper isn't worth a cross-package export).
-func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) (string, error) {
+func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, repoRoot, runtimeID string) (string, error) {
 	rt, ok := cfg.Runtimes.Definitions[runtimeID]
 	if !ok {
 		return "", fmt.Errorf("actions: runtime %q referenced but not found in resolved config", runtimeID)
@@ -132,7 +132,7 @@ func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, runtimeID string) 
 	version := download.ResolveVersion(cfg.Runtimes.Enabled, runtimeID, rt.KnownGoodVersion)
 	shimPath := download.ShimPath(root, "runtimes", runtimeID, version, rt.Shims[0])
 	if _, statErr := os.Stat(shimPath); statErr != nil {
-		evs, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
+		evs, err := download.Download(cfg, cacheDir, repoRoot, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
 		if err != nil {
 			return "", err
 		}
@@ -223,7 +223,7 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 		if !ok {
 			return fail(fmt.Errorf("actions: %s: runtime %q not found in resolved config", action.ID, action.Runtime))
 		}
-		shimDir, err := resolveRuntimeShimDir(cfg, root, opts.CacheDir, action.Runtime)
+		shimDir, err := resolveRuntimeShimDir(cfg, root, opts.CacheDir, opts.RepoRoot, action.Runtime)
 		if err != nil {
 			return fail(err)
 		}
