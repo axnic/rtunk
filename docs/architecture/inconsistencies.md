@@ -401,7 +401,7 @@ the full field-by-field index with catalog occurrence counts.
 
 ### 16. Action fetch category is redundant with runtime provisioning
 
-**Status**: accepted — implement.
+**Status**: accepted — implemented (v0.11 shared-provisioning plan).
 
 **What**: fetching "for an action" is modeled today as its own fetch-target category, alongside tool,
 runtime, and linter — but an action has no download of its own; provisioning it is entirely a matter

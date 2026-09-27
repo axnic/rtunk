@@ -16,7 +16,7 @@ import (
 // Ref identifies one item to fetch. Version "" defers to whatever the enabled list (or the
 // definition's KnownGoodVersion) pins -- see ResolveVersion.
 type Ref struct {
-	Category string // "tools" | "runtimes" | "lint" | "actions" | "plugins"
+	Category string // "tools" | "runtimes" | "lint" | "action-packages" | "plugins"
 	ID       string
 	Version  string
 }
@@ -130,7 +130,7 @@ func Pending(cfg config.Config, root string, refs ...Ref) []Ref {
 }
 
 // allRefs is every enabled+used tool and runtime in cfg -- what a bare `rtunk download` fetches.
-// lint/actions/plugins refs (Task 10) are for targeted `rtunk download <category> <id>` use only:
+// lint/plugins refs (Task 10) are for targeted `rtunk download <category> <id>` use only:
 // their underlying tools/runtimes are already covered here.
 func allRefs(cfg config.Config) []Ref {
 	refs := make([]Ref, 0, len(cfg.Tools)+len(cfg.Runtimes.Definitions))
@@ -151,8 +151,6 @@ func fetchOne(cfg config.Config, root, repoRoot string, ref Ref, events chan<- E
 		fetchToolRef(cfg, root, repoRoot, ref, events)
 	case "lint":
 		fetchLintRef(cfg, root, repoRoot, ref, events)
-	case "actions":
-		fetchActionRef(cfg, root, repoRoot, ref, events)
 	case "action-packages":
 		fetchActionPackagesRef(cfg, root, repoRoot, ref, events)
 	case "plugins":
@@ -406,21 +404,6 @@ func fetchLintRef(cfg config.Config, root, repoRoot string, ref Ref, events chan
 	for _, toolID := range l.Tools {
 		fetchToolRef(cfg, root, repoRoot, Ref{Category: "tools", ID: toolID}, events)
 	}
-}
-
-// fetchActionRef expands an "actions" ref into its runtime, if it names one (some actions, like
-// go-mod-tidy, shell out directly with no runtime: field -- ARCHITECTURE.md "actions:").
-func fetchActionRef(cfg config.Config, root, repoRoot string, ref Ref, events chan<- Event) {
-	a, ok := cfg.Actions.Definitions[ref.ID]
-	if !ok {
-		events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: unknown action %q", ref.ID)}
-		return
-	}
-	if a.Runtime == "" {
-		events <- Event{Ref: ref, Phase: Cached}
-		return
-	}
-	_ = fetchRuntimeRef(cfg, root, repoRoot, Ref{Category: "runtimes", ID: a.Runtime}, events) // failure already emitted as a Failed event
 }
 
 // actionPackagesFilePath resolves action.PackagesFile against its SourceRoot/SourceDir -- the same

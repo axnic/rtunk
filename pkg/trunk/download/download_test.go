@@ -686,46 +686,6 @@ func TestDownload_LintRef_UnknownDefinition(t *testing.T) {
 	assert.ErrorContains(t, ev.Err, `unknown lint definition "nope"`)
 }
 
-func TestDownload_ActionRef_UnknownAction(t *testing.T) {
-	events, err := download.Download(config.Config{}, t.TempDir(), "/repo", download.Ref{Category: "actions", ID: "nope"})
-	require.NoError(t, err)
-	ev := <-events
-	assert.Equal(t, download.Failed, ev.Phase)
-	assert.ErrorContains(t, ev.Err, `unknown action "nope"`)
-}
-
-// TestDownload_ActionRef_NoRuntime_Cached covers an action with no runtime: field at all -- real
-// catalog data has actions like go-mod-tidy that shell out directly, needing nothing fetched.
-func TestDownload_ActionRef_NoRuntime_Cached(t *testing.T) {
-	cfg := config.Config{
-		Actions: config.CategoryConfig[config.Action]{
-			Definitions: map[string]config.Action{"go-mod-tidy": {ID: "go-mod-tidy"}},
-		},
-	}
-	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "actions", ID: "go-mod-tidy"})
-	require.NoError(t, err)
-	ev := <-events
-	assert.Equal(t, download.Cached, ev.Phase)
-}
-
-// TestDownload_ActionRef_ExpandsToRuntime covers an action that DOES name a runtime -- expanded
-// into a "runtimes" fetch (a system_version runtime, so this needs no network to prove the
-// expansion happens).
-func TestDownload_ActionRef_ExpandsToRuntime(t *testing.T) {
-	cfg := config.Config{
-		Actions: config.CategoryConfig[config.Action]{
-			Definitions: map[string]config.Action{"commitlint": {ID: "commitlint", Runtime: "node"}},
-		},
-		Runtimes: config.CategoryConfig[config.Runtime]{
-			Definitions: map[string]config.Runtime{"node": {Type: "node", SystemVersion: ">=18.0.0"}},
-		},
-	}
-	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "actions", ID: "commitlint"})
-	require.NoError(t, err)
-	ev := <-events
-	assert.Equal(t, download.Cached, ev.Phase, "expanded into the runtime's own fetch, which is Cached for system_version")
-}
-
 func TestDownload_ToolRef_UnknownDownloadRecipe(t *testing.T) {
 	cfg := config.Config{
 		Tools: map[string]config.Tool{"foo": {Name: "foo", Download: "missing-recipe", KnownGoodVersion: "1.0.0"}},
