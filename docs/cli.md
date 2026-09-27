@@ -37,7 +37,7 @@ Without a path (`rtunk check`, `rtunk fmt`):
 | Situation                      | Files processed                                                                                      |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | In git, branch has an upstream | diff from `merge-base(upstream, HEAD)` to the working tree (staged, unstaged, untracked-not-ignored) |
-| In git, no upstream            | staged files only                                                                                    |
+| In git, no upstream            | diff from `HEAD` to the working tree (staged, unstaged, untracked-not-ignored)                       |
 | Not in git                     | nothing runs (no timestamp fallback)                                                                 |
 
 `--from <ref>` forces the diff base. It exists for CI (detached HEAD, no upstream). When nothing

@@ -39,16 +39,23 @@ func TestSelectFiles_NotInGit(t *testing.T) {
 	assert.Empty(t, files)
 }
 
-func TestSelectFiles_NoUpstream_StagedOnly(t *testing.T) {
+func TestSelectFiles_NoUpstream_DiffFromHEADAndUntracked(t *testing.T) {
 	dir := newRepo(t)
+	write(t, dir, "c.txt", "c")
+	git(t, dir, "add", "c.txt")
+	git(t, dir, "commit", "-qam", "add c")
+
 	write(t, dir, "a.txt", "a2")
-	write(t, dir, "b.txt", "b2")
-	git(t, dir, "add", "a.txt")
-	write(t, dir, "new.txt", "n") // untracked: ignored without upstream
+	git(t, dir, "add", "a.txt")                                // staged
+	write(t, dir, "b.txt", "b2")                                // unstaged
+	write(t, dir, "new.txt", "n")                               // untracked
+	require.NoError(t, os.Remove(filepath.Join(dir, "c.txt"))) // deleted: not selected
 
 	files, err := selectFiles(dir, "")
 	require.NoError(t, err)
-	assert.Equal(t, []string{filepath.Join(dir, "a.txt")}, files)
+	assert.ElementsMatch(t, []string{
+		filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt"), filepath.Join(dir, "new.txt"),
+	}, files)
 }
 
 func TestSelectFiles_Upstream_DiffAndUntracked(t *testing.T) {

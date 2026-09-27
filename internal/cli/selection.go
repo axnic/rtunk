@@ -60,10 +60,12 @@ func absAll(dir string, rel []string) []string {
 	return out
 }
 
-// selectFiles is the no-path file selection: the diff from merge-base(base, HEAD) to the working
-// tree plus untracked non-ignored files, where base is from, else the branch's upstream; with
-// neither, staged files only. Outside git, nothing (no timestamp fallback). Deleted files are
-// never selected. Paths are absolute.
+// selectFiles is the no-path file selection: the diff from the diff base (from, else the branch's
+// upstream, else HEAD) to the working tree, plus untracked non-ignored files. With an explicit
+// base or an upstream, the diff base is merge-base(base, HEAD); with neither, it is HEAD directly,
+// so the no-upstream case picks up every staged and unstaged change since the last commit, not
+// staged changes only. Outside git, nothing (no timestamp fallback). Deleted files are never
+// selected. Paths are absolute.
 func selectFiles(repoRoot, from string) ([]string, error) {
 	if !inGit(repoRoot) {
 		return nil, nil
@@ -74,15 +76,15 @@ func selectFiles(repoRoot, from string) ([]string, error) {
 			base = up[0]
 		}
 	}
-	if base == "" {
-		staged, err := gitOut(repoRoot, "diff", "--cached", "--relative", "--name-only", "--diff-filter=d")
-		return absAll(repoRoot, staged), err
+	diffBase := "HEAD"
+	if base != "" {
+		mb, err := gitOut(repoRoot, "merge-base", base, "HEAD")
+		if err != nil || len(mb) != 1 {
+			return nil, fmt.Errorf("cannot resolve diff base %q: %v", base, err)
+		}
+		diffBase = mb[0]
 	}
-	mb, err := gitOut(repoRoot, "merge-base", base, "HEAD")
-	if err != nil || len(mb) != 1 {
-		return nil, fmt.Errorf("cannot resolve diff base %q: %v", base, err)
-	}
-	changed, err := gitOut(repoRoot, "diff", "--relative", "--name-only", "--diff-filter=d", mb[0])
+	changed, err := gitOut(repoRoot, "diff", "--relative", "--name-only", "--diff-filter=d", diffBase)
 	if err != nil {
 		return nil, err
 	}
