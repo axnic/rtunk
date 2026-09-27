@@ -127,6 +127,16 @@ that fixes files exits `0`. (Implemented.)
 `fmt` writes to the working tree only and never touches the index (no `git add`). Partially staged
 files are skipped with a warning unless `--force` is given. (Implemented.)
 
+### check --fix and --format-before-check
+
+`check --fix` (`-y`) applies every enabled fix command (a linter's own in-place, non-formatter
+autofix) and every finding's own inline fix to what the checking pass found, then reports whatever
+remains — it never runs a formatter. `check --format-before-check` runs every enabled formatter
+first, then checks the reformatted files — the combined "format, then check" sequence `--fix` used
+to mean; `--verify-stable` now applies to `--format-before-check`'s own formatting pass, same as
+`fmt --verify-stable`. The two compose: given together, the order is format pass, checking pass,
+fix application, final checking pass. (Implemented, internal/cli/check.go.)
+
 ### Hidden commands
 
 `toolbox` and other internal commands are callable but absent from the default help. `rtunk help

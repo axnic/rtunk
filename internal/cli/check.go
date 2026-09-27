@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,20 +37,25 @@ type lintersCmd struct {
 
 // checkRunCmd is `rtunk check [paths...]`: given paths, or the whole repository if none.
 type checkRunCmd struct {
-	Paths        []string `arg:"" optional:"" help:"Paths to check (default: changed files, see --from)."`
-	NoProgress   bool     `help:"Do not print the per-linter progress lines on stderr."`
-	ASCII        bool     `name:"ascii" help:"Use ASCII glyphs in the live view."`
-	LiveHeight   int      `help:"Maximum height of the live view in lines (default: half the terminal, minimum 3)." env:"RTUNK_LIVE_HEIGHT"`
-	Format       string   `enum:"human,sarif,json" default:"human" help:"Output format: human, sarif (for CI) or json."`
-	From         string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
-	Jobs         int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
-	Fix          bool     `short:"y" help:"Apply automatic fixes (formatter commands) before reporting."`
-	VerifyStable bool     `help:"With --fix, verify the result is stable instead of a single pass."`
-	Filter       string   `help:"Comma-separated linter id allow-list, or --filter=-id,-id... deny-list (trunk compatibility)."`
-	Exclude      string   `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
-	// NoFix is accepted for trunk compatibility and has no effect: check already never applies
-	// fixes unless --fix/-y is given, so --no-fix asks for check's existing default.
-	NoFix bool `short:"n" help:"Accepted for trunk compatibility; check never auto-fixes without --fix, this has no effect. Note: --fix always wins if both are given."`
+	Paths      []string `arg:"" optional:"" help:"Paths to check (default: changed files, see --from)."`
+	NoProgress bool     `help:"Do not print the per-linter progress lines on stderr."`
+	ASCII      bool     `name:"ascii" help:"Use ASCII glyphs in the live view."`
+	LiveHeight int      `help:"Maximum height of the live view in lines (default: half the terminal, minimum 3)." env:"RTUNK_LIVE_HEIGHT"`
+	Format     string   `enum:"human,sarif,json" default:"human" help:"Output format: human, sarif (for CI) or json."`
+	From       string   `help:"Diff base for the default file selection (e.g. origin/main, for CI)."`
+	Jobs       int      `short:"j" help:"Number of parallel linter workers (default: number of CPUs)."`
+	// FormatBeforeCheck runs every enabled formatter before checking (today's "format, then
+	// check" sequence, opt-in instead of implicit -- see AGENTS.md's "Plain check does not run
+	// formatters" divergence and inconsistencies.md entry #4).
+	FormatBeforeCheck bool   `help:"Run every formatter, then check the reformatted files."`
+	Fix               bool   `short:"y" help:"Apply linter fixes (fix commands and finding-level autofixes) to what checking found, then report what remains."`
+	VerifyStable      bool   `help:"With --format-before-check, verify the formatting result is stable instead of a single pass."`
+	Filter            string `help:"Comma-separated linter id allow-list, or --filter=-id,-id... deny-list (trunk compatibility)."`
+	Exclude           string `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
+	// NoFix is accepted for trunk compatibility and has no effect: check's default (neither
+	// --fix nor --format-before-check) already applies no fix. Note: --fix wins if both are
+	// given.
+	NoFix bool `short:"n" help:"Accepted for trunk compatibility; has no effect. Note: --fix always wins if both are given."`
 	// PrintFailures is accepted for trunk compatibility and has no effect: check already always
 	// prints Failed events to stderr unconditionally (the FAILURES section and progress lines, see internal/cli/render).
 	PrintFailures bool `help:"Accepted for trunk compatibility; check already always prints failures, this has no effect."`
@@ -99,17 +105,17 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	defer func() { log.End(runFailed) }()
 	env.Log = log
 
-	// --fix runs every Formatter command first (the exact same selection `rtunk fmt` uses) and
-	// lets it finish writing before the checking pass below ever reads the same files -- an
-	// issue the formatter genuinely fixed is, by definition, no longer wrong by the time the
-	// checking commands run, so it never appears in the findings this command reports. A Failed
-	// event in this pass is recorded but does not abort: the checking pass below still runs,
-	// matching this project's existing per-linter failure isolation (one linter's Failed event
-	// has never stopped its siblings from running).
+	// --format-before-check runs every Formatter command first (the exact same selection `rtunk
+	// fmt` uses) and lets it finish writing before the checking pass below ever reads the same
+	// files -- an issue the formatter genuinely fixed is, by definition, no longer wrong by the
+	// time the checking commands run, so it never appears in the findings this command reports. A
+	// Failed event in this pass is recorded but does not abort: the checking pass below still
+	// runs, matching this project's existing per-linter failure isolation (one linter's Failed
+	// event has never stopped its siblings from running).
 	var fixFailed error
 	var fixChanged, fixSkipped []string
 	var fixFailures []render.Failure // machine formats: the document must explain a non-zero exit
-	if c.Fix {
+	if c.FormatBeforeCheck {
 		started := time.Now()
 		// Under a machine format the formatter pass has no stdout report of its own (one document
 		// per run); its progress still streams and it still counts toward the exit code.
@@ -139,17 +145,54 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 
 	started := time.Now()
 	r := newRenderer(c.Format, stdout, stderr, render.Check, progressOpts{c.NoProgress, c.ASCII, c.LiveHeight})
-	events, err := engine.Run(context.Background(), env, files, func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace })
+	checkPredicate := func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace }
+	events, err := engine.Run(context.Background(), env, files, checkPredicate)
 	if err != nil {
 		return err
 	}
 	findings, _, skipped, failed := drainRunEvents(r.Event, events)
-	runFailed = failed != nil || runFailedBy(fixFailed)
+	// Findings report File relative to workDir (whatever the output parser produced -- e.g.
+	// pass_fail's own batch-relative path), same as printed above; --fix needs an absolute path
+	// to hand to engine.Run and ApplyInlineFixes (os.ReadFile/WriteFile), so it's normalized here,
+	// after printing, not before.
+	for i := range findings {
+		if !filepath.IsAbs(findings[i].File) {
+			findings[i].File = filepath.Join(repoRoot, findings[i].File)
+		}
+	}
+
+	// --fix applies every enabled fix command (in-place, not a formatter) plus every finding's own
+	// inline fix to what the checking pass above just found, then re-runs the same checking pass
+	// so the report below reflects whatever remains -- ROADMAP.md v0.10 "check --fix means linter
+	// fixes only". Nothing to apply when there are no findings: firing every enabled fix command
+	// over every file regardless of findings would defeat "applied to what the checking pass
+	// found." A fix command's own Failed event does not abort, matching --format-before-check's
+	// own tolerance above.
+	var fixCmdChanged, fixCmdSkipped []string
+	var fixCmdFailed error
+	var inlineFixed []string
+	if c.Fix && len(findings) > 0 {
+		fixCmdChanged, fixCmdSkipped, fixCmdFailed = runFixCommands(context.Background(), env, findingFiles(findings), r.Event)
+		inlineFixed, err = engine.ApplyInlineFixes(findings)
+		if err != nil {
+			return err
+		}
+		if len(fixCmdChanged) > 0 || len(inlineFixed) > 0 {
+			events2, err := engine.Run(context.Background(), env, files, checkPredicate)
+			if err != nil {
+				return err
+			}
+			var skipped2 []string
+			findings, _, skipped2, failed = drainRunEvents(r.Event, events2)
+			skipped = mergeSortedUnique(skipped, skipped2)
+		}
+	}
+	runFailed = failed != nil || runFailedBy(fixFailed) || runFailedBy(fixCmdFailed)
 
 	sum := render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped}
-	if c.Format != "human" { // the machine document carries the formatter pass too
-		sum.Changed = fixChanged
-		sum.Skipped = mergeSortedUnique(skipped, fixSkipped)
+	if c.Format != "human" { // the machine document carries every writing pass too
+		sum.Changed = mergeSortedUnique(fixChanged, mergeSortedUnique(fixCmdChanged, inlineFixed))
+		sum.Skipped = mergeSortedUnique(sum.Skipped, mergeSortedUnique(fixSkipped, fixCmdSkipped))
 		sum.Failures = fixFailures
 	}
 	_ = r.Close(sum)
@@ -163,6 +206,35 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		return fmt.Errorf("rtunk: check found %d issue(s)", len(findings))
 	}
 	return nil
+}
+
+// findingFiles returns the deduplicated, sorted set of files findings reports on -- check --fix's
+// own fix-command pass and inline-fix pass only ever touch what pass 1 actually flagged.
+func findingFiles(findings []output.Finding) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range findings {
+		if !seen[f.File] {
+			seen[f.File] = true
+			out = append(out, f.File)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// runFixCommands runs every enabled fix command (in-place, not a formatter -- ROADMAP.md v0.10
+// "Fix-only linters actually fix") over files, reusing engine.Run's existing InPlace
+// change-detection (already keyed on InPlace alone, not Formatter). A fix command's own Failed
+// event is recorded (via printFn, check --fix's shared renderer) but does not itself abort --
+// matches --format-before-check's own pre-existing tolerance of a Failed formatter.
+func runFixCommands(ctx context.Context, env engine.Env, files []string, printFn func(engine.Event)) (changed, skipped []string, failed error) {
+	events, err := engine.Run(ctx, env, files, func(cmd config.Command) bool { return cmd.InPlace && !cmd.Formatter })
+	if err != nil {
+		return nil, nil, err
+	}
+	_, changed, skipped, failed = drainRunEvents(printFn, events)
+	return changed, skipped, failed
 }
 
 // drainRunEvents streams every event from events through printFn as it arrives and accumulates

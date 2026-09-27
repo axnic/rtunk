@@ -257,7 +257,7 @@ func TestCheckRunCmd_FixLogsBothPassesInOneFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "work", "file.txt"), []byte("messy\n"), 0o644))
 	cacheDir := t.TempDir()
 
-	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", "--fix", filepath.Join(repoRoot, "work"))
+	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", "--format-before-check", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	runs, err := runlog.List(cacheDir, repoRoot)
@@ -336,7 +336,7 @@ const fightingFormatters = `    - name: fmtA
 func TestVerifyStableUnstable_LogsOkWhileCommandErrors(t *testing.T) {
 	for _, args := range [][]string{
 		{"fmt", "--verify-stable"},
-		{"check", "--fix", "--verify-stable"},
+		{"check", "--format-before-check", "--verify-stable"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			cfgPath, repoRoot := writeLinterFixture(t, []string{"fmtA", "fmtB"}, fightingFormatters)

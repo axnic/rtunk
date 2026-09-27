@@ -154,7 +154,7 @@ func TestCheckFix_MachineFormatsEmitOneDocument(t *testing.T) {
 	target := filepath.Join(repoRoot, "f.txt")
 	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644))
 
-	stdout, _, err := run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--fix", "--format", "json", target)
+	stdout, _, err := run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--format-before-check", "--format", "json", target)
 	require.NoError(t, err)
 	dec := json.NewDecoder(strings.NewReader(stdout))
 	var doc struct {
@@ -167,7 +167,7 @@ func TestCheckFix_MachineFormatsEmitOneDocument(t *testing.T) {
 	assert.Equal(t, []string{"f.txt"}, doc.Changed)
 
 	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644))
-	stdout, _, err = run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--fix", "--format", "sarif", target)
+	stdout, _, err = run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--format-before-check", "--format", "sarif", target)
 	require.NoError(t, err)
 	var sarif map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &sarif))
@@ -204,7 +204,7 @@ func TestCheckFix_FormatterFailureIsInTheMachineDocument(t *testing.T) {
 	target := filepath.Join(repoRoot, "f.txt")
 	require.NoError(t, os.WriteFile(target, []byte("x\n"), 0o644))
 
-	stdout, _, err := run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--fix", "--format", "json", target)
+	stdout, _, err := run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--format-before-check", "--format", "json", target)
 	require.Error(t, err, "the formatter failure still exits non-zero")
 	var doc struct {
 		Failures []struct{ Linter, Error string }
@@ -213,7 +213,7 @@ func TestCheckFix_FormatterFailureIsInTheMachineDocument(t *testing.T) {
 	require.Len(t, doc.Failures, 1, "the document must explain the exit code")
 	assert.Equal(t, "brokenfmt", doc.Failures[0].Linter)
 
-	stdout, _, err = run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--fix", "--format", "sarif", target)
+	stdout, _, err = run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--format-before-check", "--format", "sarif", target)
 	require.Error(t, err)
 	assert.Contains(t, stdout, `"executionSuccessful": false`)
 }

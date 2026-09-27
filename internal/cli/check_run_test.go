@@ -233,9 +233,9 @@ func TestCheckRunCmd_Fix_AppliesFixesBeforeReporting(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(target, []byte("messy\n"), 0o644)) // reset for the --fix run
 
-	// With --fix: the formatter pass rewrites the file before the checking pass ever reads it, so
-	// the finding that showed up above must be absent here.
-	stdout, stderr, err = run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", "--fix", filepath.Join(repoRoot, "work"))
+	// With --format-before-check: the formatter pass rewrites the file before the checking pass
+	// ever reads it, so the finding that showed up above must be absent here.
+	stdout, stderr, err = run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", "--format-before-check", filepath.Join(repoRoot, "work"))
 	require.NoError(t, err, "stderr: %s", stderr)
 	assert.Contains(t, stdout, "REFORMATTED   1 file\n")
 	assert.Contains(t, stdout, "✔ no issues\n")
@@ -406,4 +406,101 @@ func TestCheckRunCmd_LegacyShapeLinter_Refused(t *testing.T) {
 	_, _, err := run2(t, "--config", cfgPath, "check")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "oldstyle")
+}
+
+func TestCheckRunCmd_Fix_AppliesFixCommand(t *testing.T) {
+	// "check" reports a finding until the file's content is genuinely "FIXED" (not a static
+	// fixture), so pass 2 -- run after "fix" -- must come back clean.
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"fixer"}, `    - name: fixer
+      files: [ALL]
+      commands:
+        - name: check
+          run: test "$(cat ${target})" = FIXED
+          output: pass_fail
+        - name: fix
+          run: printf FIXED > ${target}
+          output: pass_fail
+          in_place: true
+          success_codes: [0]
+`)
+	f := filepath.Join(repoRoot, "needsfix.txt")
+	require.NoError(t, os.WriteFile(f, []byte("broken"), 0o644))
+
+	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.NoError(t, err, "stderr: %s", stderr)
+	got, _ := os.ReadFile(f)
+	assert.Equal(t, "FIXED", string(got), "the fix command must have run")
+}
+
+func TestCheckRunCmd_Fix_AppliesFindingLevelFix(t *testing.T) {
+	// The lint command reports a finding (with an inline fix) exactly once per file, marking it
+	// via a sentinel file -- so pass 2, after ApplyInlineFixes has landed, comes back clean,
+	// without needing this fixture to actually re-parse eslint-shaped content.
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"eslintish"}, `    - name: eslintish
+      files: [ALL]
+      commands:
+        - name: lint
+          output: eslint
+          success_codes: [0]
+          run: |
+            if [ -f ${target}.done ]; then
+              echo '[]'
+            else
+              touch ${target}.done
+              printf '[{"filePath":"%s","messages":[{"ruleId":"r","severity":2,"message":"m","line":1,"column":1,"fix":{"range":[0,4],"text":"bbbb"}}]}]' ${target}
+            fi
+`)
+	f := filepath.Join(repoRoot, "inline.txt")
+	require.NoError(t, os.WriteFile(f, []byte("aaaa"), 0o644))
+
+	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.NoError(t, err, "stderr: %s", stderr)
+	got, _ := os.ReadFile(f)
+	assert.Equal(t, "bbbb", string(got), "the finding-level fix must have been applied")
+}
+
+func TestCheckRunCmd_Fix_NoFindings_NoFixCommandRuns(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"nevercalled"}, `    - name: nevercalled
+      files: [ALL]
+      commands:
+        - name: check
+          run: "true"
+          output: pass_fail
+        - name: fix
+          run: sh -c 'echo -n SHOULD_NOT_RUN > ${target}'
+          output: pass_fail
+          in_place: true
+          success_codes: [0]
+`)
+	f := filepath.Join(repoRoot, "clean.txt")
+	require.NoError(t, os.WriteFile(f, []byte("fine"), 0o644))
+
+	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.NoError(t, err, "stderr: %s", stderr)
+	got, _ := os.ReadFile(f)
+	assert.Equal(t, "fine", string(got), "with no findings, the fix command must never run")
+}
+
+func TestCheckRunCmd_Fix_FailedFixCommandDoesNotAbort(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"alwaysfails", "fixer"}, `    - name: alwaysfails
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+    - name: fixer
+      files: [ALL]
+      commands:
+        - name: fix
+          run: sh -c 'exit 1'
+          output: pass_fail
+          in_place: true
+`)
+	f := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(f, []byte("x"), 0o644))
+
+	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.Error(t, err, "the checking pass still found the original issue")
+	assert.NotContains(t, err.Error(), "a linter failed to run", "a fix command's own failure must not itself abort the run")
+	_ = stderr
 }
