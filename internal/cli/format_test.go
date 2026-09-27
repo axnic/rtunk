@@ -175,7 +175,11 @@ func TestCheckFix_MachineFormatsEmitOneDocument(t *testing.T) {
 }
 
 func TestMachineFormats_NoFilesWritesNoDocument(t *testing.T) {
-	cfgPath, _ := twoLinterFixture(t) // not a git repo: no path means nothing runs
+	cfgPath, work := twoLinterFixture(t)
+	repoRoot := filepath.Dir(work)
+	git(t, repoRoot, "init", "-q", "-b", "main")
+	git(t, repoRoot, "add", ".")
+	git(t, repoRoot, "commit", "-q", "-m", "init") // clean tree, no upstream: no path means legitimately nothing to do
 	for _, format := range []string{"json", "sarif"} {
 		stdout, _, err := run2(t, "--config", cfgPath, "--cache-dir", t.TempDir(), "check", "--format", format)
 		require.NoError(t, err)

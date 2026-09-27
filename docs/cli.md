@@ -38,11 +38,13 @@ Without a path (`rtunk check`, `rtunk fmt`):
 | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | In git, branch has an upstream | diff from `merge-base(upstream, HEAD)` to the working tree (staged, unstaged, untracked-not-ignored) |
 | In git, no upstream            | diff from `HEAD` to the working tree (staged, unstaged, untracked-not-ignored)                       |
-| Not in git                     | nothing runs (no timestamp fallback)                                                                 |
+| Not in git                     | error: explicit paths are required                                                                   |
 
-`--from <ref>` forces the diff base. It exists for CI (detached HEAD, no upstream). When nothing
-runs, rtunk prints `rtunk: no files to check` (`check`) or `rtunk: no files to format` (`fmt`) and
-exits `0`. (Implemented, internal/cli/selection.go.)
+`--from <ref>` forces the diff base. It exists for CI (detached HEAD, no upstream). When the
+selection is legitimately empty inside git, rtunk prints `rtunk: no files to check` (`check`) or
+`rtunk: no files to format` (`fmt`) and exits `0`; outside git with no explicit paths, rtunk exits
+`1` with an error explaining that explicit paths are required. (Implemented,
+internal/cli/selection.go.)
 
 With explicit path(s) (`rtunk check .`), every file under the path is processed: `git ls-files -co
 --exclude-standard` in git, everything otherwise.

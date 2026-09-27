@@ -14,6 +14,12 @@ import (
 // the whole repository, which is what an empty paths slice means to engine.Run.
 var errNoFiles = errors.New("no files to process")
 
+// errOutsideGitNoPaths is returned by selectFiles when there is no git repository to diff against
+// and no explicit paths were given: unlike errNoFiles (a legitimately empty selection inside git),
+// this is a caller mistake -- there is no default to fall back to -- so resolvePaths' callers must
+// treat it as a real failure, not a "nothing to do" no-op.
+var errOutsideGitNoPaths = errors.New("rtunk: outside a git repository, explicit paths are required")
+
 // resolvePaths turns the user's path arguments into the absolute file list engine.Run gets, per
 // docs/cli.md "File selection": no paths -> changed files (selectFiles), explicit paths -> every
 // file under them (expandPaths). errNoFiles means there is nothing to run.
@@ -68,7 +74,7 @@ func absAll(dir string, rel []string) []string {
 // selected. Paths are absolute.
 func selectFiles(repoRoot, from string) ([]string, error) {
 	if !inGit(repoRoot) {
-		return nil, nil
+		return nil, errOutsideGitNoPaths
 	}
 	base := from
 	if base == "" {

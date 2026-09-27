@@ -34,9 +34,8 @@ func newRepo(t *testing.T) string {
 }
 
 func TestSelectFiles_NotInGit(t *testing.T) {
-	files, err := selectFiles(t.TempDir(), "")
-	require.NoError(t, err)
-	assert.Empty(t, files)
+	_, err := selectFiles(t.TempDir(), "")
+	require.ErrorIs(t, err, errOutsideGitNoPaths)
 }
 
 func TestSelectFiles_NoUpstream_DiffFromHEADAndUntracked(t *testing.T) {
@@ -133,12 +132,13 @@ const fmtFixture = `    - name: fx
           formatter: true
 `
 
-func TestCheckFmt_NoPathsOutsideGit_RunsNothing(t *testing.T) {
+func TestCheckFmt_NoPathsOutsideGit_HardError(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, []string{"fx"}, fmtFixture)
 	for _, cmd := range []string{"check", "fmt"} {
 		_, stderr, err := run2(t, "--config", cfgPath, cmd)
-		require.NoError(t, err)
-		assert.Contains(t, stderr, "no files to")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicit paths")
+		_ = stderr
 	}
 }
 

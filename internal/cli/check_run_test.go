@@ -331,7 +331,7 @@ func TestCheckRunCmd_NoFix_Accepted(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, nil, "")
 	_, _, err := run2(t, "--config", cfgPath, "check", "-n", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err)
-	_, _, err = run2(t, "--config", cfgPath, "check", "--no-fix")
+	_, _, err = run2(t, "--config", cfgPath, "check", "--no-fix", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err)
 }
 
@@ -339,7 +339,7 @@ func TestCheckRunCmd_NoFix_Accepted(t *testing.T) {
 // unconditionally -- this is a documented no-op.
 func TestCheckRunCmd_PrintFailures_Accepted(t *testing.T) {
 	cfgPath, _ := writeLinterFixture(t, nil, "")
-	_, _, err := run2(t, "--config", cfgPath, "check", "--print-failures")
+	_, _, err := run2(t, "--config", cfgPath, "check", "--print-failures", filepath.Dir(filepath.Dir(cfgPath)))
 	require.NoError(t, err)
 }
 
