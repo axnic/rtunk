@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
 // TestCheckRunCmd_SkipsUnsupportedFormats: an unsupported Output format and a formatter-only
@@ -426,8 +428,9 @@ func TestCheckRunCmd_Fix_AppliesFixCommand(t *testing.T) {
 	f := filepath.Join(repoRoot, "needsfix.txt")
 	require.NoError(t, os.WriteFile(f, []byte("broken"), 0o644))
 
-	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	stdout, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
 	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "✔ no issues\n", "the report must reflect pass 2, not the already-fixed pass 1 finding")
 	got, _ := os.ReadFile(f)
 	assert.Equal(t, "FIXED", string(got), "the fix command must have run")
 }
@@ -482,25 +485,169 @@ func TestCheckRunCmd_Fix_NoFindings_NoFixCommandRuns(t *testing.T) {
 }
 
 func TestCheckRunCmd_Fix_FailedFixCommandDoesNotAbort(t *testing.T) {
-	cfgPath, repoRoot := writeLinterFixture(t, []string{"alwaysfails", "fixer"}, `    - name: alwaysfails
+	// error_codes marks exit 1 a genuine crash (a Failed event), not a pass_fail finding -- the
+	// same linter both reports the finding that makes it eligible for fixing (per-linter scoping)
+	// and owns the fix command that then fails.
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"brokenfixer"}, `    - name: brokenfixer
       files: [ALL]
       commands:
         - name: check
           run: "false"
           output: pass_fail
-    - name: fixer
-      files: [ALL]
-      commands:
         - name: fix
           run: sh -c 'exit 1'
           output: pass_fail
+          error_codes: [1]
           in_place: true
 `)
 	f := filepath.Join(repoRoot, "a.txt")
 	require.NoError(t, os.WriteFile(f, []byte("x"), 0o644))
 
-	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
-	require.Error(t, err, "the checking pass still found the original issue")
-	assert.NotContains(t, err.Error(), "a linter failed to run", "a fix command's own failure must not itself abort the run")
+	stdout, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "brokenfixer", "the fix command's own failure must surface, not a generic message")
+	assert.Contains(t, stdout, "brokenfixer", "pass 2 must still run and report the still-unfixed issue")
 	_ = stderr
+}
+
+func TestCheckRunCmd_Fix_UnresolvedFinding_ReportedOnce(t *testing.T) {
+	// The fix command is a no-op (doesn't actually fix anything); pass 2 must still find the
+	// original issue -- reported exactly once, not once per pass (pass 1's own findings must
+	// never leak into the final report alongside pass 2's).
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"stubborn"}, `    - name: stubborn
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+        - name: fix
+          run: "true"
+          output: pass_fail
+          in_place: true
+          success_codes: [0]
+`)
+	f := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(f, []byte("x"), 0o644))
+
+	stdout, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.Error(t, err, "stderr: %s", stderr)
+	assert.Equal(t, "rtunk: check found 1 issue(s)", err.Error())
+	assert.Equal(t, 1, strings.Count(stdout, "stubborn"), "the still-unresolved finding must be reported exactly once, not once per pass")
+}
+
+func TestCheckRunCmd_Fix_NeverRunsFormatters(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"fmtonly"}, `    - name: fmtonly
+      files: [ALL]
+      commands:
+        - name: format
+          run: printf CHANGED > ${target}
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+          formatter: true
+`)
+	f := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(f, []byte("original"), 0o644))
+
+	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.NoError(t, err, "stderr: %s", stderr)
+	got, _ := os.ReadFile(f)
+	assert.Equal(t, "original", string(got), "check --fix must never run a formatter")
+}
+
+func TestCheckRunCmd_FormatBeforeCheckAndFix_ComposeInOrder(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"fmtr", "fixer"}, `    - name: fmtr
+      files: [ALL]
+      commands:
+        - name: check
+          run: test "$(cat ${target})" = FORMATTED
+          output: pass_fail
+        - name: format
+          run: printf FORMATTED > ${target}
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+          formatter: true
+    - name: fixer
+      files: [ALL]
+      commands:
+        - name: check
+          run: test -f ${target}.fixed
+          output: pass_fail
+        - name: fix
+          run: touch ${target}.fixed
+          output: pass_fail
+          in_place: true
+          success_codes: [0]
+`)
+	f := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(f, []byte("messy"), 0o644))
+
+	stdout, stderr, err := run2(t, "--config", cfgPath, "check", "--format-before-check", "--fix", f)
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Contains(t, stdout, "✔ no issues\n", "both the format-before-check pass and the fix pass must have resolved everything")
+	got, _ := os.ReadFile(f)
+	assert.Equal(t, "FORMATTED", string(got), "format-before-check ran before the checking pass")
+	_, statErr := os.Stat(f + ".fixed")
+	assert.NoError(t, statErr, "the fix pass also ran")
+}
+
+func TestCheckRunCmd_Fix_ScopedToReportingLinter(t *testing.T) {
+	// Two files:[ALL] linters enabled together: "fixer"'s own fix command must run only on the
+	// file *it itself* reported a finding for, never on a file only "other" flagged.
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"fixer", "other"}, `    - name: fixer
+      files: [ALL]
+      commands:
+        - name: check
+          run: test "$(cat ${target})" != BROKEN
+          output: pass_fail
+        - name: fix
+          run: printf FIXED > ${target}
+          output: pass_fail
+          in_place: true
+          success_codes: [0]
+    - name: other
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+`)
+	fixTarget := filepath.Join(repoRoot, "needsfix.txt")
+	require.NoError(t, os.WriteFile(fixTarget, []byte("BROKEN"), 0o644))
+	otherTarget := filepath.Join(repoRoot, "untouched.txt")
+	require.NoError(t, os.WriteFile(otherTarget, []byte("SOMETHING-ELSE"), 0o644))
+
+	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", fixTarget, otherTarget)
+	require.Error(t, err, "stderr: %s", stderr) // "other" always fails on both files, unfixable
+
+	got, _ := os.ReadFile(fixTarget)
+	assert.Equal(t, "FIXED", string(got), "fixer's own fix command still ran on the file it itself flagged")
+	got, _ = os.ReadFile(otherTarget)
+	assert.Equal(t, "SOMETHING-ELSE", string(got), "fixer's own fix command must not touch a file only 'other' flagged")
+}
+
+func TestValidFixTargets(t *testing.T) {
+	repoRoot := t.TempDir()
+	realFile := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(realFile, []byte("x"), 0o644))
+	subdir := filepath.Join(repoRoot, "sub")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	outside := t.TempDir() // a sibling temp dir, never inside repoRoot
+	escape := filepath.Join(outside, "escape.txt")
+	require.NoError(t, os.WriteFile(escape, []byte("x"), 0o644))
+
+	got := validFixTargets([]output.Finding{
+		{File: "a.txt"},                                // relative -- becomes repoRoot-absolute
+		{File: ""},                                      // empty -- dropped
+		{File: "."},                                      // bare dot -- dropped
+		{File: subdir},                                  // a directory -- dropped
+		{File: filepath.Join(repoRoot, "missing.txt")},   // stale/missing -- dropped
+		{File: escape},                                   // a real file, but outside repoRoot -- dropped
+		{File: filepath.Join(repoRoot, "..", filepath.Base(repoRoot), "a.txt")}, // resolves back inside -- kept
+	}, repoRoot)
+
+	require.Len(t, got, 2)
+	assert.Equal(t, realFile, got[0].File)
+	assert.Equal(t, realFile, got[1].File)
 }

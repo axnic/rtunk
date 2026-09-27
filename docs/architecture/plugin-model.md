@@ -205,7 +205,7 @@ index into that.
 | `version` (supported range) | command     | 20                  | parsed, consulted (v0.10)           |
 | `is_security`               | command     | 22                  | not modeled (dropped while parsing) |
 | `disable_upstream`          | command     | 13                  | not modeled (dropped while parsing) |
-| `fix_prompt` / `fix_verb`   | command     | 3 / 3               | not modeled (dropped while parsing) |
+| `fix_prompt` / `fix_verb`   | command     | 3 / 3               | parsed, carried through resolution (v0.10); no consumer yet |
 | `prepare_run`               | command     | 2                   | not modeled (dropped while parsing) |
 | `stdin`                     | command     | 7                   | not modeled (dropped while parsing) |
 | `max_concurrency`           | command     | 4                   | not modeled (dropped while parsing) |

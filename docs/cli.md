@@ -97,9 +97,10 @@ failures: [{linter, error}], skipped: [], changed: []}`. All keys are always pre
   before anything runs.
 
 Progress lines stay on stderr for every format (`--no-progress` silences them); stdout carries only
-the report or document. `check --fix` under `json`/`sarif` emits a single document for the check
-pass (`json` puts the formatter pass's files under `changed`). When no file is selected no document
-is written (empty stdout, exit `0`). Exit codes are unchanged for every format.
+the report or document. `check --fix`/`--format-before-check` under `json`/`sarif` emit a single
+document reflecting the final checking pass (`json` puts every writing pass's files — formatted,
+fix-commanded, or inline-fixed — under `changed`). When no file is selected no document is written
+(empty stdout, exit `0`). Exit codes are unchanged for every format.
 
 ### Exit codes
 

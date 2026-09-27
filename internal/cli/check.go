@@ -150,42 +150,61 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	if err != nil {
 		return err
 	}
-	findings, _, skipped, failed := drainRunEvents(r.Event, events)
-	// Findings report File relative to workDir (whatever the output parser produced -- e.g.
-	// pass_fail's own batch-relative path), same as printed above; --fix needs an absolute path
-	// to hand to engine.Run and ApplyInlineFixes (os.ReadFile/WriteFile), so it's normalized here,
-	// after printing, not before.
-	for i := range findings {
-		if !filepath.IsAbs(findings[i].File) {
-			findings[i].File = filepath.Join(repoRoot, findings[i].File)
-		}
-	}
+	// Buffered, not streamed straight to r: under --fix, pass 1 is only used to decide what to
+	// fix, never shown as the report -- a fresh pass 2 (below) is the one that actually feeds r,
+	// or pass 1 is replayed into r unchanged when there was nothing to fix. Feeding both passes
+	// into the same renderer would double-count every finding that survives, and leave stale
+	// entries in the report for every finding a fix genuinely resolved.
+	raw1 := collectEvents(events)
+	findings, _, skipped, failed := drainEvents(raw1, func(engine.Event) {})
+	// A finding's own File is repoRoot-relative (whatever the output parser produced) or already
+	// absolute; --fix needs an absolute, in-repo, real file to hand to engine.Run and
+	// ApplyInlineFixes (os.ReadFile/WriteFile). validFixTargets both absolutizes and drops
+	// anything that isn't a safe fix target (empty/".", outside repoRoot, missing, or a
+	// directory) -- it does not remove the finding from the report, only from fix eligibility.
+	fixable := validFixTargets(findings, repoRoot)
 
-	// --fix applies every enabled fix command (in-place, not a formatter) plus every finding's own
-	// inline fix to what the checking pass above just found, then re-runs the same checking pass
-	// so the report below reflects whatever remains -- ROADMAP.md v0.10 "check --fix means linter
-	// fixes only". Nothing to apply when there are no findings: firing every enabled fix command
-	// over every file regardless of findings would defeat "applied to what the checking pass
-	// found." A fix command's own Failed event does not abort, matching --format-before-check's
-	// own tolerance above.
+	// --fix applies every finding's own inline fix, then every enabled fix command (in-place, not
+	// a formatter -- ROADMAP.md v0.10 "Fix-only linters actually fix"), to what the checking pass
+	// above just found, then re-runs the same checking pass so the report reflects whatever
+	// remains -- ROADMAP.md v0.10 "check --fix means linter fixes only". Inline fixes land first:
+	// they were computed against pass 1's own file content, so applying them before any fix
+	// command rewrites the same file (which would shift or invalidate those byte ranges) keeps
+	// them valid. Fix commands are scoped to each finding's own reporting linter -- a linter's fix
+	// command has no business rewriting a file only some OTHER linter flagged (e.g. two
+	// files:[ALL] linters enabled together must not have one's fix command clobber a file only
+	// the other one found something in). Nothing to apply when there are no findings: firing
+	// every enabled fix command over every file regardless of findings would defeat "applied to
+	// what the checking pass found." A fix command's own Failed event does not abort, matching
+	// --format-before-check's own tolerance above, but is still surfaced in the final error/report
+	// exactly like --format-before-check's own fixFailed.
 	var fixCmdChanged, fixCmdSkipped []string
 	var fixCmdFailed error
+	var fixCmdFailures []render.Failure
 	var inlineFixed []string
-	if c.Fix && len(findings) > 0 {
-		fixCmdChanged, fixCmdSkipped, fixCmdFailed = runFixCommands(context.Background(), env, findingFiles(findings), r.Event)
-		inlineFixed, err = engine.ApplyInlineFixes(findings)
+	if c.Fix && len(fixable) > 0 {
+		inlineFixed, err = engine.ApplyInlineFixes(fixable)
 		if err != nil {
 			return err
 		}
-		if len(fixCmdChanged) > 0 || len(inlineFixed) > 0 {
-			events2, err := engine.Run(context.Background(), env, files, checkPredicate)
-			if err != nil {
-				return err
+		fixR := newRenderer("human", io.Discard, stderr, render.Fmt, progressOpts{c.NoProgress, c.ASCII, c.LiveHeight})
+		onFixCmd := func(ev engine.Event) {
+			fixR.Event(ev)
+			if ev.Phase == engine.Failed {
+				fixCmdFailures = append(fixCmdFailures, render.FailureFrom(ev))
 			}
-			var skipped2 []string
-			findings, _, skipped2, failed = drainRunEvents(r.Event, events2)
-			skipped = mergeSortedUnique(skipped, skipped2)
 		}
+		fixCmdChanged, fixCmdSkipped, fixCmdFailed = runFixCommandsPerLinter(context.Background(), cfg, env, fixable, onFixCmd)
+		_ = fixR.Close(render.Summary{})
+	}
+	if c.Fix && len(findings) > 0 {
+		events2, err := engine.Run(context.Background(), env, files, checkPredicate)
+		if err != nil {
+			return err
+		}
+		findings, _, skipped, failed = drainEvents(collectEvents(events2), r.Event)
+	} else {
+		replayEvents(raw1, r.Event)
 	}
 	runFailed = failed != nil || runFailedBy(fixFailed) || runFailedBy(fixCmdFailed)
 
@@ -193,11 +212,14 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	if c.Format != "human" { // the machine document carries every writing pass too
 		sum.Changed = mergeSortedUnique(fixChanged, mergeSortedUnique(fixCmdChanged, inlineFixed))
 		sum.Skipped = mergeSortedUnique(sum.Skipped, mergeSortedUnique(fixSkipped, fixCmdSkipped))
-		sum.Failures = fixFailures
+		sum.Failures = mergeFailures(fixFailures, fixCmdFailures)
 	}
 	_ = r.Close(sum)
 	if fixFailed != nil {
 		return fixFailed
+	}
+	if fixCmdFailed != nil {
+		return fixCmdFailed
 	}
 	if failed != nil {
 		return errors.New("check: a linter failed to run")
@@ -208,32 +230,99 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	return nil
 }
 
-// findingFiles returns the deduplicated, sorted set of files findings reports on -- check --fix's
-// own fix-command pass and inline-fix pass only ever touch what pass 1 actually flagged.
-func findingFiles(findings []output.Finding) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, f := range findings {
-		if !seen[f.File] {
-			seen[f.File] = true
-			out = append(out, f.File)
-		}
+// mergeFailures concatenates two Failure lists -- unlike file lists, failures are never
+// deduplicated (two distinct passes failing for the same linter are two distinct facts to report).
+func mergeFailures(a, b []render.Failure) []render.Failure {
+	if len(b) == 0 {
+		return a
 	}
-	sort.Strings(out)
+	return append(append([]render.Failure{}, a...), b...)
+}
+
+// collectEvents drains events into a slice, for a pass whose outcome isn't known to be the final
+// report until after it's fully run (see check --fix's pass 1).
+func collectEvents(events <-chan engine.Event) []engine.Event {
+	var out []engine.Event
+	for ev := range events {
+		out = append(out, ev)
+	}
 	return out
 }
 
-// runFixCommands runs every enabled fix command (in-place, not a formatter -- ROADMAP.md v0.10
-// "Fix-only linters actually fix") over files, reusing engine.Run's existing InPlace
-// change-detection (already keyed on InPlace alone, not Formatter). A fix command's own Failed
-// event is recorded (via printFn, check --fix's shared renderer) but does not itself abort --
-// matches --format-before-check's own pre-existing tolerance of a Failed formatter.
-func runFixCommands(ctx context.Context, env engine.Env, files []string, printFn func(engine.Event)) (changed, skipped []string, failed error) {
-	events, err := engine.Run(ctx, env, files, func(cmd config.Command) bool { return cmd.InPlace && !cmd.Formatter })
-	if err != nil {
-		return nil, nil, err
+// replayEvents re-delivers a buffered pass's events to printFn -- used when that pass turns out
+// to be the final report after all (check --fix found nothing to fix, or --fix wasn't given).
+func replayEvents(events []engine.Event, printFn func(engine.Event)) {
+	for _, ev := range events {
+		printFn(ev)
 	}
-	_, changed, skipped, failed = drainRunEvents(printFn, events)
+}
+
+// validFixTargets returns the subset of findings whose File is a safe, real fix target:
+// non-empty, not a bare ".", resolves (once made repoRoot-absolute) to a path inside repoRoot, and
+// names an existing regular file, not a directory. A finding failing any of these is not itself
+// dropped from the report -- only excluded from fix eligibility, so it simply remains reported as
+// unresolved. Every File is also normalized to its repoRoot-absolute form on the way out.
+func validFixTargets(findings []output.Finding, repoRoot string) []output.Finding {
+	out := make([]output.Finding, 0, len(findings))
+	for _, f := range findings {
+		path := f.File
+		if path == "" || path == "." {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repoRoot, path)
+		}
+		if rel, err := filepath.Rel(repoRoot, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue // outside repoRoot -- never a fix target, however a tool reported it
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue // missing (stale) or a directory -- never a fixable file
+		}
+		f.File = path
+		out = append(out, f)
+	}
+	return out
+}
+
+// runFixCommandsPerLinter runs every enabled fix command (in-place, not a formatter) over the
+// files each reporting linter itself flagged -- never over a file only some OTHER linter found
+// something in, even when both are enabled with the same broad files: scope. Reuses engine.Run's
+// existing InPlace change-detection (already keyed on InPlace alone, not Formatter) once per
+// linter; a fix command's own Failed event is recorded (via printFn) but does not itself abort the
+// loop, matching --format-before-check's own pre-existing tolerance of a Failed formatter.
+func runFixCommandsPerLinter(ctx context.Context, cfg config.Config, env engine.Env, findings []output.Finding, printFn func(engine.Event)) (changed, skipped []string, failed error) {
+	filesByLinter := map[string][]string{}
+	var linterIDs []string
+	for _, f := range findings {
+		if _, ok := filesByLinter[f.Linter]; !ok {
+			linterIDs = append(linterIDs, f.Linter)
+		}
+		filesByLinter[f.Linter] = append(filesByLinter[f.Linter], f.File)
+	}
+	sort.Strings(linterIDs)
+
+	fixPredicate := func(cmd config.Command) bool { return cmd.InPlace && !cmd.Formatter }
+	for _, id := range linterIDs {
+		def, ok := cfg.Lint.Definitions[id]
+		if !ok {
+			continue
+		}
+		subEnv := env
+		subEnv.Cfg.Lint.Definitions = map[string]config.Linter{id: def}
+		files := mergeSortedUnique(nil, filesByLinter[id])
+		sort.Strings(files)
+		events, err := engine.Run(ctx, subEnv, files, fixPredicate)
+		if err != nil {
+			return changed, skipped, err
+		}
+		_, c, s, f := drainEvents(collectEvents(events), printFn)
+		changed = mergeSortedUnique(changed, c)
+		skipped = mergeSortedUnique(skipped, s)
+		if f != nil {
+			failed = f
+		}
+	}
 	return changed, skipped, failed
 }
 
@@ -251,9 +340,16 @@ func runFixCommands(ctx context.Context, env engine.Env, files []string, printFn
 // future consumer of this return value (a --json mode, an exit-code counter, a future fmt
 // --check) inherits the guarantee instead of having to re-implement it.
 func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (findings []output.Finding, changed []string, skipped []string, failed error) {
+	return drainEvents(collectEvents(events), printFn)
+}
+
+// drainEvents is drainRunEvents over an already-collected slice instead of a live channel -- for
+// a pass buffered via collectEvents because whether it's the one to print (via printFn) isn't
+// known until after it's fully drained (see check --fix's pass 1).
+func drainEvents(events []engine.Event, printFn func(engine.Event)) (findings []output.Finding, changed []string, skipped []string, failed error) {
 	skippedLinters := map[string]bool{}
 	seenChanged := map[string]bool{}
-	for ev := range events {
+	for _, ev := range events {
 		printFn(ev)
 		switch ev.Phase {
 		case engine.Done:

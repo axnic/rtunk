@@ -4,7 +4,7 @@ This document specifies the terminal UX of `check` and `fmt`. Command semantics 
 [cli.md](./cli.md); staging lives in [ROADMAP.md](../ROADMAP.md).
 
 **Implementation status.** `v0.9` item 1 (event stream + plain renderer) is implemented, in
-`internal/cli/render`: `check`, `fmt` and `check --fix`'s formatter pass render through the plain
+`internal/cli/render`: `check`, `fmt` and `check --format-before-check`'s formatter pass render through the plain
 renderer (see "Non-TTY fallback" and "Issues output"). Engine terminal events carry the matched
 `Files`, and `runlog.Writer.Name()` exposes the run uid used in the failures section. Item 2
 (`--format human|sarif|json` and color) is implemented: color applies to `human` only, when stdout

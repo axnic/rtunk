@@ -125,11 +125,8 @@ stream closes.
 | `fmt` | Formatter commands only. | Files rewritten; see fmt's own dry-run/stability modes below. |
 
 `check --fix` and `check --format-before-check` are each two runs of this same pipeline in sequence
-— a writing pass, then a plain-checking pass over the result — not a different pipeline. **Today**:
-rtunk has only one of these two variants, under the name `check --fix`, and it runs the *formatter*
-pass (today's equivalent of `--format-before-check`) — the accepted target instead gives formatting-
-before-checking its own explicit flag and reserves `--fix` for linter-declared fixes, which do not
-run under any command today. See "fix vs. formatter conflation" in
+— a writing pass, then a plain-checking pass over the result — not a different pipeline.
+Implemented as of v0.10; see "fix vs. formatter conflation" in
 [inconsistencies.md](./inconsistencies.md).
 
 **Finding-level autofixes**, applied under `check --fix` above: some structured output formats let a
