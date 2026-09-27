@@ -71,6 +71,23 @@ func main() {
 		// reformatted result to stdout -- never touches the file itself.
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Print(strings.ToUpper(string(data)))
+	case "emptyout":
+		// Exits 0 with no stdout at all -- stands in for a tool that wrote its result
+		// somewhere else (a side file) or misread its own invocation.
+	case "partialthenkilled":
+		// Prints a partial result immediately, then hangs -- stands in for a process a
+		// context timeout/cancellation kills mid-run, whose already-flushed stdout is only
+		// ever a truncated fragment of the real result.
+		fmt.Print("PART")
+		os.Stdout.Sync()
+		time.Sleep(5 * time.Second)
+	case "slowstdinfmt":
+		// Like "stdinfmt", but sleeps between reading stdin and printing the result --
+		// widens the window a concurrent InPlace write to the same file could land in, to
+		// prove the read-invoke-write cycle is race-safe, not just "usually fast enough."
+		data, _ := io.ReadAll(os.Stdin)
+		time.Sleep(300 * time.Millisecond)
+		fmt.Print(strings.ToUpper(string(data)))
 	case "hadolint":
 		fmt.Print("[{\"line\":1,\"code\":\"DL3006\",\"message\":\"pin a version\",\"column\":1,\"file\":\"" + args[1] + "\",\"level\":\"warning\"}]")
 	case "sarifuri":
@@ -1748,16 +1765,11 @@ func TestRemapPaths(t *testing.T) {
 }
 
 // TestRun_FormatterWithoutInPlaceHasNoChangedFiles proves ChangedFiles is gated on
-// Command.InPlace specifically, not Formatter -- a hypothetical Formatter: true command with
-// InPlace: false must report no ChangedFiles even though nothing here has any reason to expect a
-// non-InPlace command's target files to change, and hashing one anyway would be wasted work with
-// a misleading result. Uses Output: "sarif" (not "rewrite"/"shfmt") deliberately: the final
-// whole-branch review's own fix wave added a buildJobs Skip for exactly
-// Formatter:true+InPlace:false+Output-in-{rewrite,shfmt} (9 real catalog stdin/stdout-based
-// formatters this engine can't meaningfully run), which would otherwise make this fixture never
-// reach Done at all -- confirmed the fixture's prior "rewrite" Output made this test pass for the
-// wrong reason (it never reached Done, so the zero-valued Event's nil ChangedFiles trivially
-// satisfied the assertion) once that Skip landed.
+// Command.InPlace specifically, not Formatter, for a command shape the stdin/stdout formatter
+// path doesn't claim: a Formatter: true, InPlace: false command whose Output is "sarif" (not
+// "rewrite"/"shfmt") is a plain checking command as far as ChangedFiles goes -- it must report
+// none, via the same hashFiles-is-InPlace-gated logic runStdinFormatter's own rewrite/shfmt path
+// doesn't touch.
 func TestRun_FormatterWithoutInPlaceHasNoChangedFiles(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("faketool invoked via sh -c")
@@ -1942,6 +1954,58 @@ func TestRun_ConcurrentInPlaceCommandsAreSerialized(t *testing.T) {
 			depth--
 		}
 	}
+}
+
+// TestRun_StdinFormatterAndInPlaceFormatter_SerializedOnSameFile proves a stdin/stdout formatter
+// and a concurrent InPlace formatter, both enabled and both targeting the same file, never lose
+// either one's write: without inPlaceMu held across the stdin formatter's own read-invoke-write
+// span, the slower one can write back content it computed from a since-superseded read, silently
+// discarding the other's change (the same lost-update inPlaceMu already prevents between two
+// InPlace commands). "orig" -> InPlace appends "B" -> stdin-formatter uppercases whatever it
+// actually read -- regardless of which one the mutex lets run first, full serialization means the
+// second one always sees the first one's result, so the only possible final content is "ORIGB".
+func TestRun_StdinFormatterAndInPlaceFormatter_SerializedOnSameFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	binPath := buildFakeToolBinary(t)
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("orig"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"inplacer": {
+						Name: "inplacer", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "sh -c 'sleep 0.1; printf B >> ${target}'",
+							Output: "rewrite", SuccessCodes: []int{0}, InPlace: true, Formatter: true,
+						}},
+					},
+					"stdiner": {
+						Name: "stdiner", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool slowstdinfmt", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 2}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining the channel is the whole point; there is nothing to do per event
+	}
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "ORIGB", string(data), "full serialization means whichever ran second always saw the first one's write")
 }
 
 // TestRun_RewriteCommandFailingSuccessCodesReportsFailed proves a rewrite/shfmt command that
@@ -2192,7 +2256,197 @@ func TestRun_StdinStdoutFormatterWithSandboxTypeIsSkipped(t *testing.T) {
 		got = ev
 	}
 	assert.Equal(t, Skipped, got.Phase)
-	assert.Equal(t, "stdin/stdout formatter combined with sandbox_type is unsupported (writes would be lost)", got.Note)
+	assert.Equal(t, "stdin/stdout formatter combined with sandbox_type is not supported (the declared sandbox would be silently ignored)", got.Note)
+}
+
+// TestRun_StdinStdoutFormatter_EmptyOutputRefusesToWrite: a tool that exits 0 with no stdout at
+// all almost never means "delete the whole file" -- far more likely it wrote its result somewhere
+// else, or the invocation is simply misconfigured. Refusing to write (instead of silently emptying
+// the file) is the only safe default.
+func TestRun_StdinStdoutFormatter_EmptyOutputRefusesToWrite(t *testing.T) {
+	binPath := buildFakeToolBinary(t)
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool emptyout", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("precious"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Failed {
+			got = ev
+		}
+	}
+	assert.Equal(t, Failed, got.Phase)
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "precious", string(data), "empty stdout for a non-empty file must never be written")
+}
+
+// TestRun_StdinStdoutFormatter_KilledProcessDoesNotWritePartialOutput: a process killed mid-run
+// (ctx cancellation/timeout) may have already flushed a partial fragment of its real output --
+// writing that fragment back to the file would silently corrupt it.
+func TestRun_StdinStdoutFormatter_KilledProcessDoesNotWritePartialOutput(t *testing.T) {
+	binPath := buildFakeToolBinary(t)
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "format", Run: "faketool partialthenkilled", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("precious"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	events, err := Run(ctx, Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Failed {
+			got = ev
+		}
+	}
+	assert.Equal(t, Failed, got.Phase)
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "precious", string(data), "a killed process's partial stdout must never be written")
+}
+
+// TestRun_StdinStdoutFormatter_MultiFileBatch_EachFileGetsOwnInvocation covers the real catalog
+// shape (terraform fmt, tofu fmt, sql-formatter, markdown-table-prettify): a Run string with no
+// ${target} placeholder groups every matched file in a directory into one job's batch (buildJobs'
+// own "can't tell files apart" rule) -- runStdinFormatter must still invoke once per file, each
+// getting its own stdin content, its own result, and its own runlog id.
+func TestRun_StdinStdoutFormatter_MultiFileBatch_EachFileGetsOwnInvocation(t *testing.T) {
+	binPath := buildFakeToolBinary(t)
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							// No ${target}: buildJobs groups every matched file into one batch.
+							Name: "format", Run: "faketool stdinfmt", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	a, b := filepath.Join(repoRoot, "a.txt"), filepath.Join(repoRoot, "b.txt")
+	require.NoError(t, os.WriteFile(a, []byte("aaa"), 0o644))
+	require.NoError(t, os.WriteFile(b, []byte("bbb"), 0o644))
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cacheDir := t.TempDir()
+	log := runlog.Start(runlog.StartOpts{CacheDir: cacheDir, RepoRoot: repoRoot, Cmd: "check"})
+	require.NotNil(t, log, "log must open cleanly in a fresh temp cache dir")
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1, Log: log}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Done {
+			got = ev
+		}
+	}
+	log.End(false)
+	assert.Equal(t, Done, got.Phase)
+	assert.ElementsMatch(t, []string{"a.txt", "b.txt"}, got.ChangedFiles)
+	dataA, _ := os.ReadFile(a)
+	dataB, _ := os.ReadFile(b)
+	assert.Equal(t, "AAA", string(dataA))
+	assert.Equal(t, "BBB", string(dataB))
+
+	runs, err := runlog.List(cacheDir, repoRoot)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	logEvents, err := runlog.Load(runs[0].Path)
+	require.NoError(t, err)
+	var invocationIDs []int
+	for _, ev := range logEvents {
+		if ev.T == runlog.KindInvocation {
+			invocationIDs = append(invocationIDs, ev.ID)
+		}
+	}
+	require.Len(t, invocationIDs, 2, "one invocation per file, not one for the whole batch")
+	assert.NotEqual(t, invocationIDs[0], invocationIDs[1], "each invocation must have its own runlog id")
+}
+
+// TestRun_StdinStdoutFormatter_TargetBasedShape covers the real catalog's other stdin/stdout
+// formatter shape (opa fmt, perltidy, pragma-once's fix.sh): the command reads ${target} itself
+// (a path argument), rather than expecting content piped on stdin, but still writes its result to
+// stdout instead of rewriting the file in place -- this engine still feeds it stdin defensively
+// (harmless: the tool never reads it) and still captures its stdout as the new content.
+func TestRun_StdinStdoutFormatter_TargetBasedShape(t *testing.T) {
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakestdoutfmt": {
+						Name: "fakestdoutfmt", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							// Reads ${target} itself (via cat), ignores stdin entirely.
+							Name: "format", Run: "cat ${target}", Output: "rewrite",
+							Formatter: true, InPlace: false,
+						}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	target := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(target, []byte("same\n"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Done {
+			got = ev
+		}
+	}
+	assert.Equal(t, Done, got.Phase)
+	assert.Empty(t, got.ChangedFiles, "cat echoes the file back unchanged -- no real reformatting happened")
 }
 
 // TestRun_DryRunNeverWritesRealFile is the load-bearing test for this whole feature: a DryRun

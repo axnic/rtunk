@@ -320,7 +320,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 			continue
 		}
 		if cmd.Formatter && !cmd.InPlace && (cmd.Output == "rewrite" || cmd.Output == "shfmt") && cmd.SandboxType != "" {
-			events <- Event{Linter: name, Phase: Skipped, Note: "stdin/stdout formatter combined with sandbox_type is unsupported (writes would be lost)", Files: relFiles}
+			events <- Event{Linter: name, Phase: Skipped, Note: "stdin/stdout formatter combined with sandbox_type is not supported (the declared sandbox would be silently ignored)", Files: relFiles}
 			continue
 		}
 
@@ -550,8 +550,11 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // parser only ever sees paths relative to j.resolvedDir, exactly as when no sandboxing is
 // involved -- security.RemapFindings is what turns those back into repoRoot-relative paths either
 // way. The second return value is the repoRoot-relative subset of j.batch this command actually
-// changed on disk (InPlace commands only, via hashFiles' before/after comparison) -- always nil
-// for a non-InPlace command. inPlaceMu serializes every InPlace invocation across the whole run
+// changed on disk: for an InPlace command, via hashFiles' before/after comparison; for a
+// stdin/stdout formatter (Formatter && !InPlace && rewrite/shfmt), via runStdinFormatter's own
+// before/after string comparison instead (delegated to it below, before any of the InPlace-only
+// machinery here runs) -- nil for every other command shape. inPlaceMu serializes every InPlace
+// invocation, and runStdinFormatter's own writes, across the whole run
 // (see the lock acquired below) so two of them can never interleave their before-hash/invoke/
 // after-hash cycle over the same file. A dry run (job.dryRun) never reaches the real file at all
 // -- see the sandboxType computation below.
@@ -563,7 +566,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	if j.cmd.Formatter && !j.cmd.InPlace && (j.cmd.Output == "rewrite" || j.cmd.Output == "shfmt") {
 		pluginDir := j.linter.SourceRoot
 		cwdDir := filepath.Join(j.linter.SourceRoot, j.linter.SourceDir)
-		return runStdinFormatter(ctx, j, repoRoot, pluginDir, cwdDir, log, id)
+		return runStdinFormatter(ctx, j, repoRoot, pluginDir, cwdDir, inPlaceMu, log, id)
 	}
 
 	workDir := j.resolvedDir
@@ -796,47 +799,89 @@ func commandFailed(cmd config.Command, out, stderrOut string, exitCode int) (msg
 }
 
 // runStdinFormatter runs a stdin/stdout-only formatter (Formatter && !InPlace, Output
-// rewrite/shfmt): the tool reads a file's content from stdin and writes the reformatted result to
-// its own stdout, rather than rewriting the file directly (real catalog example: many formatters'
-// non-`--write` invocation, e.g. terraform fmt, stylua, perltidy). One invocation per file in
-// j.batch -- stdin carries exactly one file's content, so this can never be a true multi-file
-// batch invocation the way InPlace/Batch: true commands are (buildJobs only ever puts more than
-// one file in a stdin-formatter's own batch when the command itself sets Batch: true, which real
-// catalog stdin-formatters don't). A file whose formatted stdout differs from its own current
-// content is rewritten, unless j.dryRun (still reported as changed, never written). No sandbox is
-// ever in play here (buildJobs skips this shape combined with SandboxType), so workDir is always
-// j.resolvedDir directly -- the real file.
-func runStdinFormatter(ctx context.Context, j job, repoRoot, pluginDir, cwdDir string, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
-	workDir := j.resolvedDir
+// rewrite/shfmt): the tool reads a file's content from stdin (or, for a command whose Run string
+// reads ${target} itself instead -- real catalog examples: opa fmt, perltidy -se, pragma-once's
+// fix.sh -- reads the file directly) and writes the reformatted result to its own stdout, rather
+// than rewriting the file directly. One invocation per file in j.batch: stdin only ever carries
+// one file's content, so a batch grouped by buildJobs into more than one file (real catalog shape:
+// a Run string with no ${target} at all, e.g. terraform fmt's `terraform fmt -no-color -`, groups
+// every matched file in a directory into one job) still gets one invocation per file here, each
+// its own runlog id.
+//
+// Known limitation: unlike the InPlace dry-run path, there is no sandbox for this shape (buildJobs
+// already skips SandboxType combined with it) -- a command whose Run reads ${target} itself still
+// reads/writes side effects (e.g. perltidy's own .LOG file) against the real resolvedDir even
+// during a dry run. Narrower than it sounds: rtunk itself never writes the target file's own
+// content during a dry run either way (that part is always safe); only a tool's own side files, if
+// it has any, would land for real. Add a sandbox for this shape too if that turns out to matter.
+func runStdinFormatter(ctx context.Context, j job, repoRoot, pluginDir, cwdDir string, inPlaceMu *sync.Mutex, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
 	var changedFiles []string
 	for i, f := range j.batch {
 		if i > 0 {
 			id = log.NextID() // the caller reserved one id for this job; each further invocation needs its own
 		}
-		path := filepath.Join(workDir, f)
-		before, err := os.ReadFile(path)
+		changed, err := runStdinFormatterFile(ctx, j, f, pluginDir, cwdDir, inPlaceMu, log, id)
 		if err != nil {
 			return nil, nil, err
 		}
-		inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: j.linterName, ToolVersions: j.toolVersions}
-		out, stderrOut, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, []string{f}, pluginDir, cwdDir, log, inv, string(before))
-		if err != nil {
-			return nil, nil, err
+		if changed {
+			changedFiles = append(changedFiles, f)
 		}
-		if msg, failed := commandFailed(j.cmd, out, stderrOut, exitCode); failed {
-			return nil, nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
-		}
-		if out == string(before) {
-			continue
-		}
-		if !j.dryRun {
-			if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-				return nil, nil, err
-			}
-		}
-		changedFiles = append(changedFiles, f)
 	}
 	return nil, remapPaths(changedFiles, j.resolvedDir, repoRoot), nil
+}
+
+// runStdinFormatterFile is runStdinFormatter's own per-file body: read, invoke, validate, write.
+// Guarded by inPlaceMu (skipped for j.dryRun, which never writes) for the file's own
+// read-invoke-write span, exactly like the InPlace path's own whole-invocation lock -- without it,
+// a concurrent InPlace command on the same file (real catalog overlap: an in-place formatter and a
+// stdin one both enabled for the same file type) could write in the gap between this function's
+// own read and its later write, and get silently clobbered by this function writing back content
+// computed from what is now stale data (the same lost-update bug the InPlace-vs-InPlace mutex
+// already prevents for that path).
+//
+// Two failure modes specific to this shape, neither caught by commandFailed's existing
+// ErrorCodes/SuccessCodes checks alone, get their own explicit guard before anything is written:
+// a negative exit code (the process was killed, e.g. by ctx's own cancellation/timeout -- its
+// stdout is a truncated partial read, never the real result) and empty stdout for a non-empty
+// file (almost never a real, intentional "delete everything" from a formatter; far more likely the
+// tool wrote its result somewhere else, or to a stream this shape doesn't read).
+func runStdinFormatterFile(ctx context.Context, j job, f, pluginDir, cwdDir string, inPlaceMu *sync.Mutex, log *runlog.Writer, id int) (changed bool, err error) {
+	if !j.dryRun {
+		inPlaceMu.Lock()
+		defer inPlaceMu.Unlock()
+	}
+	path := filepath.Join(j.resolvedDir, f)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: j.linterName, ToolVersions: j.toolVersions}
+	out, stderrOut, exitCode, err := runOneInvocation(ctx, j.cmd, j.resolvedDir, j.pathEnv, []string{f}, pluginDir, cwdDir, log, inv, string(before))
+	if err != nil {
+		return false, err
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if exitCode < 0 {
+		return false, fmt.Errorf("engine: %s: %s on %s: process did not exit cleanly (killed or crashed)", j.linterName, j.cmd.Name, f)
+	}
+	if msg, failed := commandFailed(j.cmd, out, stderrOut, exitCode); failed {
+		return false, fmt.Errorf("engine: %s: %s on %s exited %d: %s", j.linterName, j.cmd.Name, f, exitCode, msg)
+	}
+	if out == "" && len(before) > 0 {
+		return false, fmt.Errorf("engine: %s: %s on %s: empty output for a non-empty file, refusing to write", j.linterName, j.cmd.Name, f)
+	}
+	if out == string(before) {
+		return false, nil
+	}
+	if !j.dryRun {
+		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // dedupeStrings returns ss with duplicates removed, preserving first-occurrence order -- used for
@@ -1146,7 +1191,12 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)
 	c.Dir = workDir
-	c.Stdin = strings.NewReader(stdin)
+	if stdin != "" {
+		// Every other caller passes "" and must keep today's stdin (nil -- /dev/null, a character
+		// device), not a pipe: a tool that behaves differently when it detects a FIFO on stdin
+		// (some auto-read-from-stdin-if-piped tools do) must not see one it was never given.
+		c.Stdin = strings.NewReader(stdin)
+	}
 	path := os.Getenv("PATH")
 	if pathEnv != "" {
 		path = pathEnv + string(os.PathListSeparator) + path
