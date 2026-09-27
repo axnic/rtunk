@@ -10,7 +10,7 @@ semantics of `check`, `fmt` and `run`. It is authoritative over older specs unde
 selection and `--from` (internal/cli/selection.go), exit codes (`cmd/rtunk/main.go`), `fmt`
 working-tree-only behavior with `--force`, `linters {list,enable,disable}`, `git-hooks sync|unsync`,
 `plugins print`, the hidden `toolbox` group, `logs list|show|clean`, `help [--all]`, and
-`cache clean|prune --older-than`. `v0.9` item 1 is implemented: `check` and `fmt` render through
+`cache clean|prune`. `v0.9` item 1 is implemented: `check` and `fmt` render through
 the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with `--no-progress`; this is a
 breaking change, the former `file:line severity [rule] message` lines and `N issue(s) in M file(s)`
 summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and ANSI color. `v0.9` item 4
@@ -194,13 +194,12 @@ compat aliases.
 
 - **`rtunk cache clean`**: remove the entire cache root: downloads, plugin sources, and logs alike.
   (Implemented.)
-- **`rtunk cache prune --older-than <duration>`** (required flag): remove entries unused for the
-  given duration. The duration accepts Go durations plus a `d` days suffix (`30d`). Removes the
-  `installs/<cat>/<id>/<version>` and `shims/<cat>/<id>/<version>` directories whose mtime is older.
-  Every use (check/fmt/actions runtime and tool resolution, and `toolbox exec`) touches those mtimes
-  via `download.Touch`; caches created before this change look old until their next use. Known gap:
-  `--older-than` replaces the former behavior of pruning what the config no longer references, and
-  there is deliberately no project registry, so detecting truly unreferenced entries is out of v1.
+- **`rtunk cache prune`**: removes cache entries no currently-existing, currently-configured
+  repository still needs. Driven by a per-repository usage registry (`download.RecordUsage`,
+  written on every `check`/`fmt`/`actions` run): a repository that no longer exists on disk is
+  dropped from the registry, taking with it everything it alone was keeping alive; a repository
+  that still exists keeps exactly what its most recent registry entry lists. There is no age or
+  duration flag -- staleness is "no live repository needs this," not "unused for N days."
   (Implemented.)
 
 ### Linters and actions
