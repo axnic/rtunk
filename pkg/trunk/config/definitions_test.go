@@ -89,3 +89,16 @@ run: bash ${cwd}/update_config.sh
 	require.NoError(t, err)
 	assert.Nil(t, a.NotifyOnError, "an omitted notify_on_error must decode as nil, not false, so callers can tell 'unset' from 'explicitly false'")
 }
+
+func TestCommand_FixPromptAndVerb(t *testing.T) {
+	var cmd config.Command
+	require.NoError(t, yaml.Unmarshal([]byte(`
+name: fix
+run: dart fix --apply ${target}
+in_place: true
+fix_prompt: Quick fix available
+fix_verb: fix
+`), &cmd))
+	assert.Equal(t, "Quick fix available", cmd.FixPrompt)
+	assert.Equal(t, "fix", cmd.FixVerb)
+}

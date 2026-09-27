@@ -151,6 +151,13 @@ type Command struct {
 	Version        string `yaml:"version,omitempty"`
 	InPlace        bool   `yaml:"in_place,omitempty"`
 	Formatter      bool   `yaml:"formatter,omitempty"`
+	// FixPrompt/FixVerb are a fix command's own short human-readable label and action verb (real
+	// catalog example: linters/dart/plugin.yaml's fix command, in_place without formatter --
+	// exactly the non-formatter fix shape entry #1 models), meant for an interactive "apply this
+	// fix?" flow. rtunk's check --fix is non-interactive; parsed and carried through resolution
+	// per inconsistencies.md entry #2, with no consumer yet.
+	FixPrompt string `yaml:"fix_prompt,omitempty"`
+	FixVerb   string `yaml:"fix_verb,omitempty"`
 	// Platforms restricts this command variant to specific host platforms (trunk's own
 	// vocabulary: "linux", "macos", "windows") -- real catalog example: a Windows-only invocation
 	// of the same command name alongside an unrestricted variant (linters/pmd/plugin.yaml).
