@@ -9,8 +9,9 @@ docs/superpowers/specs/2026-09-26-run-logs-design.md.
 Each run is one file, `<cache>/logs/<sha256(repoRoot)>/<UTC yyyymmddThhmmss.nnnnnnnnnZ>-<cmd>.jsonl`
 (`logsRoot`, `Start`), where `<cache>` is the directory `download.Root` sits in
 (`--cache-dir` / `RTUNK_CACHE_DIR`, else the OS user cache dir's `rtunk/`). `<cmd>` is `check`,
-`fmt` or `actions-run`. `logs/` is a sibling of `downloads/`, so `rtunk cache destroy` (which removes
-`downloads/`) never deletes logs; `rtunk logs clean [--all]` does (`Clean`). Files are `0600` and their
+`fmt` or `actions-run`. `logs/` is a sibling of `downloads/` under the shared cache root, so both
+`rtunk cache clean` (which wipes that whole root) and `rtunk logs clean [--all]` (`Clean`) remove
+logs; `logs clean` is the narrower, logs-only tool. Files are `0600` and their
 directories `0750`, because the first event records the environment. `Start` keeps the newest 50 runs per
 repository and prunes the rest (`keepRuns`).
 

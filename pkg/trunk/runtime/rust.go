@@ -17,7 +17,7 @@ import (
 // CARGO_TARGET_DIR points at its own sibling scratch dir, never at tmpDir (the dir install.Finalize
 // renames into pkgInstallDir, the PERMANENT per-tool cache entry): tmpDir/bin is the only real
 // output; the build target dir is multi-hundred-MB-to-multi-GB build ephemera that must never be
-// kept forever, and would otherwise make every later `rtunk cache destroy`/`prune` on this tool drag
+// kept forever, and would otherwise make every later `rtunk cache clean`/`prune` on this tool drag
 // that scratch along too.
 func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
 	cargo := filepath.Join(runtimeInstallDir, "bin", "cargo")

@@ -61,7 +61,7 @@ func copyLimited(dst io.Writer, src io.Reader, limit int64) error {
 // download/extract window -- and permanently after any failure -- because it used to be created
 // as this function's very first action; dirNonEmpty(destDir) (fetchRuntimeRef/fetchToolRef's own
 // "already cached" check) would then wrongly report a failed or interrupted install as Cached
-// forever, with no error and no way to detect it short of `rtunk cache destroy`.
+// forever, with no error and no way to detect it short of `rtunk cache clean`.
 func InstallDownload(blobPath, url, destDir string, entry config.DownloadEntry, singleFileName string) error {
 	if err := os.MkdirAll(filepath.Dir(destDir), 0o750); err != nil {
 		return err

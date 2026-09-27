@@ -10,7 +10,7 @@ semantics of `check`, `fmt` and `run`. It is authoritative over older specs unde
 selection and `--from` (internal/cli/selection.go), exit codes (`cmd/rtunk/main.go`), `fmt`
 working-tree-only behavior with `--force`, `linters {list,enable,disable}`, `git-hooks sync|unsync`,
 `plugins print`, the hidden `toolbox` group, `logs list|show|clean`, `help [--all]`, and
-`cache destroy|prune --older-than`. `v0.9` item 1 is implemented: `check` and `fmt` render through
+`cache clean|prune --older-than`. `v0.9` item 1 is implemented: `check` and `fmt` render through
 the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with `--no-progress`; this is a
 breaking change, the former `file:line severity [rule] message` lines and `N issue(s) in M file(s)`
 summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and ANSI color. `v0.9` item 4
@@ -192,7 +192,8 @@ compat aliases.
 
 ### Cache
 
-- **`rtunk cache destroy`**: remove the entire cache (replaces `cache clean`). (Implemented.)
+- **`rtunk cache clean`**: remove the entire cache root: downloads, plugin sources, and logs alike.
+  (Implemented.)
 - **`rtunk cache prune --older-than <duration>`** (required flag): remove entries unused for the
   given duration. The duration accepts Go durations plus a `d` days suffix (`30d`). Removes the
   `installs/<cat>/<id>/<version>` and `shims/<cat>/<id>/<version>` directories whose mtime is older.

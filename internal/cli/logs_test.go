@@ -63,15 +63,15 @@ func TestLogsCleanAll_RemovesOtherReposToo(t *testing.T) {
 	assert.Empty(t, b)
 }
 
-func TestCacheDestroy_LeavesRunLogs(t *testing.T) {
+func TestCacheClean_RemovesRunLogsToo(t *testing.T) {
 	cfgPath, repoRoot, work := checkFixture(t)
 	cacheDir := t.TempDir()
 	_, _, _ = run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", work)
 
-	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "cache", "destroy")
+	_, stderr, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "cache", "clean")
 	require.NoError(t, err, "stderr: %s", stderr)
 
 	runs, err := runlog.List(cacheDir, repoRoot)
 	require.NoError(t, err)
-	assert.Len(t, runs, 1, "cache destroy removes downloads/, never logs/")
+	assert.Empty(t, runs, "cache clean removes the whole cache root, logs/ included")
 }

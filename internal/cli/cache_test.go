@@ -62,15 +62,22 @@ func TestTouch_KeepsUsedEntryThroughPrune(t *testing.T) {
 	assert.DirExists(t, dir)
 }
 
-func TestCacheDestroy(t *testing.T) {
+func TestCacheClean(t *testing.T) {
 	cacheDir := t.TempDir()
 	root, err := download.Root(cacheDir)
 	require.NoError(t, err)
-	marker := filepath.Join(root, "installs", "tools", "whatever", "1.0.0", "marker")
-	require.NoError(t, os.MkdirAll(filepath.Dir(marker), 0o755))
-	require.NoError(t, os.WriteFile(marker, nil, 0o644))
+	sharedRoot := filepath.Dir(root)
 
-	_, stderr, err := run2(t, "--config", trunkYAML, "--cache-dir", cacheDir, "cache", "destroy")
+	for _, marker := range []string{
+		filepath.Join(root, "installs", "tools", "whatever", "1.0.0", "marker"),
+		filepath.Join(sharedRoot, "plugins", "checkouts", "abc", "marker"),
+		filepath.Join(sharedRoot, "logs", "marker"),
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(marker), 0o755))
+		require.NoError(t, os.WriteFile(marker, nil, 0o644))
+	}
+
+	_, stderr, err := run2(t, "--config", trunkYAML, "--cache-dir", cacheDir, "cache", "clean")
 	require.NoError(t, err, "stderr: %s", stderr)
-	assert.NoDirExists(t, root)
+	assert.NoDirExists(t, sharedRoot)
 }
