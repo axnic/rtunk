@@ -88,13 +88,13 @@ func TestResolve_GitSource(t *testing.T) {
 	assert.Contains(t, cfg.Actions.Definitions, "commitlint")
 	assert.Contains(t, cfg.Runtimes.Definitions, "node")
 
-	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
+	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "plugins", "*.json"))
 	require.NoError(t, err)
 	assert.Len(t, cacheFiles, 1, "fetch must leave exactly one parsed-definitions cache file behind")
 
 	// The full checkout, not just the parsed-definitions cache, must be persisted -- this is what
 	// lets ${plugin}/${cwd} resolve to real files on a later warm run.
-	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "checkouts", "*"))
+	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "plugins", "checkouts", "*"))
 	require.NoError(t, err)
 	require.Len(t, checkouts, 1, "fetch must persist exactly one checkout directory")
 	assert.Equal(t, checkouts[0], cfg.Lint.Definitions["actionlint"].SourceRoot,
@@ -147,7 +147,7 @@ func TestResolve_GitSource_CorruptCache_Regenerates(t *testing.T) {
 	cfg1, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
 
-	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
+	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "plugins", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, cacheFiles, 1)
 	require.NoError(t, os.WriteFile(cacheFiles[0], []byte("not valid json"), 0o644))
@@ -168,7 +168,7 @@ func TestResolve_GitSource_CorruptCache_FetchFails(t *testing.T) {
 	_, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
 
-	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
+	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "plugins", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, cacheFiles, 1)
 	cacheFile := cacheFiles[0]
@@ -199,12 +199,12 @@ func TestResolve_GitSource_MissingCheckoutTriggersRefetch(t *testing.T) {
 	_, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
 
-	require.NoError(t, os.RemoveAll(filepath.Join(cacheDir, "checkouts")))
+	require.NoError(t, os.RemoveAll(filepath.Join(cacheDir, "plugins", "checkouts")))
 
 	cfg2, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
 
-	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "checkouts", "*"))
+	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "plugins", "checkouts", "*"))
 	require.NoError(t, err)
 	require.Len(t, checkouts, 1, "the missing checkout must be regenerated")
 	assert.Equal(t, checkouts[0], cfg2.Lint.Definitions["actionlint"].SourceRoot)
@@ -223,7 +223,7 @@ func TestResolve_GitSource_CacheHitDoesNotReclone(t *testing.T) {
 	_, err := config.Resolve(trunkYAML, cacheDir)
 	require.NoError(t, err)
 
-	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "checkouts", "*"))
+	checkouts, err := filepath.Glob(filepath.Join(cacheDir, "plugins", "checkouts", "*"))
 	require.NoError(t, err)
 	require.Len(t, checkouts, 1)
 	before, err := os.Stat(checkouts[0])

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,18 +52,47 @@ func TestFetchGitSource_DestinationAlreadyExists(t *testing.T) {
 
 	cacheDir, err := filepath.Abs(cacheDir)
 	require.NoError(t, err)
-	checkoutDir := checkoutDirPath(cacheDir, src)
+
+	// fetchGitSource now nests plugin sources under plugins/, so we need to calculate
+	// the checkout path using the plugins-nested cacheDir
+	pluginsCacheDir := filepath.Join(cacheDir, "plugins")
+	checkoutDir := checkoutDirPath(pluginsCacheDir, src)
+
 	require.NoError(t, os.MkdirAll(checkoutDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(checkoutDir, "already-here.txt"), []byte("winner\n"), 0o644))
 
 	_, _, err = fetchGitSource(cacheDir, src)
 	require.NoError(t, err, "a pre-existing (or concurrent-winner) checkoutDir must not abort the fetch")
 
-	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
+	cacheFiles, err := filepath.Glob(filepath.Join(pluginsCacheDir, "*.json"))
 	require.NoError(t, err)
 	require.Len(t, cacheFiles, 1, "the parsed-definitions cache must still be written")
 
 	// The pre-existing content must survive untouched -- proof the fetch used what was already
 	// there rather than clearing and replacing it.
 	require.FileExists(t, filepath.Join(checkoutDir, "already-here.txt"))
+}
+
+// TestFetchGitSource_CustomCacheDir_NestsUnderPlugins verifies that cacheFilePath returns
+// cache files nested under the plugins directory.
+func TestFetchGitSource_CustomCacheDir_NestsUnderPlugins(t *testing.T) {
+	cacheDir := t.TempDir()
+	src := PluginSource{ID: "local-test", URI: cacheDir, Ref: "HEAD"}
+
+	got := cacheFilePath(filepath.Join(cacheDir, "plugins"), src)
+	require.True(t, strings.HasPrefix(got, filepath.Join(cacheDir, "plugins")), "cache file must live under <cacheDir>/plugins, got %s", got)
+}
+
+// TestFetchGitSource_CustomCacheDir_ChecksOutUnderPluginsSubdir verifies that when fetchGitSource
+// is called with a custom cache directory, it nests plugin sources under a plugins/ subdirectory
+// rather than polluting the cache root.
+func TestFetchGitSource_CustomCacheDir_ChecksOutUnderPluginsSubdir(t *testing.T) {
+	src := gitFixtureInternal(t)
+	cacheDir := t.TempDir()
+
+	_, _, err := fetchGitSource(cacheDir, src)
+	require.NoError(t, err)
+
+	require.DirExists(t, filepath.Join(cacheDir, "plugins", "checkouts"), "checkout must be nested under plugins/")
+	require.NoDirExists(t, filepath.Join(cacheDir, "checkouts"), "checkout must not leak into the raw cacheDir root")
 }
