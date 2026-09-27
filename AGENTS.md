@@ -101,8 +101,8 @@ specs under `docs/superpowers/`. Everything through `v0.9` is implemented today;
 
 - **Project root.** `check`, `fmt` and `run` refuse to run without a `.trunk`/`.rtunk` ancestor.
 - **Changed files by default.** No-path `check`/`fmt` process only changed files (merge-base diff,
-  else staged, else nothing outside git); `--from <ref>` for CI; explicit paths process everything
-  under them.
+  else diff from `HEAD`, both plus untracked; an error outside git); `--from <ref>` for CI; explicit
+  paths process everything under them.
 - **Exit codes.** Identical to trunk's: only `0` and `1`, measured on trunk 1.25.0.
 - **`fmt`** writes to the working tree only, never the index.
 - **Command surface.** Symmetric `linters`/`actions` groups, hidden `toolbox`, `cache

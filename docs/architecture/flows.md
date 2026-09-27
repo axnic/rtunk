@@ -61,12 +61,8 @@ selection are deliberately not logged" in [inconsistencies.md](./inconsistencies
 | Inside a git repository, current branch has an upstream | Every file changed between the upstream branch's merge-base and the working tree, plus untracked, non-ignored files. | Listed through git (so gitignore applies), intersected with the given paths. |
 | Inside a git repository, no upstream | Every file with a staged change, every file with an unstaged change, and every untracked, non-ignored file — everything that differs from the last commit, tracked or not, staged or not. | Listed through git (so gitignore applies), intersected with the given paths. |
 
-**Today:** the no-upstream fallback is narrower than the target above — it selects **staged changes
-only**, missing unstaged changes to already-tracked files and any new, untracked file. **Today**,
-"outside a git repository, no default selection" is a quiet, exit-0 no-op ("no files to process"),
-not the enforced validation error the target requires — a scriptable/CI caller currently cannot tell
-"nothing to check" apart from "this invocation was missing required arguments." Both tracked as
-accepted, to-implement entries in [inconsistencies.md](./inconsistencies.md).
+Implemented as of v0.10 (`internal/cli/selection.go`); see
+[inconsistencies.md](./inconsistencies.md) entries #19 and #20.
 
 ## Run flow
 

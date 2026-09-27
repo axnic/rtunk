@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,6 +39,14 @@ func TestSelectFiles_NotInGit(t *testing.T) {
 	require.ErrorIs(t, err, errOutsideGitNoPaths)
 }
 
+// TestErrOutsideGitNoPaths_NoOwnPrefix: cmd/rtunk/main.go prints every returned error as
+// "rtunk: "+err.Error() -- a sentinel that embeds its own "rtunk: " prefix doubles it in the
+// user-facing output ("rtunk: rtunk: ..."). No other error in this package carries the prefix.
+func TestErrOutsideGitNoPaths_NoOwnPrefix(t *testing.T) {
+	assert.False(t, strings.HasPrefix(errOutsideGitNoPaths.Error(), "rtunk:"),
+		"main.go already adds the \"rtunk:\" prefix to every returned error")
+}
+
 func TestSelectFiles_NoUpstream_DiffFromHEADAndUntracked(t *testing.T) {
 	dir := newRepo(t)
 	write(t, dir, "c.txt", "c")
@@ -55,6 +64,21 @@ func TestSelectFiles_NoUpstream_DiffFromHEADAndUntracked(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt"), filepath.Join(dir, "new.txt"),
 	}, files)
+}
+
+// TestSelectFiles_NoUpstream_NoCommitsYet: a fresh `git init` with no commits has no HEAD to diff
+// against -- "everything since the last commit" should reasonably mean everything, not a raw git
+// error surfaced from a `diff ... HEAD` that can't resolve.
+func TestSelectFiles_NoUpstream_NoCommitsYet(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "a.txt", "a")
+	git(t, dir, "add", "a.txt") // staged
+	write(t, dir, "new.txt", "n") // untracked
+
+	files, err := selectFiles(dir, "")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{filepath.Join(dir, "a.txt"), filepath.Join(dir, "new.txt")}, files)
 }
 
 func TestSelectFiles_Upstream_DiffAndUntracked(t *testing.T) {
