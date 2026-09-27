@@ -196,7 +196,7 @@ compat aliases.
   (Implemented.)
 - **`rtunk cache prune`**: removes cache entries no currently-existing, currently-configured
   repository still needs. Driven by a per-repository usage registry (`download.RecordUsage`,
-  written on every `check`/`fmt`/`actions` run): a repository that no longer exists on disk is
+  written on every `check`/`fmt` run, not `actions`): a repository that no longer exists on disk is
   dropped from the registry, taking with it everything it alone was keeping alive; a repository
   that still exists keeps exactly what its most recent registry entry lists. There is no age or
   duration flag -- staleness is "no live repository needs this," not "unused for N days."

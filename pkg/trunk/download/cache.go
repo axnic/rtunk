@@ -51,9 +51,10 @@ func Platform() string {
 }
 
 // Touch marks one item as used just now, by bumping the mtime of its installs/ and shims/
-// version directories: `rtunk cache prune --older-than` decides staleness from those mtimes.
-// Missing directories (a system_version runtime has none) and errors are ignored -- recording a
-// use must never fail a run.
+// version directories. Nothing in this codebase reads those mtimes anymore -- `cache prune` (see
+// prune.go) is usage-registry-based now, not age-based -- so this is a historical no-op until
+// something removes its call sites. Missing directories (a system_version runtime has none) and
+// errors are ignored -- recording a use must never fail a run.
 func Touch(root, category, id, version string) {
 	now := time.Now()
 	for _, dir := range []string{

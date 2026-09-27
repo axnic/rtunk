@@ -26,10 +26,15 @@ func TestCacheClean(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(marker), 0o755))
 		require.NoError(t, os.WriteFile(marker, nil, 0o644))
 	}
+	unrelated := filepath.Join(cacheDir, "unrelated-file.txt")
+	require.NoError(t, os.WriteFile(unrelated, nil, 0o644))
 
 	_, stderr, err := run2(t, "--config", trunkYAML, "--cache-dir", cacheDir, "cache", "clean")
 	require.NoError(t, err, "stderr: %s", stderr)
-	assert.NoDirExists(t, sharedRoot)
+	assert.NoDirExists(t, root)
+	assert.NoDirExists(t, filepath.Join(sharedRoot, "plugins"))
+	assert.NoDirExists(t, filepath.Join(sharedRoot, "logs"))
+	assert.FileExists(t, unrelated)
 }
 
 func TestCachePrune_DropsEntryForGoneRepo(t *testing.T) {

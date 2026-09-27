@@ -51,6 +51,12 @@ func acquireInstallLock(installDir, repoRoot string) (release func(), err error)
 		return nil, err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
+	// os.CreateTemp defaults to 0600; widen before publishing so a cache dir shared between OS
+	// users doesn't EACCES a second user's process reading (or reclaiming) this lock.
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return nil, err
+	}
 	_, werr := tmp.Write(data)
 	if cerr := tmp.Close(); werr == nil {
 		werr = cerr
@@ -87,8 +93,8 @@ func acquireInstallLock(installDir, repoRoot string) (release func(), err error)
 		}
 		var held lockClaim
 		if json.Unmarshal(existing, &held) == nil && holderAlive(held.PID, lockPath) {
-			return nil, fmt.Errorf("download: repository %q is already installing %s (pid %d); retry later",
-				held.Repo, installDir, held.PID)
+			return nil, fmt.Errorf("download: repository %q is already installing %s (pid %d, lock %s); retry later",
+				held.Repo, installDir, held.PID, lockPath)
 		}
 		// Stale: crashed holder, or an unparseable leftover.
 		// ponytail: two processes reclaiming the same stale lock at the same instant can both

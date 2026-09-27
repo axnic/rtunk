@@ -1618,7 +1618,7 @@ func TestRun_InPlaceWithSandboxIsSkipped(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(_ config.Command) bool { return true })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(_ config.Command) bool { return true })
 	require.NoError(t, err)
 
 	var got Event
@@ -1652,7 +1652,7 @@ func TestRun_DisabledCommandIsSkipped(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(_ config.Command) bool { return true })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(_ config.Command) bool { return true })
 	require.NoError(t, err)
 
 	var got Event
@@ -1741,7 +1741,7 @@ func TestRun_PlatformRestrictedCommand_UnrestrictedSiblingStillRuns(t *testing.T
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, notFormatter)
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, notFormatter)
 	require.NoError(t, err)
 
 	var got []Event
@@ -2045,7 +2045,7 @@ func TestRun_StdinFormatterAndInPlaceFormatter_SerializedOnSameFile(t *testing.T
 		},
 	}
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 2}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 2}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 	for range events { //nolint:revive // draining the channel is the whole point; there is nothing to do per event
 	}
@@ -2138,7 +2138,7 @@ func TestRun_StdinStdoutFormatter_RewritesFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(target, []byte("messy"), 0o644))
 	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2180,7 +2180,7 @@ func TestRun_StdinStdoutFormatter_AlreadyFormattedIsNotChanged(t *testing.T) {
 	require.NoError(t, os.WriteFile(target, []byte("ALREADY-UPPER"), 0o644))
 	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2218,7 +2218,7 @@ func TestRun_StdinStdoutFormatter_DryRunReportsWithoutWriting(t *testing.T) {
 	require.NoError(t, os.WriteFile(target, []byte("messy"), 0o644))
 	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1, DryRun: true}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1, DryRun: true}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2259,7 +2259,7 @@ func TestRun_StdinStdoutFormatter_SuccessCodesMismatchIsFailed(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
 	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2295,7 +2295,7 @@ func TestRun_StdinStdoutFormatterWithSandboxTypeIsSkipped(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2333,7 +2333,7 @@ func TestRun_StdinStdoutFormatter_EmptyOutputRefusesToWrite(t *testing.T) {
 	require.NoError(t, os.WriteFile(target, []byte("precious"), 0o644))
 	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2376,7 +2376,7 @@ func TestRun_StdinStdoutFormatter_KilledProcessDoesNotWritePartialOutput(t *test
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	events, err := Run(ctx, Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(ctx, Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2424,7 +2424,7 @@ func TestRun_StdinStdoutFormatter_MultiFileBatch_EachFileGetsOwnInvocation(t *te
 	cacheDir := t.TempDir()
 	log := runlog.Start(runlog.StartOpts{CacheDir: cacheDir, RepoRoot: repoRoot, Cmd: "check"})
 	require.NotNil(t, log, "log must open cleanly in a fresh temp cache dir")
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1, Log: log}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1, Log: log}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event
@@ -2483,7 +2483,7 @@ func TestRun_StdinStdoutFormatter_TargetBasedShape(t *testing.T) {
 	target := filepath.Join(repoRoot, "a.txt")
 	require.NoError(t, os.WriteFile(target, []byte("same\n"), 0o644))
 
-	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, func(c config.Command) bool { return c.Formatter })
 	require.NoError(t, err)
 
 	var got Event

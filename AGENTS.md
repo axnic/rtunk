@@ -106,7 +106,7 @@ specs under `docs/superpowers/`. Everything through `v0.9` is implemented today;
 - **Exit codes.** Identical to trunk's: only `0` and `1`, measured on trunk 1.25.0.
 - **`fmt`** writes to the working tree only, never the index.
 - **Command surface.** Symmetric `linters`/`actions` groups, hidden `toolbox`, `cache
-destroy|prune --older-than`, `plugins print`.
+clean|prune` (`clean` wipes the whole cache, `prune` is usage-based, no flag), `plugins print`.
 - **UX.** `check`/`fmt` emit an event stream consumed by `human`, `sarif` and `json` renderers;
   every issue line is printed, no folding.
 - **Download integrity.** `rtunk.lock` (`id@version@platform -> sha256`) is post-v1 hardening,
