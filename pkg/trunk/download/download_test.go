@@ -74,6 +74,47 @@ func TestDownload_Runtime(t *testing.T) {
 	assert.FileExists(t, shimPath)
 }
 
+func TestDownload_RemovesBlobAfterInstall(t *testing.T) {
+	archive := tarGzBytes(t, "tool-1.0.0", "shellcheck", "#!/bin/sh\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	}))
+	defer srv.Close()
+
+	cfg := config.Config{
+		Downloads: map[string]config.Download{
+			"shellcheck": {Downloads: []config.DownloadEntry{{
+				OS:  config.OSSpec{"linux": "linux", "macos": "macos", "windows": "windows"},
+				CPU: config.OSSpec{"x86_64": "x86_64", "arm_64": "arm_64"},
+				URL: srv.URL + "/shellcheck.tar.gz", StripComponents: 1,
+			}}},
+		},
+		Tools: map[string]config.Tool{},
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"shellcheck": {Type: "shellcheck", Download: "shellcheck", KnownGoodVersion: "0.9.0", Shims: []string{"shellcheck"}},
+			},
+		},
+	}
+
+	cacheDir := t.TempDir()
+	events, err := download.Download(cfg, cacheDir, download.Ref{Category: "runtimes", ID: "shellcheck"})
+	require.NoError(t, err)
+
+	for ev := range events {
+		require.NotEqual(t, download.Failed, ev.Phase, "%+v", ev.Err)
+	}
+
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	blobs, err := filepath.Glob(filepath.Join(root, "blobs", "sha256", "*"))
+	require.NoError(t, err)
+	assert.Empty(t, blobs, "no blob should remain once its install has finished")
+
+	install := download.InstallDir(root, "runtimes", "shellcheck", "0.9.0")
+	assert.DirExists(t, install)
+}
+
 func TestDownload_Runtime_AlreadyCached(t *testing.T) {
 	cfg := config.Config{
 		Downloads: map[string]config.Download{"shellcheck": {}},

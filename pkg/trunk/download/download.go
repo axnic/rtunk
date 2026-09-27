@@ -338,6 +338,11 @@ func fetchDownload(root string, ref Ref, dl config.Download, version, installDir
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return err
 	}
+	// The blob's only reader was InstallDownload, just above; keeping it around after a
+	// successful install only grows the cache forever for content nothing reads again. Best-
+	// effort: an already-open reader elsewhere (see the doc comment) keeps working via its own
+	// fd even after this unlink, so a failure to remove is not worth failing the install over.
+	_ = os.Remove(blobPath)
 	return nil
 }
 
