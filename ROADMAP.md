@@ -1,5 +1,5 @@
 ---
-current_version: 0.9.x
+current_version: 0.10.x
 last_updated: 2026-09-27
 ---
 
