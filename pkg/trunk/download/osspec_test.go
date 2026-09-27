@@ -79,9 +79,9 @@ func TestMatchEntry_VersionRange(t *testing.T) {
 	assert.True(t, ok, "an entry with no Version field must match any version")
 }
 
-// TestMatchEntry_VersionRange_AllOperators exercises versionSatisfies' other four operators
+// TestMatchEntry_VersionRange_AllOperators exercises VersionSatisfies' other four operators
 // (">=", "<", ">", "=") -- TestMatchEntry_VersionRange only covers "<=" -- plus its fallback for a
-// version string versionSatisfies can't parse, which degrades to "matches" rather than rejecting.
+// version string VersionSatisfies can't parse, which degrades to "matches" rather than rejecting.
 func TestMatchEntry_VersionRange_AllOperators(t *testing.T) {
 	entryWith := func(op string) []config.DownloadEntry {
 		return []config.DownloadEntry{{
@@ -110,7 +110,7 @@ func TestMatchEntry_VersionRange_AllOperators(t *testing.T) {
 	_, _, _, ok = download.MatchEntry(entryWith("="), "linux", "amd64", "2.0.1")
 	assert.False(t, ok, "2.0.1 != 2.0.0")
 
-	// A non-numeric (e.g. pre-release) version component can't be compared -- versionSatisfies
+	// A non-numeric (e.g. pre-release) version component can't be compared -- VersionSatisfies
 	// degrades to "matches" rather than guessing wrong and rejecting an otherwise-good entry.
 	_, _, _, ok = download.MatchEntry(entryWith(">="), "linux", "amd64", "2.0.0a6")
 	assert.True(t, ok, "an incomparable version must fall back to matching, not rejecting")

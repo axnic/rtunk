@@ -1,6 +1,7 @@
 package download
 
 import (
+	goruntime "runtime"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,14 @@ var goosNames = map[string]string{"darwin": "macos", "linux": "linux", "windows"
 
 // goarchNames is goosNames' CPU equivalent.
 var goarchNames = map[string]string{"amd64": "x86_64", "arm64": "arm_64"}
+
+// HostOSName returns the current host's name in trunk's own os vocabulary (linux, macos,
+// windows) -- the same vocabulary Command.Platforms and DownloadEntry.OS are keyed by. ok is
+// false when runtime.GOOS has no mapping (mirrors MatchEntry's own goosNames lookup).
+func HostOSName() (string, bool) {
+	name, ok := goosNames[goruntime.GOOS]
+	return name, ok
+}
 
 // MatchEntry returns the first entries[] whose OS/CPU both cover goos/goarch and whose Version
 // range (if any) admits version, along with the upstream-naming values (DownloadEntry.OS/CPU's
@@ -43,7 +52,7 @@ func MatchEntry(entries []config.DownloadEntry, goos, goarch, version string) (c
 		if !ok {
 			continue
 		}
-		if !versionSatisfies(e.Version, version) {
+		if !VersionSatisfies(e.Version, version) {
 			continue
 		}
 		return e, osVal, cpuVal, true
@@ -51,12 +60,12 @@ func MatchEntry(entries []config.DownloadEntry, goos, goarch, version string) (c
 	return config.DownloadEntry{}, "", "", false
 }
 
-// versionSatisfies reports whether version meets constraint, a DownloadEntry.Version string like
-// "<=3.14.4", "<2.13.1", or ">=2.13.1". An empty constraint always matches (most entries have
-// none). Malformed constraints or versions fall back to matching, so a data quirk this doesn't
-// understand degrades to the pre-fix behavior (first match wins) rather than rejecting every
-// entry and leaving nothing to fetch.
-func versionSatisfies(constraint, version string) bool {
+// VersionSatisfies reports whether version meets constraint, a DownloadEntry.Version or
+// Command.Version string like "<=3.14.4", "<2.13.1", or ">=2.13.1". An empty constraint always
+// matches (most entries have none). Malformed constraints or versions fall back to matching, so a
+// data quirk this doesn't understand degrades to the pre-fix behavior (first match wins, or "keep
+// the command") rather than rejecting every entry and leaving nothing to run.
+func VersionSatisfies(constraint, version string) bool {
 	if constraint == "" {
 		return true
 	}

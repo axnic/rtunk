@@ -303,7 +303,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 	emit := func(ev Event) { events <- ev }
 	parserPathEnvByRuntime := map[string]string{}
 
-	for _, cmd := range linter.Commands {
+	for _, cmd := range selectApplicableCommands(cfg, linter) {
 		if !include(cmd) {
 			continue
 		}
@@ -1253,4 +1253,45 @@ func toolVersions(cfg config.Config, ids []string) map[string]string {
 		}
 	}
 	return out
+}
+
+// selectApplicableCommands narrows linter.Commands to the variants that apply on this host and to
+// the linter's already-resolved tool version -- the real catalog commonly declares several
+// same-named Command variants gated by Platforms or Version, and only the matching one(s) should
+// ever be attempted. Runs before buildJobs' own per-command skip checks, which are for genuine
+// misconfigurations (an unsupported var, a disabled command): a platform/version mismatch here is
+// normal, expected filtering, not a Skipped-worthy surprise.
+func selectApplicableCommands(cfg config.Config, linter config.Linter) []config.Command {
+	host, hostOK := download.HostOSName()
+	toolVersion := gatingToolVersion(cfg, linter)
+	out := make([]config.Command, 0, len(linter.Commands))
+	for _, cmd := range linter.Commands {
+		if len(cmd.Platforms) > 0 && (!hostOK || !slices.Contains(cmd.Platforms, host)) {
+			continue
+		}
+		if cmd.Version != "" && toolVersion != "" && !download.VersionSatisfies(cmd.Version, toolVersion) {
+			continue
+		}
+		out = append(out, cmd)
+	}
+	return out
+}
+
+// gatingToolVersion is the resolved tool version a Command.Version range is checked against: the
+// linter's MainTool if it declares one, else its sole tool when there's exactly one -- the only
+// shapes the real catalog uses this field with. Multiple tools with no MainTool have no single
+// version to gate on, so Version is left unevaluated (every variant kept) rather than guessed.
+func gatingToolVersion(cfg config.Config, linter config.Linter) string {
+	id := linter.MainTool
+	if id == "" {
+		if len(linter.Tools) != 1 {
+			return ""
+		}
+		id = linter.Tools[0]
+	}
+	tool, ok := cfg.Tools[id]
+	if !ok {
+		return ""
+	}
+	return download.ResolveVersion(cfg.Lint.Enabled, id, tool.KnownGoodVersion)
 }

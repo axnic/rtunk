@@ -1594,6 +1594,113 @@ func TestRun_DisabledCommandIsSkipped(t *testing.T) {
 	assert.Equal(t, "disabled by its own plugin source", got.Note)
 }
 
+func TestRun_VersionGatedCommand_OnlyMatchingVariantRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "9.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "9.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakegated": {
+						Name: "fakegated", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{
+							{Name: "lint", Version: ">=9.0.0", Run: "faketool sarifone", Output: "sarif"},
+							{Name: "lint", Version: "<9.0.0", Run: "faketool crash", Output: "sarif"},
+						},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got []Event
+	for ev := range events {
+		got = append(got, ev)
+	}
+	for _, ev := range got {
+		require.NotEqual(t, Skipped, ev.Phase, "an out-of-range variant must be silently absent, not skipped: %+v", ev)
+	}
+	require.NotEmpty(t, got)
+	assert.Equal(t, Done, got[len(got)-1].Phase, "the in-range variant must have actually run")
+}
+
+func TestRun_PlatformRestrictedCommand_UnrestrictedSiblingStillRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	host, ok := download.HostOSName()
+	require.True(t, ok, "test host must map to a known trunk os name")
+	other := "windows"
+	if host == "windows" {
+		other = "linux"
+	}
+	binPath := buildFakeToolBinary(t)
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakeplatform": {
+						Name: "fakeplatform", Files: []string{"ALL"},
+						Commands: []config.Command{
+							{Name: "lint", Platforms: []string{other}, Run: "faketool crash", Output: "sarif"},
+							{Name: "lint", Run: "faketool sarifone", Output: "sarif"},
+						},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got []Event
+	for ev := range events {
+		got = append(got, ev)
+	}
+	for _, ev := range got {
+		require.NotEqual(t, Skipped, ev.Phase, "a platform mismatch must be silently absent, not skipped: %+v", ev)
+	}
+	require.NotEmpty(t, got)
+	assert.Equal(t, Done, got[len(got)-1].Phase, "the matching-platform sibling must have actually run")
+}
+
+func TestSelectApplicableCommands_NoRestrictions_KeepsEverything(t *testing.T) {
+	linter := config.Linter{Commands: []config.Command{{Name: "lint"}, {Name: "fmt"}}}
+	got := selectApplicableCommands(config.Config{}, linter)
+	assert.Equal(t, linter.Commands, got)
+}
+
+func TestSelectApplicableCommands_TwoToolsNoMainTool_KeepsVersionGatedVariant(t *testing.T) {
+	linter := config.Linter{
+		Tools:    []string{"a", "b"},
+		Commands: []config.Command{{Name: "lint", Version: ">=1.0.0"}},
+	}
+	got := selectApplicableCommands(config.Config{}, linter)
+	assert.Equal(t, linter.Commands, got, "no single tool version to gate on -- nothing guessed away")
+}
+
 func TestHashFiles_DetectsContentChange(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one"), 0o644))
