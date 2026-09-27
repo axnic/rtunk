@@ -1,7 +1,7 @@
 # Terminal UX design
 
 This document specifies the terminal UX of `check` and `fmt`. Command semantics live in
-[cli.md](./cli.md); staging lives in [ROADMAP.md](../ROADMAP.md) (`v0.9`).
+[cli.md](./cli.md); staging lives in [ROADMAP.md](../ROADMAP.md).
 
 **Implementation status.** `v0.9` item 1 (event stream + plain renderer) is implemented, in
 `internal/cli/render`: `check`, `fmt` and `check --fix`'s formatter pass render through the plain

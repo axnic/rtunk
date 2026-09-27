@@ -96,8 +96,8 @@ clone` of a repo URL pinned to a tag or SHA — never a branch.
 
 Detail lives in [docs/cli.md](./docs/cli.md) (commands and run semantics) and
 [docs/ux.md](./docs/ux.md) (terminal UX). They are the target design, authoritative over older
-specs under `docs/superpowers/`. Everything through `v0.8` is implemented today; `v0.9` (output and
-UX) and `v1.2` (`rtunk.lock`) remain planned, with ad hoc per-file stderr events until `v0.9`.
+specs under `docs/superpowers/`. Everything through `v0.9` is implemented today; `v1.1`
+(`rtunk.lock`) remains planned.
 
 - **Project root.** `check`, `fmt` and `run` refuse to run without a `.trunk`/`.rtunk` ancestor.
 - **Changed files by default.** No-path `check`/`fmt` process only changed files (merge-base diff,
@@ -110,9 +110,9 @@ destroy|prune --older-than`, `plugins print`.
 - **UX.** `check`/`fmt` emit an event stream consumed by `human`, `sarif` and `json` renderers;
   every issue line is printed, no folding.
 - **Download integrity.** `rtunk.lock` (`id@version@platform -> sha256`) is post-v1 hardening,
-  roadmap `v1.2`; until then the TOFU limit above stands.
+  roadmap `v1.1`; until then the TOFU limit above stands.
 
-Staging: `v0.8` CLI reshape and behavioral decisions, `v0.9` output and UX, `v1.2` `rtunk.lock`
+Staging: `v0.8` CLI reshape and behavioral decisions, `v0.9` output and UX, `v1.1` `rtunk.lock`
 (see [ROADMAP.md](./ROADMAP.md)).
 
 ## Implementation
@@ -125,4 +125,4 @@ concurrency.
 
 See [docs/cli.md](./docs/cli.md) and [docs/ux.md](./docs/ux.md) for the command and UX design, and
 [ROADMAP.md](./ROADMAP.md) for the staged build-out of rtunk's functionality, from reading an
-existing trunk configuration through CLI flag compatibility.
+existing trunk configuration through its public release and beyond.

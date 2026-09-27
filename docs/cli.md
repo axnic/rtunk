@@ -17,7 +17,7 @@ summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and 
 is implemented: the filtered `linters list` / `actions list` (internal/cli/list.go), a breaking
 change, the former `* name  description` format is gone. `v0.9` item 3 is implemented: the TTY live
 view on stderr, with `--ascii` and `--live-height` (`RTUNK_LIVE_HEIGHT`); all four `v0.9` items are
-done. Still planned: `v1.2` (`rtunk.lock`).
+done. Still planned: `v1.1` (`rtunk.lock`).
 
 ## Cross-cutting rules
 
@@ -156,7 +156,7 @@ and stay dropped: `linters`/`actions` listing and `plugins print` cover the need
   is the item's shim when equal to `<id>`, else an executable in its install directory.
   `--interactive` binds stdin/stdout, for instance to open a python or node shell from a runtime;
   otherwise stdin is unbound.
-- **`rtunk lock`**: see "Download integrity" below (planned, `v1.2`).
+- **`rtunk lock`**: see "Download integrity" below (planned, `v1.1`).
 
 `toolbox download`, `exec` and `where` are implemented and replace the former top-level `download`,
 `exec|x` and `where` (`v0.2`), narrowed to `{runtime,tools}`; the old names are removed, with no
@@ -227,7 +227,7 @@ trunk plugin `downloads:` recipes carry no upstream checksum.
 Known limit: TOFU. The first download is accepted as is; a source compromised at that moment is
 not detected.
 
-### Next step (after check/fmt/run, non-blocking for v1; roadmap `v1.2`)
+### Next step (after check/fmt/run, non-blocking for v1; roadmap `v1.1`)
 
 A versioned `rtunk.lock` in the repo, `id@version@platform -> sha256` (go.sum style):
 
