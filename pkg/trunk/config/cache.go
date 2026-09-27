@@ -56,10 +56,10 @@ type cacheEnvelope struct {
 	Defs    sourceDefs
 }
 
-// sourceHash is the stable identity of a git plugin source, shared by cacheFilePath (the parsed-
-// definitions cache) and checkoutDirPath (the persisted checkout) so both live under the same key
-// for the same uri+ref.
-func sourceHash(src PluginSource) string {
+// SourceHash is a git plugin source's stable identity (uri+ref), shared by this package's own
+// cacheFilePath/checkoutDirPath and by pkg/trunk/download's usage registry (RecordUsage), which
+// needs the same identity to record which plugin sources a repository's resolved config uses.
+func SourceHash(src PluginSource) string {
 	sum := sha256.Sum256([]byte(src.URI + "@" + src.Ref))
 	return hex.EncodeToString(sum[:])
 }
@@ -67,13 +67,13 @@ func sourceHash(src PluginSource) string {
 // cacheFilePath returns where src's parsed-definitions cache lives: keyed by uri+ref, since a
 // pinned ref never changes content.
 func cacheFilePath(cacheDir string, src PluginSource) string {
-	return filepath.Join(cacheDir, sourceHash(src)+".json")
+	return filepath.Join(cacheDir, SourceHash(src)+".json")
 }
 
 // checkoutDirPath is where a git source's full checkout is persisted (see fetchGitSource) --
 // keyed the same way as cacheFilePath, since a pinned ref never changes content.
 func checkoutDirPath(cacheDir string, src PluginSource) string {
-	return filepath.Join(cacheDir, "checkouts", sourceHash(src))
+	return filepath.Join(cacheDir, "checkouts", SourceHash(src))
 }
 
 // loadSourceCache reads path's cached sourceDefs, rejecting (as a decode failure, same as

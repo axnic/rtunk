@@ -193,6 +193,8 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 
 	concurrency := max(env.Concurrency, 1)
 
+	_ = download.RecordUsage(env.CacheDir, repoRoot, env.Cfg) // best-effort; see RecordUsage's own doc comment
+
 	events := make(chan Event)
 	go func() {
 		defer close(events)

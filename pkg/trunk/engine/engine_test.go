@@ -538,6 +538,53 @@ func TestRun_RelativePathArgument(t *testing.T) {
 	assert.Equal(t, "ok.txt", done.Findings[0].File)
 }
 
+// TestRun_RecordsUsageRegistry covers Run wiring download.RecordUsage (see registry.go): every
+// call must leave behind a per-repository registry entry reflecting the just-resolved cfg, so a
+// concurrently-running `cache prune` (Task 5) never mistakes this repo's in-use items for
+// unreferenced ones.
+func TestRun_RecordsUsageRegistry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "ok.txt"), []byte("fine\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakesarif": {
+						Name: "fakesarif", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool sarif ${target}", Output: "sarif", Batch: true}},
+					},
+				},
+			},
+		},
+	}
+
+	env := Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}
+	events, err := Run(context.Background(), env, nil, notFormatter)
+	require.NoError(t, err)
+	for range events {
+	}
+
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(root), "registry"))
+	require.NoError(t, err)
+	assert.NotEmpty(t, entries, "Run must record a registry entry for env.RepoRoot")
+}
+
 // TestRun_ParallelWorkersRunConcurrently covers the actual point of concurrency workers: two
 // linters that each take ~250ms must finish in well under 2x that when concurrency lets both run
 // at once, proving jobs for different linters really execute in parallel rather than queued
