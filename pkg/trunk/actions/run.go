@@ -66,19 +66,7 @@ func findUnsupportedActionVar(run string) (string, bool) {
 	return "", false
 }
 
-func quoteOne(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func quoteAll(ss []string) []string {
-	out := make([]string, len(ss))
-	for i, s := range ss {
-		out[i] = quoteOne(s)
-	}
-	return out
-}
-
-// substituteVars quotes every substituted value at substitution time (quoteOne/quoteAll) and
+// substituteVars quotes every substituted value at substitution time (download.QuoteOne/QuoteAll) and
 // leaves the corresponding ${...} bare in the Run string template -- the same convention
 // pkg/trunk/engine.go's Command.Run/${target} substitution uses. args (opts.Args) is untrusted
 // git-hook argv (branch/ref names an attacker controls), so ${1}..${9}/${@} MUST be quoted here:
@@ -97,15 +85,15 @@ func substituteVars(run, hook, cwd, plugin, hookStdinPath string, args []string)
 	})
 
 	pairs := []string{
-		"${cwd}", quoteOne(cwd), "${plugin}", quoteOne(plugin),
+		"${cwd}", download.QuoteOne(cwd), "${plugin}", download.QuoteOne(plugin),
 		"${hook}", hook, "${hook_stdin_path}", hookStdinPath,
-		"${@}", strings.Join(quoteAll(args), " "),
+		"${@}", strings.Join(download.QuoteAll(args), " "),
 	}
 	for i, a := range args {
 		if i >= 9 {
 			break
 		}
-		pairs = append(pairs, fmt.Sprintf("${%d}", i+1), quoteOne(a))
+		pairs = append(pairs, fmt.Sprintf("${%d}", i+1), download.QuoteOne(a))
 	}
 	return strings.NewReplacer(pairs...).Replace(run)
 }
@@ -116,34 +104,6 @@ func substituteVars(run, hook, cwd, plugin, hookStdinPath string, args []string)
 func IsInteractive() bool {
 	info, err := os.Stdin.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
-}
-
-// resolveRuntimeShimDir is pkg/trunk/engine's own resolveRuntimeShimDir, copied rather than
-// exported across the package boundary for this one call site (same reasoning as this package's
-// local quoteOne/quoteAll: a ~15 line helper isn't worth a cross-package export).
-func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, repoRoot, runtimeID string) (string, error) {
-	rt, ok := cfg.Runtimes.Definitions[runtimeID]
-	if !ok {
-		return "", fmt.Errorf("actions: runtime %q referenced but not found in resolved config", runtimeID)
-	}
-	if len(rt.Shims) == 0 {
-		return "", fmt.Errorf("actions: runtime %q has no shims declared", runtimeID)
-	}
-	version := download.ResolveVersion(cfg.Runtimes.Enabled, runtimeID, rt.KnownGoodVersion)
-	shimPath := download.ShimPath(root, "runtimes", runtimeID, version, rt.Shims[0])
-	if _, statErr := os.Stat(shimPath); statErr != nil {
-		evs, err := download.Download(cfg, cacheDir, repoRoot, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
-		if err != nil {
-			return "", err
-		}
-		for ev := range evs {
-			if ev.Phase == download.Failed {
-				return "", ev.Err
-			}
-		}
-	}
-	download.Touch(root, "runtimes", runtimeID, version)
-	return filepath.Dir(shimPath), nil
 }
 
 // resolvePackagesFileBinDir installs action.PackagesFile (if not already cached, keyed purely by
@@ -223,7 +183,7 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 		if !ok {
 			return fail(fmt.Errorf("actions: %s: runtime %q not found in resolved config", action.ID, action.Runtime))
 		}
-		shimDir, err := resolveRuntimeShimDir(cfg, root, opts.CacheDir, opts.RepoRoot, action.Runtime)
+		shimDir, err := download.ResolveRuntimeShimDir(cfg, root, opts.CacheDir, opts.RepoRoot, action.Runtime, nil)
 		if err != nil {
 			return fail(err)
 		}
