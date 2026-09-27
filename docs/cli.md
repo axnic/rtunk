@@ -15,8 +15,9 @@ the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with `--no-p
 breaking change, the former `file:line severity [rule] message` lines and `N issue(s) in M file(s)`
 summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and ANSI color. `v0.9` item 4
 is implemented: the filtered `linters list` / `actions list` (internal/cli/list.go), a breaking
-change, the former `* name  description` format is gone. Still planned: the TTY live view (`v0.9`
-item 3) and `v1.2` (`rtunk.lock`).
+change, the former `* name  description` format is gone. `v0.9` item 3 is implemented: the TTY live
+view on stderr, with `--ascii` and `--live-height` (`RTUNK_LIVE_HEIGHT`); all four `v0.9` items are
+done. Still planned: `v1.2` (`rtunk.lock`).
 
 ## Cross-cutting rules
 
@@ -52,8 +53,19 @@ not the whole repository.
 ### Output
 
 `--no-progress` (`check` and `fmt`, implemented) suppresses the per-linter progress lines on stderr;
-warnings and errors are still printed. The default output is the plain renderer described in
-[ux.md](./ux.md).
+warnings and errors are still printed. It also disables the live view. The default output is the
+plain renderer described in [ux.md](./ux.md).
+
+Live view (`check` and `fmt`, implemented): when stderr is a terminal, `--no-progress` is not set and
+`TERM` is not `dumb`, a live area is drawn on stderr while the run progresses and erased before the
+stdout report; otherwise the per-linter progress lines are emitted unchanged. stdout, exit codes and
+run logs are not affected.
+
+- `--ascii`: ASCII glyphs in the live view. Also chosen automatically for a non-UTF-8 locale (first
+  non-empty of `LC_ALL`, `LC_CTYPE`, `LANG` must contain `utf-8` or `utf8`).
+- `--live-height <n>` (env `RTUNK_LIVE_HEIGHT`): maximum height of the live area in lines; default
+  half the terminal height, minimum 3. Not a config file key.
+- Ctrl+C erases the area and re-raises SIGINT.
 
 `--format human|sarif|json` (`check` and `fmt`, implemented; default `human`):
 
@@ -108,7 +120,7 @@ files are skipped with a warning unless `--force` is given. (Implemented.)
 ## Everyday commands
 
 ```text
-rtunk check [--from <ref>] [--no-progress] [--format human|sarif|json] [<path>...]
+rtunk check [--from <ref>] [--no-progress] [--ascii] [--live-height <n>] [--format human|sarif|json] [<path>...]
   -> read the config
   => [in parallel]
     -> download runtimes if needed
@@ -118,7 +130,7 @@ rtunk check [--from <ref>] [--no-progress] [--format human|sarif|json] [<path>..
   -> output the result
 ```
 
-`rtunk fmt [--no-progress] [--format human|json] [<path>...]` follows the same flow, with the `fmt` rules above.
+`rtunk fmt [--no-progress] [--ascii] [--live-height <n>] [--format human|json] [<path>...]` follows the same flow, with the `fmt` rules above.
 
 `rtunk [actions] run <id>` runs an action in the current directory.
 

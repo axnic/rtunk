@@ -156,7 +156,7 @@ enable|disable|config`: `enable` is the former `annotate`, `disable` strips the 
 ## v0.9 — Output and UX
 
 `check` and `fmt` emit an event stream; renderers consume it and hold no business logic. Item 1 is
-implemented (`internal/cli/render`), as are items 2 and 4; the TTY live view does not exist yet. Design: [docs/ux.md](./docs/ux.md). Implemented in this order:
+implemented (`internal/cli/render`), as are items 2, 3 and 4: all four are done. Design: [docs/ux.md](./docs/ux.md). Implemented in this order:
 
 1. **Event stream + plain renderer** (implemented) — needed for CI and tests. Out of TTY: one line per finished
    linter, then findings; honors `NO_COLOR` and `--no-progress`. Every issue line is printed, files
@@ -169,16 +169,21 @@ message` lines and `N issue(s) in M file(s)` summary are gone; stable machine ou
    is for CI (`check` only), `json` for other machine consumers. Each is a renderer over the event
    stream. `human` adds ANSI color only on a terminal with `NO_COLOR` empty; output elsewhere is
    uncolored. Progress stays on stderr for every format; stdout carries only the report or document.
-3. **TTY live view** — hand-written renderer (no bubbletea): header bar, per-linter tree, install
-   lines with byte progress, `--live-height` / `RTUNK_LIVE_HEIGHT`, ASCII fallback (`--ascii`,
-   `TERM=dumb`, non-UTF-8 locale), Ctrl+C and SIGWINCH handling.
+3. **TTY live view** (implemented, `internal/cli/render/live.go`, `screen.go`, `detect.go`) —
+   hand-written decorator over the chosen renderer (no bubbletea), drawn on stderr when it is a
+   terminal, `--no-progress` is unset and `TERM` is not `dumb` (else the item 1 lines, unchanged):
+   header bar, per-linter tree, install lines with byte progress, `--live-height` /
+   `RTUNK_LIVE_HEIGHT`, ASCII glyphs (`--ascii`, non-UTF-8 locale), Ctrl+C erases the area and
+   re-raises SIGINT. The engine gained additive `Planned`/`JobDone`/`Install*` events. Terminal size
+   through a stdlib ioctl, re-read every 100 ms (no SIGWINCH handler, no `golang.org/x/term`). Known
+   gaps: no "waiting for runtime" install state, no color in the live area.
 4. **Filtered `linters list` / `actions list`** (implemented, internal/cli/list.go; file matching
    via `engine.Matches` in pkg/trunk/engine/match.go) — `rtunk linters list [--all] [--format
 human|json]` groups linters as enabled (with pinned version, even with 0 matching files),
    available for this repo (matching at least one repository file, not enabled) and, with `--all`,
    the rest; the footer hints `rtunk linters enable <id>`. `rtunk actions list [--format
 human|json]` has two groups only, `Enabled` and `Available (not enabled)`. Breaking: the old
-   `* name  description` format is gone. No color or ASCII fallback yet (item 3).
+   `* name  description` format is gone. No color or ASCII fallback.
 
 Later: color themes, detailed byte-progress style, clickable OSC 8 links, sort by severity.
 
