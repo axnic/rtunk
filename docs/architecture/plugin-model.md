@@ -201,8 +201,8 @@ index into that.
 | `cache_results`             | linter      | 4                   | parsed, never consulted             |
 | `cache_results`             | command     | 71                  | not modeled (dropped while parsing) |
 | `supported_platforms`       | linter      | 9                   | parsed, never consulted             |
-| `platforms`                 | command     | 15                  | not modeled (dropped while parsing) |
-| `version` (supported range) | command     | 20                  | parsed, never consulted             |
+| `platforms`                 | command     | 15                  | modeled, consulted (v0.10)          |
+| `version` (supported range) | command     | 20                  | parsed, consulted (v0.10)           |
 | `is_security`               | command     | 22                  | not modeled (dropped while parsing) |
 | `disable_upstream`          | command     | 13                  | not modeled (dropped while parsing) |
 | `fix_prompt` / `fix_verb`   | command     | 3 / 3               | not modeled (dropped while parsing) |

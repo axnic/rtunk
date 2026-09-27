@@ -1255,15 +1255,19 @@ func toolVersions(cfg config.Config, ids []string) map[string]string {
 	return out
 }
 
-// selectApplicableCommands narrows linter.Commands to the variants that apply on this host and to
-// the linter's already-resolved tool version -- the real catalog commonly declares several
-// same-named Command variants gated by Platforms or Version, and only the matching one(s) should
-// ever be attempted. Runs before buildJobs' own per-command skip checks, which are for genuine
+// selectApplicableCommands narrows linter.Commands to the variant that applies on this host and
+// to the linter's already-resolved tool version -- the real catalog commonly declares several
+// same-named Command variants gated by Platforms or Version (often several open-ended ">=" ranges
+// plus an unversioned fallback, ordered newest-first, where more than one range admits the pinned
+// version), so at most one variant per Name survives: the first declared one whose Platforms/
+// Version both admit this run, matching MatchEntry's own first-match-per-entry semantics for
+// Download variants. Runs before buildJobs' own per-command skip checks, which are for genuine
 // misconfigurations (an unsupported var, a disabled command): a platform/version mismatch here is
 // normal, expected filtering, not a Skipped-worthy surprise.
 func selectApplicableCommands(cfg config.Config, linter config.Linter) []config.Command {
 	host, hostOK := download.HostOSName()
 	toolVersion := gatingToolVersion(cfg, linter)
+	seen := map[string]bool{}
 	out := make([]config.Command, 0, len(linter.Commands))
 	for _, cmd := range linter.Commands {
 		if len(cmd.Platforms) > 0 && (!hostOK || !slices.Contains(cmd.Platforms, host)) {
@@ -1272,6 +1276,10 @@ func selectApplicableCommands(cfg config.Config, linter config.Linter) []config.
 		if cmd.Version != "" && toolVersion != "" && !download.VersionSatisfies(cmd.Version, toolVersion) {
 			continue
 		}
+		if seen[cmd.Name] {
+			continue
+		}
+		seen[cmd.Name] = true
 		out = append(out, cmd)
 	}
 	return out

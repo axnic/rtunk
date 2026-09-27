@@ -99,8 +99,11 @@ A linter definition ties together:
   schema but not currently applied by the execution engine**: every declared command variant for a
   matched linter is treated as applicable regardless of the resolved tool's version or the host
   platform, which for a linter with several version- or platform-gated variants of the same command
-  name means more than one variant runs where only one should. See
-  [inconsistencies.md](./inconsistencies.md).
+  name means more than one variant runs where only one should. This narrowing is applied at
+  command-selection time (v0.10, `pkg/trunk/engine`): the first declared variant whose version
+  range and platform restriction both admit the resolved tool version and host wins, matching every
+  other variant-selection logic in this codebase (`download.MatchEntry`'s own first-match
+  semantics). See [inconsistencies.md](./inconsistencies.md).
 - **Config file presence** — files whose presence enables or influences the linter, also used to
   decide where a command actually runs from when several matched files share a common context.
 

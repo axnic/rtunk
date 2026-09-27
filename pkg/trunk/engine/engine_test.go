@@ -1701,6 +1701,27 @@ func TestSelectApplicableCommands_TwoToolsNoMainTool_KeepsVersionGatedVariant(t 
 	assert.Equal(t, linter.Commands, got, "no single tool version to gate on -- nothing guessed away")
 }
 
+// TestSelectApplicableCommands_OpenEndedRanges_FirstMatchWins reproduces the real catalog's ruff
+// shape: several open-ended ">=" ranges plus an unversioned fallback, ordered newest-first, where
+// more than one range admits the pinned version (unlike eslint's mutually-exclusive
+// ">=9.0.0"/"<=8.57.0" pair) -- only the first one declared for a given tool version may ever be
+// selected, matching MatchEntry's own first-match-per-entry semantics for Download variants.
+func TestSelectApplicableCommands_OpenEndedRanges_FirstMatchWins(t *testing.T) {
+	cfg := config.Config{Tools: map[string]config.Tool{"ruff": {KnownGoodVersion: "0.14.3"}}}
+	linter := config.Linter{
+		Tools: []string{"ruff"},
+		Commands: []config.Command{
+			{Name: "lint", Version: ">=0.6.0", Run: "newest"},
+			{Name: "lint", Version: ">=0.1.0", Run: "middle"},
+			{Name: "lint", Version: ">=0.0.266", Run: "oldest"},
+			{Name: "lint", Run: "fallback"},
+		},
+	}
+	got := selectApplicableCommands(cfg, linter)
+	require.Len(t, got, 1, "exactly one lint variant must run, not every range that happens to admit 0.14.3")
+	assert.Equal(t, "newest", got[0].Run, "the first declared variant whose range admits the pinned version wins")
+}
+
 func TestHashFiles_DetectsContentChange(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one"), 0o644))
