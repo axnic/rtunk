@@ -379,3 +379,31 @@ func TestCheckRunCmd_NoProgressSilencesStderr(t *testing.T) {
 	assert.Empty(t, quiet)
 	assert.Contains(t, stdout, "FAILURES\n  ✖ alpha  failed to run  rtunk logs show ")
 }
+
+func TestCheckRunCmd_DeprecatedLinter_WarnsButRuns(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"oldfmt"}, `    - name: oldfmt
+      description: Old formatter
+      deprecated: "oldfmt is now handled by newfmt. Please delete oldfmt from your config"
+      files: [ALL]
+      commands:
+        - name: check
+          run: "true"
+          output: pass_fail
+`)
+	_, stderr, err := run2(t, "--config", cfgPath, "check", repoRoot)
+	require.NoError(t, err, "a deprecated (but modern-shaped) linter must still run")
+	assert.Contains(t, stderr, "oldfmt is now handled by newfmt")
+}
+
+func TestCheckRunCmd_LegacyShapeLinter_Refused(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, []string{"oldstyle"}, `    - name: oldstyle
+      description: Legacy-shaped linter
+      type: rewrite
+      command: [oldstyle, --fix, "${target}"]
+      deprecated: "oldstyle is now handled by newstyle. Please delete oldstyle from your config"
+      files: [ALL]
+`)
+	_, _, err := run2(t, "--config", cfgPath, "check")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "oldstyle")
+}

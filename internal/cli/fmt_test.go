@@ -162,3 +162,34 @@ func TestFmtCmd_NoProgress(t *testing.T) {
 	assert.Empty(t, stderr)
 	assert.Contains(t, stdout, "REFORMATTED   1 file\n")
 }
+
+func TestFmtCmd_DeprecatedLinter_WarnsButRuns(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"oldfmt"}, `    - name: oldfmt
+      description: Old formatter
+      deprecated: "oldfmt is now handled by newfmt. Please delete oldfmt from your config"
+      files: [ALL]
+      commands:
+        - name: format
+          run: "true"
+          output: rewrite
+          success_codes: [0]
+          in_place: true
+          formatter: true
+`)
+	_, stderr, err := run2(t, "--config", cfgPath, "fmt", repoRoot)
+	require.NoError(t, err, "a deprecated (but modern-shaped) linter must still run")
+	assert.Contains(t, stderr, "oldfmt is now handled by newfmt")
+}
+
+func TestFmtCmd_LegacyShapeLinter_Refused(t *testing.T) {
+	cfgPath, _ := writeLinterFixture(t, []string{"oldstyle"}, `    - name: oldstyle
+      description: Legacy-shaped linter
+      type: rewrite
+      command: [oldstyle, --fix, "${target}"]
+      deprecated: "oldstyle is now handled by newstyle. Please delete oldstyle from your config"
+      files: [ALL]
+`)
+	_, _, err := run2(t, "--config", cfgPath, "fmt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "oldstyle")
+}

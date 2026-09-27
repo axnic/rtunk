@@ -63,6 +63,19 @@ func resolveConfig(configPath, cacheDir string, all bool) (config.Config, error)
 	return config.Resolve(configPath, cacheDir)
 }
 
+// checkDeprecations hard-refuses cfg if it enables a legacy-shaped linter (entry #8), else prints
+// a warning to stderr for every enabled linter/command carrying a deprecated: message (entry #9).
+// Called by check/fmt's Run right after resolveConfig, "before any execution starts" -- read-only
+// inspection commands (config print, linters list) call resolveConfig directly and skip this, so a
+// broken configuration can still be inspected in order to fix it.
+func checkDeprecations(cfg config.Config, stderr io.Writer) error {
+	warnings, err := cfg.CheckDeprecations()
+	for _, w := range warnings {
+		fmt.Fprintln(stderr, "rtunk: warning:", w)
+	}
+	return err
+}
+
 // resolvedVersionFor is the version `where`/`exec` (Tasks 12/13) resolve for category+id when the
 // CLI arg wasn't pinned with @version -- mirrors fetchToolRef/fetchRuntimeRef's own resolution
 // (pkg/trunk/download.Download) so both commands predict the exact cache path Download would use,

@@ -45,6 +45,11 @@ func (cfg Config) CheckDeprecations() (warnings []string, err error) {
 		if l.Deprecated != "" {
 			warnings = append(warnings, fmt.Sprintf("%s: %s", id, l.Deprecated))
 		}
+		for _, cmd := range l.Commands {
+			if cmd.Deprecated != "" {
+				warnings = append(warnings, fmt.Sprintf("%s %s: %s", id, cmd.Name, cmd.Deprecated))
+			}
+		}
 	}
 	return warnings, err
 }

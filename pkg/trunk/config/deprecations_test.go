@@ -50,3 +50,33 @@ func TestCheckDeprecations_ModernShape_NeverRefused(t *testing.T) {
 	_, err := cfg.CheckDeprecations()
 	require.NoError(t, err)
 }
+
+func TestCheckDeprecations_DeprecatedCommand_Warns(t *testing.T) {
+	cfg := config.Config{Lint: config.LintConfig{CategoryConfig: config.CategoryConfig[config.Linter]{
+		Definitions: map[string]config.Linter{
+			"eslint": {Name: "eslint", Commands: []config.Command{
+				{Name: "lint-legacy", Deprecated: "lint-legacy is now handled by lint. Please remove it from your config"},
+				{Name: "lint"},
+			}},
+		},
+	}}}
+
+	warnings, err := cfg.CheckDeprecations()
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "eslint")
+	assert.Contains(t, warnings[0], "lint-legacy")
+}
+
+func TestCheckDeprecations_NotEnabled_NoWarning(t *testing.T) {
+	// Resolve already trims cfg.Lint.Definitions to enabled-only -- CheckDeprecations must not
+	// need its own enabled-list check, since a definition that survived filterEnabled is, by
+	// construction, enabled.
+	cfg := config.Config{Lint: config.LintConfig{CategoryConfig: config.CategoryConfig[config.Linter]{
+		Definitions: map[string]config.Linter{}, // as if filterEnabled dropped everything
+	}}}
+
+	warnings, err := cfg.CheckDeprecations()
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}

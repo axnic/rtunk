@@ -52,6 +52,19 @@ With explicit path(s) (`rtunk check .`), every file under the path is processed:
 Default-to-changed-files is rtunk's performance lever: the common case checks a handful of files,
 not the whole repository.
 
+### Configuration validation
+
+`check` and `fmt` validate the resolved, enabled configuration before running anything:
+
+- **A linter using the old, pre-`commands:` single type/command shape** is refused outright — the
+  run exits `1` naming the linter and its own `deprecated:` migration message, if it has one.
+- **A linter or command carrying a `deprecated:` migration message** (in the modern shape) prints a
+  warning to stderr naming it, but still runs.
+
+`config print` and `linters list` resolve the same configuration without either check, so a broken
+configuration can still be inspected in order to fix it. (Implemented, pkg/trunk/config/
+deprecations.go, internal/cli/config.go.)
+
 ### Output
 
 `--no-progress` (`check` and `fmt`, implemented) suppresses the per-linter progress lines on stderr;

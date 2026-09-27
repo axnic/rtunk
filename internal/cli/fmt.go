@@ -56,6 +56,9 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	if err != nil {
 		return err
 	}
+	if err := checkDeprecations(cfg, stderr); err != nil {
+		return err
+	}
 	cfg, err = filterLinters(cfg, c.Filter, c.Exclude)
 	if err != nil {
 		return err

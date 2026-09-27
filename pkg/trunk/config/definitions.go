@@ -156,6 +156,10 @@ type Command struct {
 	// of the same command name alongside an unrestricted variant (linters/pmd/plugin.yaml).
 	// Empty means unrestricted (the overwhelming majority of commands).
 	Platforms []string `yaml:"platforms,omitempty"`
+	// Deprecated is a human-readable migration message for this specific command (distinct from
+	// Linter.Deprecated, which applies to every command the linter declares) -- surfaced as a
+	// warning by CheckDeprecations for any enabled command that carries it.
+	Deprecated string `yaml:"deprecated,omitempty"`
 	// Enabled defaults a command on (nil) or explicitly off (real catalog example: ruff's own
 	// "format" command sets false, since ruff-format competes with black) -- distinct from
 	// Linter-level enable/disable (trunk.yaml's lint.enabled: list), which this field does not
