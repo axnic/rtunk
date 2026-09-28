@@ -186,6 +186,11 @@ type Command struct {
 	// source's own catalog data says.
 	Enabled *bool   `yaml:"enabled,omitempty"`
 	Parser  *Parser `yaml:"parser,omitempty"`
+	// DisableUpstream names other linter ids this command's own linter supersedes -- when both
+	// this linter and a named one are enabled, every finding from the named linter is dropped
+	// (see internal/cli/check.go's drainEvents), on the theory that this command's own findings
+	// on the same class of issue are the ones that should surface, not both.
+	DisableUpstream []string `yaml:"disable_upstream,omitempty"`
 }
 
 // Parser converts a tool's native output into trunk's normalized shape, for tools with no native
