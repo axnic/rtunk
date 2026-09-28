@@ -2,8 +2,6 @@ package actions
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -66,19 +64,7 @@ func findUnsupportedActionVar(run string) (string, bool) {
 	return "", false
 }
 
-func quoteOne(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func quoteAll(ss []string) []string {
-	out := make([]string, len(ss))
-	for i, s := range ss {
-		out[i] = quoteOne(s)
-	}
-	return out
-}
-
-// substituteVars quotes every substituted value at substitution time (quoteOne/quoteAll) and
+// substituteVars quotes every substituted value at substitution time (download.QuoteOne/QuoteAll) and
 // leaves the corresponding ${...} bare in the Run string template -- the same convention
 // pkg/trunk/engine.go's Command.Run/${target} substitution uses. args (opts.Args) is untrusted
 // git-hook argv (branch/ref names an attacker controls), so ${1}..${9}/${@} MUST be quoted here:
@@ -97,15 +83,15 @@ func substituteVars(run, hook, cwd, plugin, hookStdinPath string, args []string)
 	})
 
 	pairs := []string{
-		"${cwd}", quoteOne(cwd), "${plugin}", quoteOne(plugin),
+		"${cwd}", download.QuoteOne(cwd), "${plugin}", download.QuoteOne(plugin),
 		"${hook}", hook, "${hook_stdin_path}", hookStdinPath,
-		"${@}", strings.Join(quoteAll(args), " "),
+		"${@}", strings.Join(download.QuoteAll(args), " "),
 	}
 	for i, a := range args {
 		if i >= 9 {
 			break
 		}
-		pairs = append(pairs, fmt.Sprintf("${%d}", i+1), quoteOne(a))
+		pairs = append(pairs, fmt.Sprintf("${%d}", i+1), download.QuoteOne(a))
 	}
 	return strings.NewReplacer(pairs...).Replace(run)
 }
@@ -118,51 +104,21 @@ func IsInteractive() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-// resolveRuntimeShimDir is pkg/trunk/engine's own resolveRuntimeShimDir, copied rather than
-// exported across the package boundary for this one call site (same reasoning as this package's
-// local quoteOne/quoteAll: a ~15 line helper isn't worth a cross-package export).
-func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, repoRoot, runtimeID string) (string, error) {
-	rt, ok := cfg.Runtimes.Definitions[runtimeID]
-	if !ok {
-		return "", fmt.Errorf("actions: runtime %q referenced but not found in resolved config", runtimeID)
-	}
-	if len(rt.Shims) == 0 {
-		return "", fmt.Errorf("actions: runtime %q has no shims declared", runtimeID)
-	}
-	version := download.ResolveVersion(cfg.Runtimes.Enabled, runtimeID, rt.KnownGoodVersion)
-	shimPath := download.ShimPath(root, "runtimes", runtimeID, version, rt.Shims[0])
-	if _, statErr := os.Stat(shimPath); statErr != nil {
-		evs, err := download.Download(cfg, cacheDir, repoRoot, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
-		if err != nil {
-			return "", err
-		}
-		for ev := range evs {
-			if ev.Phase == download.Failed {
-				return "", ev.Err
-			}
-		}
-	}
-	download.Touch(root, "runtimes", runtimeID, version)
-	return filepath.Dir(shimPath), nil
-}
-
-// resolvePackagesFileBinDir installs action.PackagesFile (if not already cached, keyed purely by
-// its own content hash so identical manifests across different actions/runs share one install)
-// and returns its node_modules/.bin dir for the PATH.
-func resolvePackagesFileBinDir(root string, rt config.Runtime, runtimeInstallDir, packagesFilePath string) (string, error) {
-	data, err := os.ReadFile(packagesFilePath)
+// resolvePackagesFileBinDir installs actionID's packages_file manifest through download.Download
+// (the same Ref/claimInstall/registry path tools and runtimes already use -- Task 2, closing the
+// gap where this used to call download.InstallPackagesFile directly and was invisible to `cache
+// prune`) and returns its node_modules/.bin dir for the PATH.
+func resolvePackagesFileBinDir(cfg config.Config, cacheDir, repoRoot, root, actionID string) (string, error) {
+	evs, err := download.Download(cfg, cacheDir, repoRoot, download.Ref{Category: "action-packages", ID: actionID})
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
-	installDir := download.InstallDir(root, "action-packages", hex.EncodeToString(sum[:]), "manifest")
-	// installDir cannot escape root: every component after it is a literal or a hex SHA256.
-	if _, statErr := os.Stat(installDir); statErr != nil { //nolint:gosec // see above
-		if err := download.InstallPackagesFile(rt, runtimeInstallDir, installDir, packagesFilePath); err != nil {
-			return "", err
+	for ev := range evs {
+		if ev.Phase == download.Failed {
+			return "", ev.Err
 		}
 	}
-	return filepath.Join(installDir, "node_modules", ".bin"), nil
+	return download.ActionPackagesBinDir(cfg, root, actionID)
 }
 
 func notifyOnError(action config.Action) bool {
@@ -215,32 +171,22 @@ func Run(ctx context.Context, cfg config.Config, action config.Action, opts RunO
 	}
 
 	var pathDirs []string
-	var rt config.Runtime
-	var runtimeInstallDir string
 	if action.Runtime != "" {
-		var ok bool
-		rt, ok = cfg.Runtimes.Definitions[action.Runtime]
-		if !ok {
+		if _, ok := cfg.Runtimes.Definitions[action.Runtime]; !ok {
 			return fail(fmt.Errorf("actions: %s: runtime %q not found in resolved config", action.ID, action.Runtime))
 		}
-		shimDir, err := resolveRuntimeShimDir(cfg, root, opts.CacheDir, opts.RepoRoot, action.Runtime)
+		shimDir, err := download.ResolveRuntimeShimDir(cfg, root, opts.CacheDir, opts.RepoRoot, action.Runtime, nil)
 		if err != nil {
 			return fail(err)
 		}
 		pathDirs = append(pathDirs, shimDir)
-		version := download.ResolveVersion(cfg.Runtimes.Enabled, action.Runtime, rt.KnownGoodVersion)
-		runtimeInstallDir = download.InstallDir(root, "runtimes", action.Runtime, version)
 	}
 
 	if action.PackagesFile != "" {
 		if action.Runtime == "" {
 			return fail(fmt.Errorf("actions: %s: packages_file set with no runtime", action.ID))
 		}
-		packagesFilePath := action.PackagesFile
-		if action.SourceRoot != "" {
-			packagesFilePath = filepath.Join(action.SourceRoot, action.SourceDir, action.PackagesFile)
-		}
-		binDir, err := resolvePackagesFileBinDir(root, rt, runtimeInstallDir, packagesFilePath)
+		binDir, err := resolvePackagesFileBinDir(cfg, opts.CacheDir, opts.RepoRoot, root, action.ID)
 		if err != nil {
 			return fail(err)
 		}

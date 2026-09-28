@@ -332,7 +332,9 @@ on concurrent-process usage that the lock-file design removes).
 
 ### 14. Duplicated variable substitution and runtime-shim resolution
 
-**Status**: accepted — implement.
+**Status**: partially implemented (v0.11 shared-provisioning plan) — runtime-shim resolution and
+quote helpers unified; the two callers' variable-substitution tables remain separate on purpose
+(they support different, non-overlapping variable sets).
 
 **What**: the execution engine and the action runner each independently implement invocation-template
 variable substitution (including basic shell-quoting helpers) and runtime-shim-directory resolution,
@@ -401,7 +403,7 @@ the full field-by-field index with catalog occurrence counts.
 
 ### 16. Action fetch category is redundant with runtime provisioning
 
-**Status**: accepted — implement.
+**Status**: accepted — implemented (v0.11 shared-provisioning plan).
 
 **What**: fetching "for an action" is modeled today as its own fetch-target category, alongside tool,
 runtime, and linter — but an action has no download of its own; provisioning it is entirely a matter

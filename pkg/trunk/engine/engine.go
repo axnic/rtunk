@@ -1090,29 +1090,28 @@ func resolveShimDirs(cfg config.Config, root, cacheDir, repoRoot string, toolIDs
 // return a directory that was never created; this is a known, real gap for that specific
 // combination, left unhandled since no real catalog Command.Parser reaches it today.
 func resolveRuntimeShimDir(cfg config.Config, root, cacheDir, repoRoot, runtimeID string, failed map[string]error, emit func(Event)) (string, error) {
-	rt, ok := cfg.Runtimes.Definitions[runtimeID]
-	if !ok {
-		return "", fmt.Errorf("engine: parser runtime %q referenced but not found in resolved config", runtimeID)
-	}
-	if len(rt.Shims) == 0 {
-		return "", fmt.Errorf("engine: parser runtime %q has no shims declared", runtimeID)
-	}
-	version := download.ResolveVersion(cfg.Runtimes.Enabled, runtimeID, rt.KnownGoodVersion)
-	shimPath := download.ShimPath(root, "runtimes", runtimeID, version, rt.Shims[0])
 	if err := failed["runtimes/"+runtimeID]; err != nil {
 		return "", err // already attempted (and reported) by prefetch
 	}
-	if _, statErr := os.Stat(shimPath); statErr != nil {
-		evs, err := download.Download(cfg, cacheDir, repoRoot, download.Ref{Category: "runtimes", ID: runtimeID, Version: version})
-		if err != nil {
-			return "", err
+	started := false
+	return download.ResolveRuntimeShimDir(cfg, root, cacheDir, repoRoot, runtimeID, func(ev download.Event) {
+		// Matches forwardInstallAll's own Phase-translation exactly (as called via forwardInstall,
+		// i.e. closeUnstarted=false): Done and Failed both only emit InstallDone for an item whose
+		// InstallStart already went out, so a Cached event (which never starts) never produces a
+		// stray InstallDone with no matching InstallStart.
+		item := ev.Ref.Category + "/" + ev.Ref.ID
+		switch ev.Phase {
+		case download.Started:
+			started = true
+			emit(Event{Phase: InstallStart, Item: item, BytesTotal: -1})
+		case download.Progress:
+			emit(Event{Phase: InstallProgress, Item: item, Bytes: ev.Bytes, BytesTotal: ev.Total})
+		case download.Done, download.Failed:
+			if started {
+				emit(Event{Phase: InstallDone, Item: item})
+			}
 		}
-		if err := forwardInstall(evs, emit); err != nil {
-			return "", err
-		}
-	}
-	download.Touch(root, "runtimes", runtimeID, version)
-	return filepath.Dir(shimPath), nil
+	})
 }
 
 // baseEnvAllow are the glob patterns (path.Match, matched against the upper-cased name) of the
@@ -1173,7 +1172,7 @@ func baseEnv() []string {
 // tool versions and sandbox, and is completed here with the command line actually run), both raw
 // output streams, and the exit; a nil log records nothing.
 func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv string, files []string, pluginDir, cwdDir string, log *runlog.Writer, inv runlog.Event, stdin string) (out, stderrOut string, exitCode int, err error) {
-	target := strings.Join(quoteAll(files), " ")
+	target := strings.Join(download.QuoteAll(files), " ")
 
 	var tmpfile string
 	if strings.Contains(cmd.Run, "${tmpfile}") {
@@ -1188,7 +1187,7 @@ func runOneInvocation(ctx context.Context, cmd config.Command, workDir, pathEnv 
 
 	run := strings.NewReplacer(
 		"${target}", target, "${tmpfile}", tmpfile,
-		"${plugin}", quoteOne(pluginDir), "${cwd}", quoteOne(cwdDir),
+		"${plugin}", download.QuoteOne(pluginDir), "${cwd}", download.QuoteOne(cwdDir),
 	).Replace(cmd.Run)
 
 	c := exec.CommandContext(ctx, "sh", "-c", run)
@@ -1266,9 +1265,9 @@ func outputSource(cmd config.Command) string {
 // real script parses it as a Python int) so the converter script can tell "ran clean" from
 // "reformatted" from a genuine tool error, all of which are non-error exit codes for prettier.
 func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEnv, stdin string, batch []string, pluginDir, cwdDir string, exitCode int, log *runlog.Writer, ev runlog.Event) (string, error) {
-	target := strings.Join(quoteAll(batch), " ")
+	target := strings.Join(download.QuoteAll(batch), " ")
 	run := strings.NewReplacer(
-		"${target}", target, "${plugin}", quoteOne(pluginDir), "${cwd}", quoteOne(cwdDir),
+		"${target}", target, "${plugin}", download.QuoteOne(pluginDir), "${cwd}", download.QuoteOne(cwdDir),
 		"${exit_code}", strconv.Itoa(exitCode),
 	).Replace(parser.Run)
 
@@ -1310,20 +1309,6 @@ func runParser(ctx context.Context, parser *config.Parser, workDir, parserPathEn
 		return "", fmt.Errorf("engine: parser: %s", errText)
 	}
 	return stdout.String(), nil
-}
-
-func quoteAll(files []string) []string {
-	out := make([]string, len(files))
-	for i, f := range files {
-		out[i] = "'" + strings.ReplaceAll(f, "'", `'\''`) + "'"
-	}
-	return out
-}
-
-// quoteOne is quoteAll for a single string -- used for ${plugin}/${cwd}, which (unlike ${target})
-// are one path each, not a list.
-func quoteOne(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // logLinterEnd records a linter's terminal event (Done, Skipped or Failed) in log. A Running event
