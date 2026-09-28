@@ -17,6 +17,7 @@ type jsonIssue struct {
 	Linter   string `json:"linter"`
 	Rule     string `json:"rule"`
 	URL      string `json:"url"`
+	Security bool   `json:"security,omitempty"`
 }
 
 type jsonFailure struct {
@@ -50,7 +51,7 @@ func (j *jsonRenderer) Close(s Summary) error {
 	for _, f := range j.sortedFindings() {
 		doc.Issues = append(doc.Issues, jsonIssue{
 			File: f.File, Line: f.Line, Column: f.Column, Severity: severity(f.Severity),
-			Message: f.Message, Linter: f.Linter, Rule: f.RuleID, URL: f.URL,
+			Message: f.Message, Linter: f.Linter, Rule: f.RuleID, URL: f.URL, Security: f.IsSecurity,
 		})
 	}
 	for _, f := range j.sortedFailures(s.Failures...) {

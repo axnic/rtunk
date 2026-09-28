@@ -173,3 +173,10 @@ func TestHuman_IssueColumnsAlignPerFile(t *testing.T) {
 	assert.Contains(t, stdout, "  9:1     high    short             lint/r0\n")
 	assert.Contains(t, stdout, "  120:45  high    a longer message  lint/r1\n")
 }
+
+func TestHuman_SecurityFinding_MarkedInOutput(t *testing.T) {
+	events := []engine.Event{{Linter: "bandit", Phase: engine.Done, Files: []string{"a.py"},
+		Findings: []output.Finding{{File: "a.py", Line: 1, Severity: "error", RuleID: "B101", Message: "m1", IsSecurity: true}}}}
+	stdout, _ := run(t, Options{Command: Check}, events, Summary{})
+	assert.Contains(t, stdout, "  1:0  high    m1  bandit/B101 [security]\n")
+}

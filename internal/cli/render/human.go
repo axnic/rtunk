@@ -109,7 +109,11 @@ func (h *human) writeIssues(b *strings.Builder, sev *[3]int) int {
 			}
 			loc := fmt.Sprintf("%-*s", locW, fmt.Sprintf("%d:%d", f.Line, f.Column))
 			msg := f.Message + strings.Repeat(" ", max(msgW-utf8.RuneCountInString(f.Message), 0))
-			_, _ = fmt.Fprintf(b, "  %s  %s  %s  %s\n", loc, cell, msg, paint(h.opts.Color, sgrDim, linterRule(f)))
+			tail := linterRule(f)
+			if f.IsSecurity {
+				tail += " [security]"
+			}
+			_, _ = fmt.Fprintf(b, "  %s  %s  %s  %s\n", loc, cell, msg, paint(h.opts.Color, sgrDim, tail))
 		}
 		b.WriteString("\n")
 	}

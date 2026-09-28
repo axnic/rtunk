@@ -192,6 +192,11 @@ type Command struct {
 	// (see internal/cli/check.go's suppressUpstreamEvents), on the theory that this command's own
 	// findings on the same class of issue are the ones that should surface, not both.
 	DisableUpstream []string `yaml:"disable_upstream,omitempty"`
+	// IsSecurity tags every finding this command reports as security-related, so it can be
+	// filtered or displayed separately from an ordinary finding -- real catalog convention: set on
+	// a command belonging to a dedicated vulnerability/security scanner (e.g. bandit, trivy,
+	// semgrep), not on a general-purpose style/correctness linter.
+	IsSecurity bool `yaml:"is_security,omitempty"`
 }
 
 // Parser converts a tool's native output into trunk's normalized shape, for tools with no native

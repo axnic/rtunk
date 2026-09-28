@@ -839,6 +839,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	if isJSONFormat && strings.TrimSpace(out) == "" {
 		security.RemapFindings(findings, j.resolvedDir, repoRoot)
 		output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
+		output.ApplyIsSecurity(findings, j.cmd.IsSecurity)
 		return findings, changedFiles, nil
 	}
 
@@ -915,6 +916,7 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	}
 	security.RemapFindings(findings, j.resolvedDir, repoRoot)
 	output.ApplyIssueURL(findings, j.linter.IssueURLFormat)
+	output.ApplyIsSecurity(findings, j.cmd.IsSecurity)
 	return findings, changedFiles, nil
 }
 

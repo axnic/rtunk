@@ -6,9 +6,13 @@ type sarifRenderer struct{ base }
 type sarifMessage struct {
 	Text string `json:"text"`
 }
+type sarifProperties struct {
+	Tags []string `json:"tags,omitempty"`
+}
 type sarifRule struct {
-	ID      string `json:"id"`
-	HelpURI string `json:"helpUri,omitempty"`
+	ID         string           `json:"id"`
+	HelpURI    string           `json:"helpUri,omitempty"`
+	Properties *sarifProperties `json:"properties,omitempty"`
 }
 type sarifDriver struct {
 	Name    string      `json:"name"`
@@ -74,11 +78,16 @@ func (r *sarifRenderer) Close(s Summary) error {
 	results := []sarifResult{}
 	for _, f := range r.sortedFindings() {
 		id := linterRule(f)
-		if i, seen := ruleIdx[id]; !seen {
-			ruleIdx[id] = len(rules)
+		i, seen := ruleIdx[id]
+		if !seen {
+			i = len(rules)
+			ruleIdx[id] = i
 			rules = append(rules, sarifRule{ID: id, HelpURI: f.URL})
 		} else if rules[i].HelpURI == "" {
 			rules[i].HelpURI = f.URL
+		}
+		if f.IsSecurity && rules[i].Properties == nil {
+			rules[i].Properties = &sarifProperties{Tags: []string{"security"}}
 		}
 		phys := sarifPhysical{ArtifactLocation: sarifArtifact{URI: f.File}}
 		if f.Line > 0 {

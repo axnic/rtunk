@@ -2285,6 +2285,82 @@ func TestRun_PlatformRestrictedCommand_UnrestrictedSiblingStillRuns(t *testing.T
 	assert.Equal(t, Done, got[len(got)-1].Phase, "the matching-platform sibling must have actually run")
 }
 
+func TestRun_CommandIsSecurity_TagsFindings(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	binPath := buildFakeToolBinary(t)
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakesecurity": {
+						Name: "fakesecurity", Files: []string{"ALL"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool sarifone", Output: "sarif", IsSecurity: true}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Done {
+			got = ev
+		}
+	}
+	require.NotEmpty(t, got.Findings)
+	for _, f := range got.Findings {
+		assert.True(t, f.IsSecurity, "every finding from an IsSecurity command must be tagged")
+	}
+}
+
+func TestRun_CommandNotIsSecurity_FindingsUntagged(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+	binPath := buildFakeToolBinary(t)
+	t.Setenv("PATH", filepath.Dir(binPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"fakenotsecurity": {
+						Name: "fakenotsecurity", Files: []string{"ALL"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool sarifone", Output: "sarif"}},
+					},
+				},
+			},
+		},
+	}
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x"), 0o644))
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var got Event
+	for ev := range events {
+		if ev.Phase == Done {
+			got = ev
+		}
+	}
+	require.NotEmpty(t, got.Findings)
+	for _, f := range got.Findings {
+		assert.False(t, f.IsSecurity)
+	}
+}
+
 func TestSelectApplicableCommands_NoRestrictions_KeepsEverything(t *testing.T) {
 	linter := config.Linter{Commands: []config.Command{{Name: "lint"}, {Name: "fmt"}}}
 	got := selectApplicableCommands(config.Config{}, linter)

@@ -87,6 +87,31 @@ func TestSARIF_CleanRun(t *testing.T) {
 	assert.NotNil(t, inv["toolExecutionNotifications"])
 }
 
+func TestSARIF_SecurityFinding_RuleTaggedSecurityInProperties(t *testing.T) {
+	events := []engine.Event{
+		{Linter: "bandit", Phase: engine.Done, Files: []string{"a.py"}, Findings: []output.Finding{
+			{File: "a.py", Line: 1, Severity: "error", RuleID: "B101", Message: "m1", IsSecurity: true},
+		}},
+		{Linter: "lint", Phase: engine.Done, Files: []string{"a.go"}, Findings: []output.Finding{
+			{File: "a.go", Line: 1, Severity: "error", RuleID: "r0", Message: "m2"},
+		}},
+	}
+	stdout, _ := run(t, Options{Format: SARIF, Command: Check}, events, Summary{})
+	r := decodeSARIF(t, stdout)["runs"].([]any)[0].(map[string]any)
+	rules := r["tool"].(map[string]any)["driver"].(map[string]any)["rules"].([]any)
+	require.Len(t, rules, 2)
+
+	byID := map[string]map[string]any{}
+	for _, rule := range rules {
+		m := rule.(map[string]any)
+		byID[m["id"].(string)] = m
+	}
+
+	props := byID["bandit/B101"]["properties"].(map[string]any)
+	assert.Equal(t, []any{"security"}, props["tags"])
+	assert.NotContains(t, byID["lint/r0"], "properties")
+}
+
 func TestSARIF_SummaryFailuresMakeTheRunUnsuccessful(t *testing.T) {
 	events := []engine.Event{{Linter: "gofmt", Phase: engine.Done, Files: []string{"a.go"}}}
 	stdout, _ := run(t, Options{Format: SARIF, Command: Check}, events, Summary{Failures: []Failure{{Linter: "fmt", Err: "did not converge"}}})

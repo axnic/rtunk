@@ -113,6 +113,22 @@ func TestJSON_StdoutIsOnlyTheDocumentAndProgressStaysOnStderr(t *testing.T) {
 	assert.Contains(t, stderr, "gofmt")
 }
 
+func TestJSON_SecurityFinding_SecurityFieldTrue(t *testing.T) {
+	events := []engine.Event{{Linter: "bandit", Phase: engine.Done, Files: []string{"a.py"}, Findings: []output.Finding{
+		{File: "a.py", Line: 1, Severity: "error", RuleID: "B101", Message: "m1", IsSecurity: true},
+		{File: "a.py", Line: 2, Severity: "warning", RuleID: "r1", Message: "m2"},
+	}}}
+	stdout, _ := run(t, Options{Format: JSON, Command: Check}, events, Summary{})
+
+	var doc struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	require.Len(t, doc.Issues, 2)
+	assert.Equal(t, true, doc.Issues[0]["security"])
+	assert.NotContains(t, doc.Issues[1], "security", "omitempty drops it for a non-security finding")
+}
+
 func TestJSON_SummaryFailuresJoinTheEventFailures(t *testing.T) {
 	events := []engine.Event{{Linter: "gitleaks", Phase: engine.Failed, Err: errors.New("boom")}}
 	stdout, _ := run(t, Options{Format: JSON, Command: Check}, events,
