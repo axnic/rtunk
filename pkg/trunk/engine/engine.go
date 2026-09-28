@@ -1250,7 +1250,7 @@ func resolveShimDirs(ctx context.Context, cfg config.Config, root, cacheDir, rep
 // empty and repoRoot is used as the invocation's own working directory.
 func runToolHealthChecks(ctx context.Context, tool config.Tool, toolID, shimDir, repoRoot string, log *runlog.Writer) error {
 	for _, check := range tool.HealthChecks {
-		checkCmd := config.Command{Name: "health_check", Run: check}
+		checkCmd := config.Command{Name: "health_check", Run: check.Command}
 		id := log.NextID()
 		inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: toolID, Sandbox: ""}
 		_, stderrOut, exitCode, err := runOneInvocation(ctx, checkCmd, repoRoot, shimDir, nil, "", "", log, inv, "")

@@ -2150,7 +2150,7 @@ func TestRun_ToolHealthCheck_FailsResolutionOnNonZeroExit(t *testing.T) {
 
 	cfg := config.Config{
 		Tools: map[string]config.Tool{"faketool": {
-			Name: "faketool", KnownGoodVersion: "1.0.0", HealthChecks: []string{"exit 1"},
+			Name: "faketool", KnownGoodVersion: "1.0.0", HealthChecks: []config.HealthCheck{{Command: "exit 1"}},
 		}},
 		Lint: config.LintConfig{
 			Files: map[string]config.FileType{},
@@ -2211,7 +2211,7 @@ func TestRun_ToolHealthCheck_RunsOncePerRunAcrossMultipleLinters(t *testing.T) {
 	cfg := config.Config{
 		Tools: map[string]config.Tool{"sharedtool": {
 			Name: "sharedtool", KnownGoodVersion: "1.0.0",
-			HealthChecks: []string{"echo check >> " + marker},
+			HealthChecks: []config.HealthCheck{{Command: "echo check >> " + marker}},
 		}},
 		Lint: config.LintConfig{
 			Files: map[string]config.FileType{},

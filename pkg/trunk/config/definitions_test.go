@@ -90,6 +90,29 @@ run: bash ${cwd}/update_config.sh
 	assert.Nil(t, a.NotifyOnError, "an omitted notify_on_error must decode as nil, not false, so callers can tell 'unset' from 'explicitly false'")
 }
 
+// TestTool_HealthChecks_RealCatalogShape decodes a health_checks snippet in the exact shape the
+// real cached trunk-io/plugins catalog uses (linters/phpstan/plugin.yaml: a list of
+// {command, parse_regex} maps, not bare strings) -- this is the regression test that would have
+// caught Tool.HealthChecks having been modeled as []string, which fails hard
+// ("cannot unmarshal !!map into string") against every real plugin.yaml declaring this field.
+func TestTool_HealthChecks_RealCatalogShape(t *testing.T) {
+	var tool config.Tool
+	require.NoError(t, yaml.Unmarshal([]byte(`
+name: phpstan
+runtime: php
+package: phpstan/phpstan
+health_checks:
+  - command: phpstan --version
+    parse_regex: PHP Static Analysis Tool ${semver}
+`), &tool))
+
+	require.Len(t, tool.HealthChecks, 1)
+	assert.Equal(t, config.HealthCheck{
+		Command:    "phpstan --version",
+		ParseRegex: "PHP Static Analysis Tool ${semver}",
+	}, tool.HealthChecks[0])
+}
+
 func TestCommand_FixPromptAndVerb(t *testing.T) {
 	var cmd config.Command
 	require.NoError(t, yaml.Unmarshal([]byte(`

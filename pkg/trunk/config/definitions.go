@@ -61,13 +61,36 @@ type Tool struct {
 	// parsing, matching Command.PrepareRun's own convention): a non-zero exit or a process that
 	// doesn't run at all fails resolution for every linter that references this tool, instead of
 	// only surfacing a broken install later when some linter's own command finally fails.
-	HealthChecks []string `yaml:"health_checks,omitempty"`
+	HealthChecks []HealthCheck `yaml:"health_checks,omitempty"`
 	// ExtraPackages are companion runtime packages installed alongside this tool's own Package,
 	// into the same install tree, so both are importable/usable together (e.g. a linter plugin
-	// package the main tool loads at runtime) -- real catalog shape unconfirmed in this repo's own
-	// fixtures; each entry is "name@version" (mandatory pin, AGENTS.md "Reproducibility": no
-	// unpinned install, extras included).
+	// package the main tool loads at runtime) -- real catalog shapes confirmed directly against the
+	// cached trunk-io/plugins catalog: a bare unpinned name (e.g. linters/ansible-lint/plugin.yaml's
+	// `extra_packages: [ansible]`), or a string already written in that ecosystem's own native
+	// "pkg + optional embedded version" syntax (pip's `pkg==version`/`pkg[extra]`, e.g.
+	// linters/ruff/plugin.yaml's `nbqa==1.8.5`; npm's `@scope/pkg`, e.g.
+	// actions/commitizen/plugin.yaml's `@commitlint/cli`). rtunk passes each entry straight through
+	// to its runtime's own installer unparsed; pip/npm/composer/gem/cargo use it bare when unpinned
+	// or as-is when it already carries their native version syntax, while go (the one ecosystem that
+	// requires an explicit version) defaults a bare, "@"-less entry to "@latest".
+	//
+	// Known limitation: a tool's install dir is keyed by id+version only, not by its declared
+	// ExtraPackages, so a tool already cached from before extra_packages was added or changed for
+	// that same id+version won't automatically get re-provisioned with the new extras -- `rtunk
+	// cache clean` (or bumping the tool's own pinned version) is the workaround. Accepted for now,
+	// not fixed in code.
 	ExtraPackages []string `yaml:"extra_packages,omitempty"`
+}
+
+// HealthCheck is one entry of Tool.HealthChecks -- real catalog shape confirmed against the
+// cached trunk-io/plugins catalog (e.g. linters/phpstan/plugin.yaml: `{command: phpstan
+// --version, parse_regex: PHP Static Analysis Tool ${semver}}`). ParseRegex is accepted for
+// catalog-shape fidelity but not consulted -- this check is exit-code-only (verifying the tool
+// runs at all, not parsing its version), matching Command.PrepareRun's own established
+// convention.
+type HealthCheck struct {
+	Command    string `yaml:"command"`
+	ParseRegex string `yaml:"parse_regex,omitempty"`
 }
 
 // ShimList is the shims: field's value. Most entries are a bare executable name, but some
