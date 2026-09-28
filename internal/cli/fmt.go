@@ -107,7 +107,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 		if err != nil {
 			return err
 		}
-		_, wouldChange, skipped, failed := drainRunEvents(cfg, r.Event, events)
+		_, wouldChange, skipped, failed := drainRunEvents(r.Event, events)
 		runFailed = failed != nil
 		_ = r.Close(summary(wouldChange, skipped, nil))
 		if failed != nil {

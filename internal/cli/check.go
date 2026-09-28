@@ -156,7 +156,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	// into the same renderer would double-count every finding that survives, and leave stale
 	// entries in the report for every finding a fix genuinely resolved.
 	raw1 := collectEvents(events)
-	findings, _, skipped, failed := drainEvents(cfg, raw1, func(engine.Event) {})
+	findings, _, skipped, failed := drainEvents(raw1, func(engine.Event) {})
 	// A finding's own File is repoRoot-relative (whatever the output parser produced) or already
 	// absolute; --fix needs an absolute, in-repo, real file to hand to engine.Run and
 	// ApplyInlineFixes (os.ReadFile/WriteFile). validFixTargets both absolutizes and drops
@@ -202,13 +202,9 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		if err != nil {
 			return err
 		}
-		findings, _, skipped, failed = drainEvents(cfg, collectEvents(events2), r.Event)
+		findings, _, skipped, failed = drainEvents(collectEvents(events2), r.Event)
 	} else {
-		// raw1 was only drained above through a no-op printFn (line ~159), so it still carries
-		// every suppressed linter's findings -- filter it the same way drainEvents itself does
-		// before replaying it into the real renderer, or a superseded linter's findings would
-		// reappear in the report here even though drainEvents already excluded them from findings.
-		replayEvents(suppressUpstreamEvents(cfg, raw1), r.Event)
+		replayEvents(raw1, r.Event)
 	}
 	runFailed = failed != nil || runFailedBy(fixFailed) || runFailedBy(fixCmdFailed)
 
@@ -320,7 +316,7 @@ func runFixCommandsPerLinter(ctx context.Context, cfg config.Config, env engine.
 		if err != nil {
 			return changed, skipped, err
 		}
-		_, c, s, f := drainEvents(cfg, collectEvents(events), printFn)
+		_, c, s, f := drainEvents(collectEvents(events), printFn)
 		changed = mergeSortedUnique(changed, c)
 		skipped = mergeSortedUnique(skipped, s)
 		if f != nil {
@@ -343,23 +339,14 @@ func runFixCommandsPerLinter(ctx context.Context, cfg config.Config, env engine.
 // changed is assembled, rather than in whichever printer happens to consume it, means every
 // future consumer of this return value (a --json mode, an exit-code counter, a future fmt
 // --check) inherits the guarantee instead of having to re-implement it.
-func drainRunEvents(cfg config.Config, printFn func(engine.Event), events <-chan engine.Event) (findings []output.Finding, changed []string, skipped []string, failed error) {
-	return drainEvents(cfg, collectEvents(events), printFn)
+func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (findings []output.Finding, changed []string, skipped []string, failed error) {
+	return drainEvents(collectEvents(events), printFn)
 }
 
 // drainEvents is drainRunEvents over an already-collected slice instead of a live channel -- for
 // a pass buffered via collectEvents because whether it's the one to print (via printFn) isn't
 // known until after it's fully drained (see check --fix's pass 1).
-//
-// events is filtered via suppressUpstreamEvents BEFORE printFn ever sees any of it: printFn is
-// what actually renders the human/json/sarif report (internal/cli/render/base.go reads
-// ev.Findings straight off each Done event as it's printed), so filtering only the returned
-// findings slice -- as this used to do -- left a suppressed linter's findings out of the count
-// but still visible in the printed report. Filtering events up front means printFn and the
-// accumulation below agree by construction.
-func drainEvents(cfg config.Config, events []engine.Event, printFn func(engine.Event)) (findings []output.Finding, changed []string, skipped []string, failed error) {
-	events = suppressUpstreamEvents(cfg, events)
-
+func drainEvents(events []engine.Event, printFn func(engine.Event)) (findings []output.Finding, changed []string, skipped []string, failed error) {
 	skippedLinters := map[string]bool{}
 	seenChanged := map[string]bool{}
 	for _, ev := range events {
@@ -387,72 +374,6 @@ func drainEvents(cfg config.Config, events []engine.Event, printFn func(engine.E
 		}
 	}
 	return findings, changed, skipped, failed
-}
-
-// suppressUpstreamEvents returns a copy of events with every Done event's Findings stripped of
-// any finding from a linter another enabled linter's own Command declares as DisableUpstream --
-// but only once the superseding linter has itself produced at least one finding across the whole
-// batch (see supersededLinters), matching drainEvents' pre-fix behavior of suppressing whole
-// linters, not fine-grained per-finding matching (see docs/architecture/inconsistencies.md for
-// why). Every other event field, and every non-Done event, passes through unchanged. events'
-// backing array is never mutated -- a fresh output slice (and, for any Done event whose Findings
-// actually changed, a fresh Findings slice) is built instead, since events may be a buffered pass
-// check --fix still needs unfiltered elsewhere (raw1's own findings-only use).
-func suppressUpstreamEvents(cfg config.Config, events []engine.Event) []engine.Event {
-	suppress := supersededLinters(cfg, events)
-	if len(suppress) == 0 {
-		return events
-	}
-
-	out := make([]engine.Event, len(events))
-	for i, ev := range events {
-		if ev.Phase != engine.Done || len(ev.Findings) == 0 {
-			out[i] = ev
-			continue
-		}
-		findings := make([]output.Finding, 0, len(ev.Findings))
-		for _, f := range ev.Findings {
-			if !suppress[f.Linter] {
-				findings = append(findings, f)
-			}
-		}
-		ev.Findings = findings
-		out[i] = ev
-	}
-	return out
-}
-
-// supersededLinters scans every Done event's Findings once to find which linter ids another
-// enabled linter's own Command supersedes via DisableUpstream -- shared by suppressUpstreamEvents
-// so the produced/suppress map-building logic exists in exactly one place. A linter only counts
-// as "produced" (and so only suppresses its own DisableUpstream target) once it has actually
-// reported at least one finding; being merely enabled isn't enough -- a "combined" linter that ran
-// clean this time must not silently hide a real "narrow" finding.
-func supersededLinters(cfg config.Config, events []engine.Event) map[string]bool {
-	produced := map[string]bool{}
-	for _, ev := range events {
-		if ev.Phase != engine.Done {
-			continue
-		}
-		for _, f := range ev.Findings {
-			produced[f.Linter] = true
-		}
-	}
-
-	suppress := map[string]bool{}
-	for id, l := range cfg.Lint.Definitions {
-		if !produced[id] {
-			continue // this superseding linter found nothing; don't suppress on its behalf
-		}
-		for _, cmd := range l.Commands {
-			for _, upstream := range cmd.DisableUpstream {
-				if produced[upstream] {
-					suppress[upstream] = true
-				}
-			}
-		}
-	}
-	return suppress
 }
 
 // checkListCmd is `rtunk linters list`: enabled linters (with their pinned version), the ones

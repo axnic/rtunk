@@ -221,12 +221,19 @@ type Command struct {
 	// source's own catalog data says.
 	Enabled *bool   `yaml:"enabled,omitempty"`
 	Parser  *Parser `yaml:"parser,omitempty"`
-	// DisableUpstream names other linter ids this command's own linter supersedes -- when both
-	// this linter and a named one are enabled AND this linter has itself produced at least one
-	// finding (being merely enabled isn't enough), every finding from the named linter is dropped
-	// (see internal/cli/check.go's suppressUpstreamEvents), on the theory that this command's own
-	// findings on the same class of issue are the ones that should surface, not both.
-	DisableUpstream []string `yaml:"disable_upstream,omitempty"`
+	// DisableUpstream is parsed but not consumed. The real cached trunk-io/plugins catalog (12
+	// confirmed occurrences: clippy, detekt, golangci-lint x2, iwyu, oxipng, pinact x2, trufflehog,
+	// trunk-toolbox x3) declares it as a bare bool, always -- never the list-of-superseded-linter-
+	// ids this field originally modeled (a v0.11 catalog-fidelity-execution plan guess, made with
+	// no real example available at the time, and falsified once one showed up: clippy's own
+	// unmarshal crashed on `disable_upstream: true`, "cannot unmarshal !!bool into []string").
+	// trufflehog's own command sets disable_upstream: true while its Run string references
+	// ${upstream-ref} -- suggesting the real semantic is about git upstream-ref/incremental-scan
+	// behavior, not linter-overlap suppression at all. The whole-linter suppression feature this
+	// field used to drive (internal/cli/check.go's now-removed suppressUpstreamEvents) was built on
+	// the wrong premise and has been retired rather than re-guessed a second time; see
+	// docs/architecture/inconsistencies.md.
+	DisableUpstream bool `yaml:"disable_upstream,omitempty"`
 	// IsSecurity tags every finding this command reports as security-related, so it can be
 	// filtered or displayed separately from an ordinary finding -- real catalog convention: set on
 	// a command belonging to a dedicated vulnerability/security scanner (e.g. bandit, trivy,

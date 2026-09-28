@@ -20,28 +20,28 @@ plugin catalog.
 
 ## TODO summary
 
-| # | Entry | Status | Severity |
-| - | --- | --- | --- |
-| 1 | Fix vs. formatter conflation | accepted — implement | correctness + compatibility |
-| 2 | Finding-level autofixes and fix presentation text | accepted — implement | compatibility |
-| 3 | Plain check does not surface formatting issues | decision — intentional divergence | compatibility |
-| 4 | `check --fix` scope and the `--format-before-check` flag | accepted — implement | compatibility |
-| 5 | Stdin/stdout-only formatters never run | accepted — implement | compatibility |
-| 6 | Declared version range selects a command variant against the fully pinned tool version | accepted — implement | correctness |
-| 7 | Declared platform restriction: Windows unsupported for now | decision — intentional divergence | correctness |
-| 8 | Legacy single-command linter shape | accepted — implement (hard refusal) | compatibility |
-| 9 | `deprecated` migration message never surfaced | accepted — implement (warn) | maintainability |
-| 10 | Cache-root derivation inconsistency | accepted — implement (single root) | maintainability |
-| 11 | Plugin-source registry never swept | accepted — implement (superseded by unified cache design) | maintainability |
-| 12 | Trust-on-first-use downloads | roadmap (`rtunk.lock`) | correctness |
-| 13 | One-process-only locking on a shared cache | accepted — implement (lock files) | maintainability |
-| 14 | Duplicated variable substitution / runtime-shim resolution | accepted — implement | maintainability |
-| 15 | Declared-but-inert catalog fields | accepted — implement | mixed (per field) |
-| 16 | Action fetch category is redundant with runtime provisioning | accepted — implement | maintainability |
-| 17 | Install events and file selection are deliberately not logged | decision — intentional | maintainability |
-| 18 | File-change and schedule action triggers are refused, not run | decision — intentional divergence | compatibility |
-| 19 | No-upstream file selection is narrower than "changes since the last commit" | accepted — implement | correctness |
-| 20 | Checking outside a git repository with no paths should be a hard error | accepted — implement | correctness |
+| #   | Entry                                                                                  | Status                                                    | Severity                    |
+| --- | -------------------------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------- |
+| 1   | Fix vs. formatter conflation                                                           | accepted — implement                                      | correctness + compatibility |
+| 2   | Finding-level autofixes and fix presentation text                                      | accepted — implement                                      | compatibility               |
+| 3   | Plain check does not surface formatting issues                                         | decision — intentional divergence                         | compatibility               |
+| 4   | `check --fix` scope and the `--format-before-check` flag                               | accepted — implement                                      | compatibility               |
+| 5   | Stdin/stdout-only formatters never run                                                 | accepted — implement                                      | compatibility               |
+| 6   | Declared version range selects a command variant against the fully pinned tool version | accepted — implement                                      | correctness                 |
+| 7   | Declared platform restriction: Windows unsupported for now                             | decision — intentional divergence                         | correctness                 |
+| 8   | Legacy single-command linter shape                                                     | accepted — implement (hard refusal)                       | compatibility               |
+| 9   | `deprecated` migration message never surfaced                                          | accepted — implement (warn)                               | maintainability             |
+| 10  | Cache-root derivation inconsistency                                                    | accepted — implement (single root)                        | maintainability             |
+| 11  | Plugin-source registry never swept                                                     | accepted — implement (superseded by unified cache design) | maintainability             |
+| 12  | Trust-on-first-use downloads                                                           | roadmap (`rtunk.lock`)                                    | correctness                 |
+| 13  | One-process-only locking on a shared cache                                             | accepted — implement (lock files)                         | maintainability             |
+| 14  | Duplicated variable substitution / runtime-shim resolution                             | accepted — implement                                      | maintainability             |
+| 15  | Declared-but-inert catalog fields                                                      | accepted — implement                                      | mixed (per field)           |
+| 16  | Action fetch category is redundant with runtime provisioning                           | accepted — implement                                      | maintainability             |
+| 17  | Install events and file selection are deliberately not logged                          | decision — intentional                                    | maintainability             |
+| 18  | File-change and schedule action triggers are refused, not run                          | decision — intentional divergence                         | compatibility               |
+| 19  | No-upstream file selection is narrower than "changes since the last commit"            | accepted — implement                                      | correctness                 |
+| 20  | Checking outside a git repository with no paths should be a hard error                 | accepted — implement                                      | correctness                 |
 
 ## Fix, formatter, and autofix semantics
 
@@ -55,7 +55,7 @@ resolve, select commands, plan work, execute, normalize output — and this does
 distinguishes a checking run from a formatting run, or a plain fix from a formatting pass, is purely
 (a) which declared commands get selected into that one pipeline and (b) what happens with each
 selected command's output (a finding to report, vs. a file to rewrite). A command that is a linter's
-own autofix — in-place, rewriting, but *not* a formatter — needs a selection path of its own,
+own autofix — in-place, rewriting, but _not_ a formatter — needs a selection path of its own,
 alongside "formatter" and "checking," within that same shared pipeline; see entries 2-4 below for
 what that path is.
 
@@ -134,7 +134,7 @@ second checking pass afterward reporting whatever remains unfixed. It never runs
 run the checking pass against the now-reformatted files — the "format, then check" sequence entry 3
 opts out of by default.
 
-**Today**: rtunk has only one such flag, named `--fix`, and it runs the *formatter* pass (today's
+**Today**: rtunk has only one such flag, named `--fix`, and it runs the _formatter_ pass (today's
 equivalent of `--format-before-check`) before checking — the inverse of the target's naming, and with
 no linter-fix behavior (entries 1-2) available under any name.
 
@@ -175,7 +175,7 @@ range — so that two people (or two machines) running the same configuration al
 version and get identical results. This pinning model itself is not in question and is kept exactly
 as-is: **a range is refused on the tool pin itself**, full pins only.
 
-Separately, a command can declare the tool-version range *that command variant* applies to — a
+Separately, a command can declare the tool-version range _that command variant_ applies to — a
 different, existing field, evaluated against the tool version once it's already pinned, not a way to
 loosen the pin. In the real catalog, this is used to give the same linter genuinely different
 invocations for different tool major versions (a real, common shape: more than twenty
@@ -357,10 +357,12 @@ resolution, used by both the execution engine and the action runner.
 ## Declared-but-inert catalog fields
 
 **Status**: accepted — implement (each field below, to its stated intended behavior). `run_timeout`,
-`disable_upstream`, `prepare_run`, `max_concurrency` (v0.11 catalog-fidelity-execution plan), and
+`prepare_run`, `max_concurrency` (v0.11 catalog-fidelity-execution plan), and
 `suggest_if`, `is_security`, `health_checks`, `extra_packages` (v0.11 catalog-fidelity —
-installs/suggestions plan) are all done. `output_type` (action-level, the one remaining field from
-the original survey) is not part of either plan or of ROADMAP v0.11's own checklist — left as its
+installs/suggestions plan) are all done. `disable_upstream` was attempted and then corrected/
+retired once a real catalog example falsified its original design (see its own entry below).
+`output_type` (action-level, the one remaining field from the original survey) is not part of
+either plan or of ROADMAP v0.11's own checklist — left as its
 own future follow-up.
 
 Beyond the fields already covered above (version range, platform restriction, fix prompt/verb, and
@@ -387,13 +389,21 @@ the full field-by-field index with catalog occurrence counts.
   installs/suggestions plan)** — `output.ApplyIsSecurity` (mirrors `ApplyIssueURL`'s post-parse
   shape) tags every finding; surfaced as a `[security]` marker in human output, a `security` field
   in JSON, and a `properties.tags: ["security"]` on the matching rule in SARIF.
-- **`disable_upstream` (command-level)**: intended behavior — when both an overlap-marked command and
-  the generic linter it supersedes are enabled, suppress the superseded one's duplicate findings on
-  the same signal. **Implemented (v0.11 catalog-fidelity-execution plan)** — modeled as `[]string` on
-  `Command`; whole-linter suppression in `drainEvents`, gated on both linters being enabled and the
-  superseding linter having actually produced ≥1 finding of its own (not suppressed merely by being
-  enabled). Real catalog shape still unconfirmed — this is the plan's own best-effort interpretation,
-  documented as such at the time.
+- **`disable_upstream` (command-level)**: **Corrected, not implemented (found live, 2026-09-28)** —
+  the v0.11 catalog-fidelity-execution plan modeled this as `[]string` on `Command` (a list of
+  specific superseded linter ids) and built a whole-linter-suppression feature on that premise, with
+  no real catalog example available at design time. The real cached trunk-io/plugins catalog
+  declares it as a bare bool, always (12 confirmed occurrences: clippy, detekt, golangci-lint x2,
+  iwyu, oxipng, pinact x2, trufflehog, trunk-toolbox x3) — never a list of ids. Enabling clippy
+  crashed config resolution outright (`cannot unmarshal !!bool into []string`). `Command.
+  DisableUpstream` is now `bool`, matching the real shape, but the whole-linter-suppression feature
+  (`internal/cli/check.go`'s former `suppressUpstreamEvents`/`supersededLinters`) has been removed
+  rather than re-guessed a second time: with no named target linter, "suppress the linter this
+  command supersedes" no longer has a referent. trufflehog's own `disable_upstream: true` command
+  sets its `Run` string to reference `${upstream-ref}` — suggesting the real semantic is about git
+  upstream-ref/incremental-scan behavior, unrelated to linter-overlap suppression. Genuinely
+  inferred impact, no real catalog example clarifies it either way; parsed but inert until a real
+  understanding of the boolean's actual effect is confirmed.
 - **`prepare_run` (command-level)**: intended behavior — run a declared one-time/per-run setup
   invocation before the command itself, for tools that need initialization (e.g. a plugin-download
   step) before they can run correctly. **Implemented (v0.11 catalog-fidelity-execution plan)** — runs
@@ -434,7 +444,7 @@ the full field-by-field index with catalog occurrence counts.
   always requires an explicit version. Known limitation: a tool's install dir is keyed by id+version
   only, not by its declared `extra_packages`, so a tool already cached before `extra_packages` was
   added/changed for that same id+version won't automatically get re-provisioned — `rtunk cache
-  clean` (or bumping the tool's pinned version) is the workaround.
+clean` (or bumping the tool's pinned version) is the workaround.
 - **`output_type` (action-level)**: present on a small number of actions in the real catalog; not
   investigated further — flagged for completeness, intended behavior unconfirmed. **(inferred,
   unconfirmed)**
