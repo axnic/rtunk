@@ -1,6 +1,6 @@
 ---
-current_version: 0.10.x
-last_updated: 2026-09-27
+current_version: 0.12.x
+last_updated: 2026-09-28
 ---
 
 # ROADMAP.md
