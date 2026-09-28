@@ -804,6 +804,70 @@ func TestRun_MaxConcurrency_DifferentCommandsCappedIndependently(t *testing.T) {
 	assert.True(t, sawBothOpen, "cmdA and cmdB never ran concurrently with each other -- they should not block on each other's cap")
 }
 
+// TestRun_MaxConcurrency_DoesNotChargeRunTimeoutForQueueWait covers this task's second finding: a
+// job queued behind a full max_concurrency semaphore must not have that wait counted against its
+// own run_timeout. Three files share one MaxConcurrency: 1 command whose real invocation
+// ("faketool sleep") reliably takes several hundred ms (250ms sleep plus real process
+// spawn/shim-resolution overhead); with Concurrency: 3 all three jobs queue for the same single
+// slot, so the third one waits through two full run cycles before it ever gets to run at all.
+// RunTimeout (900ms) comfortably covers one job's own real run in isolation, but not two other
+// jobs' worth of queuing on top of it. Before the fix, run_timeout wrapped ctx before the
+// semaphore acquire, so the third job's deadline started ticking the moment it was scheduled
+// (t=0) rather than when it actually got a slot -- its deadline would already be exceeded while
+// still waiting in the semaphore select, well before its own real invocation ever started,
+// producing exactly the bare, unhelpful "context deadline exceeded" the review flagged. After the
+// fix, the semaphore is acquired on the unwrapped parent ctx and run_timeout only wraps ctx right
+// before the real invocation, so every job gets its own full 900ms budget starting from when it
+// actually begins running, regardless of how long it spent queuing first.
+func TestRun_MaxConcurrency_DoesNotChargeRunTimeoutForQueueWait(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"capped": {
+						Name: "capped", Files: []string{"ALL"}, Tools: []string{"faketool"}, RunTimeout: "900ms",
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool sleep ${target}", Output: "pass_fail",
+							MaxConcurrency: 1,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 3}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var failed int
+	for ev := range events {
+		if ev.Phase == Failed {
+			failed++
+			t.Logf("unexpected Failed event: linter=%s command=%s err=%v", ev.Linter, ev.Note, ev.Err)
+		}
+	}
+	assert.Equal(t, 0, failed, "a job's run_timeout must start from when it actually got a semaphore slot, not from when it started queuing")
+}
+
 // TestRun_FailedLinterSkipsRemainingJobs covers the best-effort abort: once a linter's command
 // fails on one file, its other, not-yet-started per-file jobs must be skipped rather than run.
 // concurrency: 1 makes "not yet started" deterministic (jobs run strictly in queue order), so

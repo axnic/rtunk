@@ -614,11 +614,16 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // return -- capping how many of this specific command's invocations run at once, independent of
 // (and never blocking) any other command's own cap.
 func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, prepareRunOnce map[string]*prepareRunState, cmdSems map[string]chan struct{}, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
+	// run_timeout is only parsed here, NOT yet applied to ctx: wrapping ctx this early would charge
+	// a job's own timeout budget for time spent waiting on prepare_run (a separate, shared setup
+	// step, see below) or queued on max_concurrency's semaphore (see below) -- neither is the
+	// command's own real invocation, which is the only thing run_timeout is meant to bound. The
+	// actual wrap happens right before that real invocation, further down.
+	var runTimeout time.Duration
+	hasRunTimeout := false
 	if j.linter.RunTimeout != "" {
 		if d, err := time.ParseDuration(j.linter.RunTimeout); err == nil {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, d)
-			defer cancel()
+			runTimeout, hasRunTimeout = d, true
 		}
 		// An unparseable run_timeout value is silently ignored here, matching how a malformed
 		// value in the real catalog would already have been accepted by config.Resolve (no
@@ -629,20 +634,29 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	if j.cmd.PrepareRun != "" {
 		state := prepareRunOnce[j.linterName+"/"+j.cmd.Name]
 		state.once.Do(func() {
+			// prepare_run gets its own independent run_timeout-bounded context, not a wrap shared
+			// with (and so eaten into by) the triggering job's own real invocation below -- a slow
+			// setup step should not shrink the budget the command itself gets to run in.
+			prepareCtx := ctx
+			if hasRunTimeout {
+				var cancel context.CancelFunc
+				prepareCtx, cancel = context.WithTimeout(ctx, runTimeout)
+				defer cancel()
+			}
 			pluginDir := j.linter.SourceRoot
 			cwdDir := filepath.Join(j.linter.SourceRoot, j.linter.SourceDir)
 			setupCmd := j.cmd
 			setupCmd.Run = j.cmd.PrepareRun
 			setupID := log.NextID()
 			inv := runlog.Event{T: runlog.KindInvocation, ID: setupID, Linter: j.linterName, Sandbox: ""}
-			_, stderrOut, exitCode, err := runOneInvocation(ctx, setupCmd, j.resolvedDir, j.pathEnv, nil, pluginDir, cwdDir, log, inv, "")
+			_, stderrOut, exitCode, err := runOneInvocation(prepareCtx, setupCmd, j.resolvedDir, j.pathEnv, nil, pluginDir, cwdDir, log, inv, "")
 			switch {
 			case err != nil:
 				state.err = err
 			case exitCode < 0:
 				// Mirrors the exitCode < 0 guard on the command's own real invocation below: a
-				// negative exit code means the process was killed (e.g. this job's own ctx
-				// cancellation/timeout, set up above) or crashed, not a normal exit.
+				// negative exit code means the process was killed (e.g. prepareCtx's own timeout,
+				// set up above) or crashed, not a normal exit.
 				state.err = fmt.Errorf("engine: %s: %s: prepare_run process did not exit cleanly (killed or crashed)", j.linterName, j.cmd.Name)
 			case exitCode != 0:
 				// PrepareRun has no output to parse -- exit-code only: any non-zero exit fails
@@ -656,13 +670,27 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		}
 	}
 
+	// max_concurrency's semaphore is acquired on the PARENT ctx -- still unwrapped by run_timeout
+	// at this point -- so a job can wait for a free slot as long as the overall run itself isn't
+	// canceled, without burning its own per-invocation timeout budget while merely queued. Only the
+	// overall ctx being canceled (or its own real invocation's later timeout, once applied below)
+	// can end this wait.
 	if sem, ok := cmdSems[j.linterName+"/"+j.cmd.Name]; ok {
 		select {
 		case sem <- struct{}{}:
 			defer func() { <-sem }()
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, nil, fmt.Errorf("engine: %s: %s: %w", j.linterName, j.cmd.Name, ctx.Err())
 		}
+	}
+
+	// Only now -- after prepare_run and after the semaphore acquire, so the timeout budget starts
+	// counting from when the command actually gets to run, not from when it started queuing -- does
+	// run_timeout wrap ctx for the command's own real invocation below.
+	if hasRunTimeout {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, runTimeout)
+		defer cancel()
 	}
 
 	// A stdin/stdout formatter (Formatter, not InPlace, rewrite/shfmt output) never touches its
