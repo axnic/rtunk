@@ -279,6 +279,23 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 			}
 		}
 
+		// cmdSems holds one buffered channel (used as a counting semaphore) per (linter,command)
+		// pair whose Command.MaxConcurrency is positive -- built once, up front, for the same
+		// reason prepareRunOnce is: a plain map is safe to read concurrently once every worker
+		// goroutine has started, since nothing adds or removes keys after this point. Keyed by
+		// linter+command (not linter alone) so two different commands on the same linter, each
+		// capped, are never blocked by each other's cap -- only by their own.
+		cmdSems := make(map[string]chan struct{}, len(jobs))
+		for _, j := range jobs {
+			if j.cmd.MaxConcurrency <= 0 {
+				continue
+			}
+			key := j.linterName + "/" + j.cmd.Name
+			if _, ok := cmdSems[key]; !ok {
+				cmdSems[key] = make(chan struct{}, j.cmd.MaxConcurrency)
+			}
+		}
+
 		var inPlaceMu sync.Mutex
 		var wg sync.WaitGroup
 		for i := 0; i < concurrency; i++ {
@@ -287,7 +304,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 					if ctx.Err() != nil {
 						return
 					}
-					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, prepareRunOnce, events, env.Log)
+					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, prepareRunOnce, cmdSems, events, env.Log)
 				}
 			})
 		}
@@ -537,7 +554,7 @@ func findUnsupportedParserVar(run string) (string, bool) {
 // marks the linter failed (any of its not-yet-started jobs are then skipped, best-effort: a job
 // already picked up by a worker still runs to completion), and the linter's single terminal event
 // fires exactly once, the moment its last job finishes.
-func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inPlaceMu *sync.Mutex, prepareRunOnce map[string]*prepareRunState, events chan<- Event, log *runlog.Writer) {
+func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inPlaceMu *sync.Mutex, prepareRunOnce map[string]*prepareRunState, cmdSems map[string]chan struct{}, events chan<- Event, log *runlog.Writer) {
 	state.mu.Lock()
 	if state.failed {
 		state.mu.Unlock()
@@ -547,7 +564,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
 	id := log.NextID()
-	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu, prepareRunOnce, log, id)
+	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu, prepareRunOnce, cmdSems, log, id)
 	events <- Event{Linter: j.linterName, Phase: JobDone, File: strings.Join(j.batch, ", ")}
 	if err == nil && len(findings) > 0 {
 		log.Emit(runlog.Event{T: runlog.KindFindings, ID: id, Linter: j.linterName, Findings: findings})
@@ -591,8 +608,12 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // -- see the sandboxType computation below. If j.cmd.PrepareRun is set, it runs -- exactly once
 // per (linter,command), across every job/batch this command's own Run ever gets split into (see
 // prepareRunOnce/prepareRunState) -- before anything else here: a killed/failed PrepareRun fails
-// every job for this command, not just whichever one happened to trigger it.
-func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, prepareRunOnce map[string]*prepareRunState, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
+// every job for this command, not just whichever one happened to trigger it. If j.cmd
+// declares a positive MaxConcurrency, cmdSems holds a counting semaphore (keyed by
+// linter+command, see Run) this call acquires before its own real invocation and releases on
+// return -- capping how many of this specific command's invocations run at once, independent of
+// (and never blocking) any other command's own cap.
+func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, prepareRunOnce map[string]*prepareRunState, cmdSems map[string]chan struct{}, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
 	if j.linter.RunTimeout != "" {
 		if d, err := time.ParseDuration(j.linter.RunTimeout); err == nil {
 			var cancel context.CancelFunc
@@ -632,6 +653,15 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		})
 		if state.err != nil {
 			return nil, nil, state.err
+		}
+	}
+
+	if sem, ok := cmdSems[j.linterName+"/"+j.cmd.Name]; ok {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
 		}
 	}
 

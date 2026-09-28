@@ -163,6 +163,12 @@ type Command struct {
 	// download step) before it can run correctly. Unlike Run, it has no per-file target: it runs
 	// once regardless of how many files/batches this command's own Run ends up invoked against.
 	PrepareRun string `yaml:"prepare_run,omitempty"`
+	// MaxConcurrency caps how many invocations of this specific command run in parallel across
+	// the whole run, independent of the run's overall worker count -- for a tool that cannot
+	// safely run many instances at once (e.g. it shares a lock file or talks to a local daemon).
+	// 0 (the default) means uncapped -- only the run's own overall concurrency limits it, exactly
+	// as today.
+	MaxConcurrency int `yaml:"max_concurrency,omitempty"`
 	// Platforms restricts this command variant to specific host platforms (trunk's own
 	// vocabulary: "linux", "macos", "windows") -- real catalog example: a Windows-only invocation
 	// of the same command name alongside an unrestricted variant (linters/pmd/plugin.yaml).

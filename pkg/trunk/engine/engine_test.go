@@ -130,6 +130,23 @@ func main() {
 		f2, _ := os.OpenFile(probePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		f2.WriteString("exit\n")
 		f2.Close()
+	case "labeledsleep":
+		// Like "sleepwrite", but every line carries a caller-chosen label (args[1]) -- lets two
+		// different commands share one probe file and still be told apart, so a test can check
+		// both "this label's own windows never overlap with themselves" (max_concurrency: 1
+		// honored) and "two different labels' windows DO overlap with each other" (their caps
+		// don't block one another) from one merged, real-time-ordered log.
+		label := args[1]
+		probePath := args[2]
+		target := args[3]
+		f, _ := os.OpenFile(probePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f.WriteString(label + ":enter\n")
+		f.Close()
+		time.Sleep(150 * time.Millisecond)
+		os.WriteFile(target, []byte("done\n"), 0o644)
+		f2, _ := os.OpenFile(probePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f2.WriteString(label + ":exit\n")
+		f2.Close()
 	case "alwaysfail":
 		os.Exit(1)
 	case "pwdls":
@@ -640,6 +657,151 @@ func TestRun_ParallelWorkersRunConcurrently(t *testing.T) {
 
 	assert.Greater(t, sequential, 400*time.Millisecond, "two 250ms jobs one worker at a time must take close to 500ms")
 	assert.Less(t, parallel, 400*time.Millisecond, "two 250ms jobs on two workers must take close to 250ms, not ~500ms")
+}
+
+// TestRun_MaxConcurrency_CapsParallelInvocationsOfOneCommand proves Command.MaxConcurrency caps
+// how many invocations of that command run at once, independent of the run's own overall worker
+// count: three files, Concurrency: 3 (so the run's own workers would happily run all three at
+// once absent this cap), MaxConcurrency: 1. Reuses the "sleepwrite" probe technique
+// TestRun_ConcurrentInPlaceCommandsAreSerialized already uses (enter/exit pairs logged to a
+// shared file) to prove -- deterministically, not by timing -- that at most one invocation is
+// ever mid-flight.
+func TestRun_MaxConcurrency_CapsParallelInvocationsOfOneCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	probe := filepath.Join(t.TempDir(), "probe.log")
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"capped": {
+						Name: "capped", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool sleepwrite " + probe + " ${target}", Output: "pass_fail",
+							MaxConcurrency: 1,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 3}, nil, notFormatter)
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining the channel is the whole point; there is nothing to do per event
+	}
+
+	data, err := os.ReadFile(probe)
+	require.NoError(t, err)
+	lines := strings.Fields(strings.TrimSpace(string(data)))
+	require.Len(t, lines, 6, "three invocations, each logging enter+exit")
+
+	depth := 0
+	for _, l := range lines {
+		switch l {
+		case "enter":
+			depth++
+			require.LessOrEqual(t, depth, 1, "a second invocation of this command entered before the first exited -- max_concurrency: 1 not honored")
+		case "exit":
+			depth--
+		}
+	}
+}
+
+// TestRun_MaxConcurrency_DifferentCommandsCappedIndependently proves the semaphore is keyed by
+// linter+command, not linter alone: two commands on the same linter, each MaxConcurrency: 1, must
+// each be capped at 1 among their own invocations while never blocking on the other command's own
+// cap. Both commands log into one shared, label-tagged probe (the "labeledsleep" fake-tool case),
+// so the merged log is real-time ordered across both: per-label depth must never exceed 1 (each
+// command's own cap honored), and -- this is the case most likely to regress silently if the
+// semaphore were keyed by linter name alone -- both labels must be "inside" (between their own
+// enter/exit) at the same time at least once, proving neither command's cap blocks the other's.
+func TestRun_MaxConcurrency_DifferentCommandsCappedIndependently(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	probe := filepath.Join(t.TempDir(), "probe.log")
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"capped": {
+						Name: "capped", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{
+							{Name: "cmdA", Run: "faketool labeledsleep A " + probe + " ${target}", Output: "pass_fail", MaxConcurrency: 1},
+							{Name: "cmdB", Run: "faketool labeledsleep B " + probe + " ${target}", Output: "pass_fail", MaxConcurrency: 1},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 6}, nil, notFormatter)
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining the channel is the whole point; there is nothing to do per event
+	}
+
+	data, err := os.ReadFile(probe)
+	require.NoError(t, err)
+	lines := strings.Fields(strings.TrimSpace(string(data)))
+	require.Len(t, lines, 12, "six invocations (3 files x 2 commands), each logging enter+exit")
+
+	depth := map[string]int{}
+	open := map[string]bool{}
+	sawBothOpen := false
+	for _, l := range lines {
+		label, evt, ok := strings.Cut(l, ":")
+		require.True(t, ok, "malformed probe line %q", l)
+		switch evt {
+		case "enter":
+			depth[label]++
+			require.LessOrEqual(t, depth[label], 1, "a second invocation of command %s entered before the first exited -- max_concurrency: 1 not honored", label)
+			open[label] = true
+			if open["A"] && open["B"] {
+				sawBothOpen = true
+			}
+		case "exit":
+			depth[label]--
+			open[label] = false
+		default:
+			t.Fatalf("unexpected probe event %q", l)
+		}
+	}
+	assert.True(t, sawBothOpen, "cmdA and cmdB never ran concurrently with each other -- they should not block on each other's cap")
 }
 
 // TestRun_FailedLinterSkipsRemainingJobs covers the best-effort abort: once a linter's command
