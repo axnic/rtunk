@@ -150,13 +150,24 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	if err != nil {
 		return err
 	}
-	// Buffered, not streamed straight to r: under --fix, pass 1 is only used to decide what to
-	// fix, never shown as the report -- a fresh pass 2 (below) is the one that actually feeds r,
-	// or pass 1 is replayed into r unchanged when there was nothing to fix. Feeding both passes
-	// into the same renderer would double-count every finding that survives, and leave stale
-	// entries in the report for every finding a fix genuinely resolved.
-	raw1 := collectEvents(events)
-	findings, _, skipped, failed := drainEvents(raw1, func(engine.Event) {})
+	// Only --fix needs pass 1 buffered instead of streamed straight to r: it's only used to decide
+	// what to fix, never itself shown as the report -- a fresh pass 2 (below) is the one that
+	// actually feeds r, or pass 1 is replayed into r unchanged when there was nothing to fix.
+	// Feeding both passes into the same renderer would double-count every finding that survives,
+	// and leave stale entries in the report for every finding a fix genuinely resolved. Without
+	// --fix there's only ever one pass, so it streams straight to r as it happens -- this is what
+	// lets the live view (and the plain per-linter progress lines) actually show anything instead
+	// of a silent wait followed by the whole report appearing at once.
+	var raw1 []engine.Event
+	var findings []output.Finding
+	var skipped []string
+	var failed error
+	if c.Fix {
+		raw1 = collectEvents(events)
+		findings, _, skipped, failed = drainEvents(raw1, func(engine.Event) {})
+	} else {
+		findings, _, skipped, failed = drainRunEvents(r.Event, events)
+	}
 	// A finding's own File is repoRoot-relative (whatever the output parser produced) or already
 	// absolute; --fix needs an absolute, in-repo, real file to hand to engine.Run and
 	// ApplyInlineFixes (os.ReadFile/WriteFile). validFixTargets both absolutizes and drops
@@ -203,9 +214,11 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 			return err
 		}
 		findings, _, skipped, failed = drainEvents(collectEvents(events2), r.Event)
-	} else {
+	} else if c.Fix {
+		// --fix was requested but pass 1 (buffered above) found nothing to fix -- it's the report.
 		replayEvents(raw1, r.Event)
 	}
+	// Without --fix, pass 1 already streamed straight to r above; nothing left to replay here.
 	runFailed = failed != nil || runFailedBy(fixFailed) || runFailedBy(fixCmdFailed)
 
 	sum := render.Summary{Elapsed: time.Since(started), RunLog: log.Name(), Skipped: skipped}
@@ -340,40 +353,66 @@ func runFixCommandsPerLinter(ctx context.Context, cfg config.Config, env engine.
 // future consumer of this return value (a --json mode, an exit-code counter, a future fmt
 // --check) inherits the guarantee instead of having to re-implement it.
 func drainRunEvents(printFn func(engine.Event), events <-chan engine.Event) (findings []output.Finding, changed []string, skipped []string, failed error) {
-	return drainEvents(collectEvents(events), printFn)
+	a := newEventAccumulator()
+	for ev := range events {
+		printFn(ev)
+		a.add(ev)
+	}
+	return a.findings, a.changed, a.skipped, a.failed
 }
 
 // drainEvents is drainRunEvents over an already-collected slice instead of a live channel -- for
 // a pass buffered via collectEvents because whether it's the one to print (via printFn) isn't
 // known until after it's fully drained (see check --fix's pass 1).
 func drainEvents(events []engine.Event, printFn func(engine.Event)) (findings []output.Finding, changed []string, skipped []string, failed error) {
-	skippedLinters := map[string]bool{}
-	seenChanged := map[string]bool{}
+	a := newEventAccumulator()
 	for _, ev := range events {
 		printFn(ev)
-		switch ev.Phase {
-		case engine.Done:
-			findings = append(findings, ev.Findings...)
-			for _, f := range ev.ChangedFiles {
-				if !seenChanged[f] {
-					seenChanged[f] = true
-					changed = append(changed, f)
-				}
-			}
-		case engine.Skipped:
-			// Dedupe by linter: a linter with several unsupported commands emits one Skipped
-			// event per command, but the report should name it once, not once per command.
-			if !skippedLinters[ev.Linter] {
-				skippedLinters[ev.Linter] = true
-				skipped = append(skipped, fmt.Sprintf("%s [%s]", ev.Linter, ev.Note))
-			}
-		case engine.Failed:
-			if failed == nil {
-				failed = ev.Err
+		a.add(ev)
+	}
+	return a.findings, a.changed, a.skipped, a.failed
+}
+
+// eventAccumulator is drainEvents/drainRunEvents' shared per-event bookkeeping, factored out so
+// drainRunEvents can call printFn on each event AS IT ARRIVES off the live channel (restoring
+// real-time progress/live-view feedback for check's own non-fix pass) while drainEvents keeps
+// operating on an already-collected slice for --fix's own buffer-then-decide pass 1, without
+// duplicating the accumulation logic between the two.
+type eventAccumulator struct {
+	findings       []output.Finding
+	changed        []string
+	seenChanged    map[string]bool
+	skipped        []string
+	skippedLinters map[string]bool
+	failed         error
+}
+
+func newEventAccumulator() *eventAccumulator {
+	return &eventAccumulator{seenChanged: map[string]bool{}, skippedLinters: map[string]bool{}}
+}
+
+func (a *eventAccumulator) add(ev engine.Event) {
+	switch ev.Phase {
+	case engine.Done:
+		a.findings = append(a.findings, ev.Findings...)
+		for _, f := range ev.ChangedFiles {
+			if !a.seenChanged[f] {
+				a.seenChanged[f] = true
+				a.changed = append(a.changed, f)
 			}
 		}
+	case engine.Skipped:
+		// Dedupe by linter: a linter with several unsupported commands emits one Skipped
+		// event per command, but the report should name it once, not once per command.
+		if !a.skippedLinters[ev.Linter] {
+			a.skippedLinters[ev.Linter] = true
+			a.skipped = append(a.skipped, fmt.Sprintf("%s [%s]", ev.Linter, ev.Note))
+		}
+	case engine.Failed:
+		if a.failed == nil {
+			a.failed = ev.Err
+		}
 	}
-	return findings, changed, skipped, failed
 }
 
 // checkListCmd is `rtunk linters list`: enabled linters (with their pinned version), the ones
