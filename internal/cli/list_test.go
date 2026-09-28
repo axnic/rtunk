@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/xunleii/rtunk/pkg/trunk/config"
 )
 
 // listFixture: a git repo with a.go, b.go and README.md, and five linters over go/markdown/yaml
@@ -115,6 +117,62 @@ func TestLintersList_OutsideGitStillCounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "gofmt@1.2.3")
 	assert.Contains(t, stdout, "2 go files")
+}
+
+// suggestIfFixture builds a minimal config.Config with a single "go" file type (extension .go)
+// plus whichever linters the caller adds to Definitions -- buildLintersList never touches disk,
+// so files/repoRoot need not point at anything real.
+func suggestIfFixture() config.Config {
+	var cfg config.Config
+	cfg.Lint.Definitions = map[string]config.Linter{}
+	cfg.Lint.Files = map[string]config.FileType{
+		"go":   {Name: "go", Extensions: []string{"go"}},
+		"yaml": {Name: "yaml", Extensions: []string{"ymlx"}}, // deliberately matches nothing below
+	}
+	return cfg
+}
+
+func TestBuildLintersList_SuggestIfNever_NeverSuggestedEvenWithMatchingFiles(t *testing.T) {
+	cfg := suggestIfFixture()
+	cfg.Lint.Definitions["nope"] = config.Linter{Name: "nope", Files: []string{"go"}, SuggestIf: "never"}
+
+	l := buildLintersList(cfg, "/repo", []string{"/repo/a.go"})
+
+	assert.NotContains(t, ids(l.Available), "nope")
+	assert.Contains(t, ids(l.Other), "nope")
+}
+
+func TestBuildLintersList_SuggestIfConfigPresent_SuggestedByConfigFileAlone(t *testing.T) {
+	cfg := suggestIfFixture()
+	cfg.Lint.Definitions["cfglint"] = config.Linter{
+		Name:          "cfglint",
+		Files:         []string{"yaml"}, // matches 0 files below
+		DirectConfigs: []string{".foolintrc"},
+		SuggestIf:     "config_present",
+	}
+
+	l := buildLintersList(cfg, "/repo", []string{"/repo/.foolintrc"})
+
+	assert.Contains(t, ids(l.Available), "cfglint")
+	assert.NotContains(t, ids(l.Other), "cfglint")
+}
+
+func TestBuildLintersList_SuggestIfUnset_UnchangedFromToday(t *testing.T) {
+	cfg := suggestIfFixture()
+	cfg.Lint.Definitions["plainlint"] = config.Linter{Name: "plainlint", Files: []string{"go"}}
+
+	l := buildLintersList(cfg, "/repo", []string{"/repo/a.go"})
+
+	assert.Contains(t, ids(l.Available), "plainlint")
+	assert.NotContains(t, ids(l.Other), "plainlint")
+}
+
+func ids(items []listItem) []string {
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.ID
+	}
+	return out
 }
 
 func TestActionsList_TwoGroups(t *testing.T) {

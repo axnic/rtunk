@@ -476,7 +476,7 @@ func (c *checkListCmd) Run(cli *CLI, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return writeListing(stdout, buildLintersList(cfg, files), c.Format, "linter", "linters enable", c.All)
+	return writeListing(stdout, buildLintersList(cfg, repoRoot, files), c.Format, "linter", "linters enable", c.All)
 }
 
 // checkEnableCmd is `rtunk linters enable <id>[@version]...`.

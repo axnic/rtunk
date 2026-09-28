@@ -86,8 +86,9 @@ func countLabel(n int, ids []string) string {
 	return fmt.Sprintf("%d %s", n, noun)
 }
 
-func buildLintersList(cfg config.Config, files []string) listing {
+func buildLintersList(cfg config.Config, repoRoot string, files []string) listing {
 	pinned := enabledVersions(cfg.Lint.Enabled)
+	present := directConfigFiles(repoRoot, files)
 	names := make([]string, 0, len(cfg.Lint.Definitions))
 	for name := range cfg.Lint.Definitions {
 		names = append(names, name)
@@ -107,13 +108,53 @@ func buildLintersList(cfg config.Config, files []string) listing {
 		if version, ok := pinned[name]; ok {
 			item.Version = version
 			l.Enabled = append(l.Enabled, item)
-		} else if n > 0 {
+		} else if suggested(linter, n, present) {
 			l.Available = append(l.Available, item)
 		} else {
 			l.Other = append(l.Other, item)
 		}
 	}
 	return l
+}
+
+// suggested applies suggest_if's real 3 values (files_present, config_present, never) to decide
+// whether a not-yet-enabled linter belongs in the Available (suggested) bucket. Unset SuggestIf
+// keeps this project's own pre-existing default (files_present's own behavior: n > 0), for every
+// linter that doesn't declare the field.
+func suggested(linter config.Linter, n int, present map[string]bool) bool {
+	switch linter.SuggestIf {
+	case "never":
+		return false
+	case "config_present":
+		return configPresent(linter.DirectConfigs, present)
+	default: // "files_present", or unset -- today's own pre-existing default
+		return n > 0
+	}
+}
+
+// configPresent reports whether any of directConfigs (repoRoot-relative paths, e.g.
+// ".github/actionlint.yaml") names a real file this repository actually has, per present (see
+// directConfigFiles).
+func configPresent(directConfigs []string, present map[string]bool) bool {
+	for _, c := range directConfigs {
+		if present[c] {
+			return true
+		}
+	}
+	return false
+}
+
+// directConfigFiles reports which repoRoot-relative paths this repository actually has, from
+// files -- buildLintersList's own full repository file list (absolute paths, see repoFiles), not
+// any per-linter matched subset.
+func directConfigFiles(repoRoot string, files []string) map[string]bool {
+	present := map[string]bool{}
+	for _, f := range files {
+		if rel, err := filepath.Rel(repoRoot, f); err == nil {
+			present[rel] = true
+		}
+	}
+	return present
 }
 
 func buildActionsList(cfg config.Config) listing {
