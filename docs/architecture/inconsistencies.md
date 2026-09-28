@@ -356,7 +356,10 @@ resolution, used by both the execution engine and the action runner.
 
 ## Declared-but-inert catalog fields
 
-**Status**: accepted — implement (each field below, to its stated intended behavior).
+**Status**: accepted — implement (each field below, to its stated intended behavior). `run_timeout`,
+`disable_upstream`, `prepare_run`, and `max_concurrency` are done (v0.11 catalog-fidelity-execution
+plan); the remainder (`suggest_if`, `is_security`, `health_checks`, `extra_packages`, `output_type`)
+are tracked separately (v0.11 catalog-fidelity — installs/suggestions plan).
 
 Beyond the fields already covered above (version range, platform restriction, fix prompt/verb, and
 the two caching opt-outs), the real catalog declares a further set of fields on commands, tools, and
@@ -370,25 +373,34 @@ the full field-by-field index with catalog occurrence counts.
   recommends enabling a matching linter when its declared condition holds. **(maintainability)**
 - **`run_timeout` (linter-level)**: intended behavior — enforce a maximum run time for that linter's
   commands, failing the invocation if exceeded, instead of relying only on whatever general execution
-  timeout (if any) applies uniformly. **(correctness, inferred impact — not observed against a real
-  hanging tool)**
+  timeout (if any) applies uniformly. **Implemented (v0.11 catalog-fidelity-execution plan)** — wraps
+  `runBatch`'s context with `context.WithTimeout` when set; a killed/timed-out invocation now also
+  correctly surfaces as a `Failed` event on every command shape, not only the stdin-formatter path.
 - **`is_security` (command-level, common across the real catalog's security/vulnerability scanners)**:
   intended behavior — tag that command's findings as security-category, so filtering/display can
   distinguish them from an ordinary linter's findings. **(compatibility)**
 - **`disable_upstream` (command-level)**: intended behavior — when both an overlap-marked command and
   the generic linter it supersedes are enabled, suppress the superseded one's duplicate findings on
-  the same signal. **(correctness, inferred impact — not observed against a real overlapping pair)**
+  the same signal. **Implemented (v0.11 catalog-fidelity-execution plan)** — modeled as `[]string` on
+  `Command`; whole-linter suppression in `drainEvents`, gated on both linters being enabled and the
+  superseding linter having actually produced ≥1 finding of its own (not suppressed merely by being
+  enabled). Real catalog shape still unconfirmed — this is the plan's own best-effort interpretation,
+  documented as such at the time.
 - **`prepare_run` (command-level)**: intended behavior — run a declared one-time/per-run setup
   invocation before the command itself, for tools that need initialization (e.g. a plugin-download
-  step) before they can run correctly. **(correctness, inferred impact — not observed against the
-  specific real linter that declares it)**
+  step) before they can run correctly. **Implemented (v0.11 catalog-fidelity-execution plan)** — runs
+  once per (linter,command) pair per `engine.Run` call via the existing invocation machinery; a
+  failing setup fails every job for that command, including ones blocked concurrently on the same
+  setup call. Real catalog shape still unconfirmed, same caveat as above.
 - **`stdin` (command-level)**: intended behavior — feed a command's target content via standard input
   rather than a path argument; the main real-world consequence today is entry 5's stdin/stdout
   formatters, already covered there. **(covered by entry 5)**
 - **`max_concurrency` (command-level)**: intended behavior — cap concurrent invocations of that
   specific command, independent of the run's overall worker count, for tools that cannot safely run
-  many instances in parallel (e.g. sharing a lock file or a local daemon). **(correctness, inferred
-  impact — not observed against a real concurrency conflict)**
+  many instances in parallel (e.g. sharing a lock file or a local daemon). **Implemented (v0.11
+  catalog-fidelity-execution plan)** — a per-(linter,command) buffered-channel semaphore, acquired via
+  `select`/`ctx.Done()` so run-level cancellation is still honored while queued; different commands on
+  the same linter are capped fully independently of each other.
 - **`health_checks` (tool-level)**: intended behavior — proactively verify an installed tool actually
   works (run a declared version-check invocation) as part of provisioning it, instead of only
   discovering a broken install when a linter command using it fails at run time. **(maintainability)**
