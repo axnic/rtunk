@@ -415,13 +415,26 @@ the full field-by-field index with catalog occurrence counts.
   (v0.11 catalog-fidelity — installs/suggestions plan)** — runs once per tool per `engine.Run` call,
   right after its shim is resolved and before any linter referencing it can use it; a non-zero exit
   fails resolution for every linter sharing that tool, not just whichever one triggered the check.
+  Real catalog shape confirmed directly against the cached trunk-io/plugins catalog (~20
+  occurrences, e.g. `linters/phpstan/plugin.yaml`): a list of `{command, parse_regex}` maps, not
+  bare strings — `config.Tool.HealthChecks` is `[]config.HealthCheck{Command, ParseRegex}`;
+  `ParseRegex` is carried for shape fidelity but unused (this check stays exit-code-only).
 - **`extra_packages` (tool-level)**: intended behavior — install declared companion packages alongside
   a tool's main package as part of provisioning it. **Implemented (v0.11 catalog-fidelity —
-  installs/suggestions plan)** — every one of the 6 runtime package installers now installs the main
-  package and every extra (each independently version-pinned, `name@version`) into one shared
-  install tree via a single atomic `Finalize`, avoiding a real landmine (`install.Finalize`'s
-  rename-based caching would otherwise silently no-op a second install into an already-finalized
-  directory).
+  installs/suggestions plan)** — every one of the 6 runtime package installers installs the main
+  package and every extra into one shared install tree via a single atomic `Finalize`, avoiding a
+  real landmine (`install.Finalize`'s rename-based caching would otherwise silently no-op a second
+  install into an already-finalized directory). Real catalog shape confirmed directly (bare
+  unpinned names, e.g. `linters/ansible-lint/plugin.yaml`'s `[ansible]`; pip's own embedded
+  `pkg==version`/`pkg[extra]` syntax, e.g. `linters/ruff/plugin.yaml`'s `nbqa==1.8.5`; npm's own
+  `@scope/pkg` syntax, e.g. `actions/commitizen/plugin.yaml`'s `@commitlint/cli`) — there is no
+  generic `name@version` pin rtunk invents: each `config.Tool.ExtraPackages` entry is passed
+  through unparsed to its runtime's own installer, which alone knows its ecosystem's native syntax;
+  go is the one exception, defaulting a bare, `@`-less entry to `@latest` since a go module install
+  always requires an explicit version. Known limitation: a tool's install dir is keyed by id+version
+  only, not by its declared `extra_packages`, so a tool already cached before `extra_packages` was
+  added/changed for that same id+version won't automatically get re-provisioned — `rtunk cache
+  clean` (or bumping the tool's pinned version) is the workaround.
 - **`output_type` (action-level)**: present on a small number of actions in the real catalog; not
   investigated further — flagged for completeness, intended behavior unconfirmed. **(inferred,
   unconfirmed)**

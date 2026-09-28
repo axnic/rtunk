@@ -7,11 +7,12 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/runtime"
 )
 
-// InstallPackage installs pkg@version through rt's own package manager into pkgInstallDir. What
+// InstallPackage installs pkg@version, plus every one of extra (each a raw, unparsed
+// config.Tool.ExtraPackages entry), through rt's own package manager into pkgInstallDir. What
 // each runtime type does lives in pkg/trunk/runtime; a type it doesn't know (java, ...) fails
 // explicitly rather than guessing, since trunk's own per-runtime install commands for anything
 // else aren't part of the open plugin schema (see the spec's "Fetch mechanisms").
-func InstallPackage(rt config.Runtime, runtimeInstallDir, pkgInstallDir, pkg, version string, extra []runtime.PackageSpec) error {
+func InstallPackage(rt config.Runtime, runtimeInstallDir, pkgInstallDir, pkg, version string, extra []string) error {
 	r, ok := runtime.Lookup(rt.Type)
 	if !ok || r.Install == nil {
 		return fmt.Errorf("download: package-based fetch not yet supported for runtime %q", rt.Type)

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/xunleii/rtunk/pkg/trunk/install"
 )
@@ -22,7 +23,7 @@ import (
 // later `os.RemoveAll` on pkgInstallDir (rtunk cache clean/prune) would fail outright the moment
 // any go tool had ever been installed. GOFLAGS=-modcacherw makes that module cache deletable too,
 // so this scratch dir's own unconditional cleanup below doesn't hit the same failure.
-func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
+func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []string) error {
 	goBin := filepath.Join(runtimeInstallDir, "bin", "go")
 	if _, err := os.Stat(goBin); err != nil {
 		return fmt.Errorf("runtime: go not found at %s: %w", goBin, err)
@@ -73,8 +74,15 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, ext
 	if err := install_(pkg, version); err != nil {
 		return err
 	}
+	// go modules require an explicit version always present ("go install pkg" with no "@version"
+	// doesn't behave the same way): an entry already carrying "@version" (embedded, catalog-native
+	// syntax) is split and used as-is; a bare entry defaults to go's own idiomatic "no pin" spelling.
 	for _, e := range extra {
-		if err := install_(e.Name, e.Version); err != nil {
+		name, ver, ok := strings.Cut(e, "@")
+		if !ok {
+			name, ver = e, "latest"
+		}
+		if err := install_(name, ver); err != nil {
 			return err
 		}
 	}

@@ -307,39 +307,6 @@ chmod +x "$3/node_modules/.bin/eslint"
 	assert.Equal(t, "ran-eslint\n", string(out))
 }
 
-// TestFetchToolRef_ExtraPackages_MissingVersionPin_Fails pins down the AGENTS.md "Reproducibility"
-// rule extended to extra_packages: an entry with no "@version" is a config error (a Failed event
-// naming the bad entry), never a silent unpinned install.
-func TestFetchToolRef_ExtraPackages_MissingVersionPin_Fails(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("npm stub is a POSIX shell script")
-	}
-
-	archive := tarGzBytes(t, "node-18.0.0", "bin/npm", "#!/bin/sh\nexit 0\n")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(archive)
-	}))
-	defer srv.Close()
-
-	cfg := nodeToolConfig(srv.URL + "/node.tar.gz")
-	tool := cfg.Tools["eslint"]
-	tool.ExtraPackages = []string{"noversion"}
-	cfg.Tools["eslint"] = tool
-
-	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "tools", ID: "eslint"})
-	require.NoError(t, err)
-
-	var failed *download.Event
-	for ev := range events {
-		if ev.Phase == download.Failed {
-			e := ev
-			failed = &e
-		}
-	}
-	require.NotNil(t, failed, "expected a Failed event")
-	assert.ErrorContains(t, failed.Err, "noversion")
-}
-
 // TestInstallPackagesFile_Node_NodeModulesBin drives InstallPackagesFile with a stub npm that
 // lays its installed binary out at node_modules/.bin/<name> -- the same real layout
 // installNodePackage's own test (TestDownload_ToolRuntimePackage_NodeModulesBin) already pins

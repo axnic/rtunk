@@ -14,7 +14,7 @@ import (
 // AGENTS.md "Reproducibility" -- no silent fallback to whatever happens to be on PATH). pip's
 // --prefix scheme places console-script entry points at <prefix>/bin/<name>, matching
 // shimSearchPaths' existing bin/ check with no further changes needed there.
-func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
+func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []string) error {
 	pip := filepath.Join(runtimeInstallDir, "bin", "pip")
 	if _, err := os.Stat(pip); err != nil {
 		return fmt.Errorf("runtime: pip not found at %s: %w", pip, err)
@@ -43,19 +43,26 @@ func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string,
 		"PIP_USER=",
 	)
 	install_ := func(name, ver string) error {
-		cmd := exec.Command(pip, "install", "--prefix", tmpDir, name+"=="+ver)
+		spec := name
+		if ver != "" {
+			spec = name + "==" + ver
+		}
+		cmd := exec.Command(pip, "install", "--prefix", tmpDir, spec)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("runtime: pip install %s==%s: %w: %s", name, ver, err, out)
+			return fmt.Errorf("runtime: pip install %s: %w: %s", spec, err, out)
 		}
 		return nil
 	}
 	if err := install_(pkg, version); err != nil {
 		return err
 	}
+	// Every real catalog entry is either a bare unpinned name or already carries pip's own
+	// "pkg==version"/"pkg[extra]" syntax embedded in the string -- passed through as name with
+	// version always "" so install_ uses it bare, exactly as-is.
 	for _, e := range extra {
-		if err := install_(e.Name, e.Version); err != nil {
+		if err := install_(e, ""); err != nil {
 			return err
 		}
 	}

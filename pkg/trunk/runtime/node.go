@@ -19,7 +19,7 @@ import (
 // actually succeeded (see Fix 3) -- otherwise a failed/killed `npm install` left pkgInstallDir
 // existing (MkdirAll used to be this function's first action), and dirNonEmpty(pkgInstallDir)
 // would wrongly treat that as a completed, cached install forever.
-func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
+func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []string) error {
 	npm := filepath.Join(runtimeInstallDir, "bin", "npm")
 	if _, err := os.Stat(npm); err != nil {
 		return fmt.Errorf("runtime: npm not found at %s: %w", npm, err)
@@ -35,20 +35,27 @@ func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 
 	env := append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	install_ := func(name, ver string) error {
+		spec := name
+		if ver != "" {
+			spec = name + "@" + ver
+		}
 		//nolint:gosec // npm is rtunk's own installed runtime; pkg/version come from the pinned plugin catalog
-		cmd := exec.Command(npm, "install", "--prefix", tmpDir, name+"@"+ver)
+		cmd := exec.Command(npm, "install", "--prefix", tmpDir, spec)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("runtime: npm install %s@%s: %w: %s", name, ver, err, out)
+			return fmt.Errorf("runtime: npm install %s: %w: %s", spec, err, out)
 		}
 		return nil
 	}
 	if err := install_(pkg, version); err != nil {
 		return err
 	}
+	// Every real catalog entry is either a bare unpinned name or already carries npm's own
+	// "@scope/pkg" syntax embedded in the string -- passed through as name with version always ""
+	// so install_ uses it bare, exactly as-is.
 	for _, e := range extra {
-		if err := install_(e.Name, e.Version); err != nil {
+		if err := install_(e, ""); err != nil {
 			return err
 		}
 	}

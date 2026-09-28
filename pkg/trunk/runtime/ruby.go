@@ -13,7 +13,7 @@ import (
 // version` using the gem shipped by the already-downloaded ruby runtime at runtimeInstallDir
 // (never a system gem, per AGENTS.md "Reproducibility"). --bindir explicitly controls where the
 // executable lands, matching shimSearchPaths' existing bin/ check with no further changes.
-func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
+func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []string) error {
 	gem := filepath.Join(runtimeInstallDir, "bin", "gem")
 	if _, err := os.Stat(gem); err != nil {
 		return fmt.Errorf("runtime: gem not found at %s: %w", gem, err)
@@ -29,13 +29,16 @@ func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 
 	env := append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	install_ := func(name, ver string) error {
-		cmd := exec.Command(gem, "install", "--no-document",
-			"--install-dir", tmpDir, "--bindir", filepath.Join(tmpDir, "bin"),
-			name, "-v", ver)
+		args := []string{"install", "--no-document",
+			"--install-dir", tmpDir, "--bindir", filepath.Join(tmpDir, "bin"), name}
+		if ver != "" {
+			args = append(args, "-v", ver)
+		}
+		cmd := exec.Command(gem, args...)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("runtime: gem install %s -v %s: %w: %s", name, ver, err, out)
+			return fmt.Errorf("runtime: gem install %v: %w: %s", args, err, out)
 		}
 		return nil
 	}
@@ -43,7 +46,7 @@ func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 		return err
 	}
 	for _, e := range extra {
-		if err := install_(e.Name, e.Version); err != nil {
+		if err := install_(e, ""); err != nil {
 			return err
 		}
 	}

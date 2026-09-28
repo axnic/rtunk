@@ -110,3 +110,37 @@ func TestInstallPackage_Go_GoRootHermeticity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(pkgDir, "bin", "gofumpt"), target)
 }
+
+// TestInstallPackage_Go_ExtraPackages_DefaultsAndExplicitVersion covers go's own exception to the
+// otherwise-uniform "pass extra_packages through raw" rule: go modules require an explicit
+// version always present, so a bare entry with no "@" must default to "@latest" (go's own
+// idiomatic "no pin" spelling), while an entry that already carries "@version" is split and used
+// as-is.
+func TestInstallPackage_Go_ExtraPackages_DefaultsAndExplicitVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fakeGo is a POSIX shell script")
+	}
+	runtimeDir := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "argv.log")
+	require.NoError(t, os.MkdirAll(filepath.Join(runtimeDir, "bin"), 0o755))
+	script := `#!/bin/sh
+echo "$@" >> ` + logFile + `
+mkdir -p "$GOBIN"
+echo '#!/bin/sh' > "$GOBIN/gofumpt"
+chmod +x "$GOBIN/gofumpt"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "bin", "go"), []byte(script), 0o755))
+
+	pkgDir := filepath.Join(t.TempDir(), "install")
+	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0",
+		[]string{"example.com/nopin", "example.com/pinned@1.2.3"})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	require.Len(t, lines, 3)
+	assert.Contains(t, lines[0], "mvdan.cc/gofumpt@v0.6.0")
+	assert.Contains(t, lines[1], "example.com/nopin@latest", "a bare, \"@\"-less extra must default to go's own @latest")
+	assert.Contains(t, lines[2], "example.com/pinned@v1.2.3", "an extra already carrying \"@version\" must be used as-is (with the \"v\" prefix installGoPackage always adds back)")
+}
