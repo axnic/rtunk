@@ -237,12 +237,17 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 
 		states := make(map[string]*linterState, len(names))
 		var jobs []job
+		// healthChecked caches each tool id's Tool.HealthChecks outcome (nil on success) across
+		// every buildJobs call below -- all made serially, one at a time, in this same goroutine,
+		// strictly before the worker-pool loop starts, so a plain map (no mutex, no sync.Once) is
+		// enough: two linters sharing a tool must only run its health check once per Run call.
+		healthChecked := map[string]error{}
 		for _, name := range names {
 			files, ok := filesByName[name]
 			if !ok {
 				continue
 			}
-			linterJobs := buildJobs(env.Cfg, root, env.CacheDir, repoRoot, name, env.Cfg.Lint.Definitions[name], files, failed, include, env.DryRun, events)
+			linterJobs := buildJobs(ctx, env.Cfg, root, env.CacheDir, repoRoot, name, env.Cfg.Lint.Definitions[name], files, failed, healthChecked, include, env.DryRun, events, env.Log)
 			if len(linterJobs) == 0 {
 				continue
 			}
@@ -334,7 +339,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 // resolution -- which may download a tool, or (separately) a Command.Parser's own runtime -- runs
 // at most once per linter (per distinct Parser.Runtime, for the parser case), lazily, on the first
 // command that needs it.
-func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, files []string, failed map[string]error, include func(config.Command) bool, dryRun bool, events chan<- Event) []job {
+func buildJobs(ctx context.Context, cfg config.Config, root, cacheDir, repoRoot, name string, linter config.Linter, files []string, failed map[string]error, healthChecked map[string]error, include func(config.Command) bool, dryRun bool, events chan<- Event, log *runlog.Writer) []job {
 	relFiles := make([]string, len(files))
 	for i, f := range files {
 		if rel, err := filepath.Rel(repoRoot, f); err == nil {
@@ -424,7 +429,7 @@ func buildJobs(cfg config.Config, root, cacheDir, repoRoot, name string, linter 
 		}
 
 		if !pathEnvResolved {
-			shimDirs, err := resolveShimDirs(cfg, root, cacheDir, repoRoot, linter.Tools, failed, emit)
+			shimDirs, err := resolveShimDirs(ctx, cfg, root, cacheDir, repoRoot, linter.Tools, failed, healthChecked, emit, log)
 			if err != nil {
 				events <- Event{Linter: name, Phase: Failed, Note: "resolving tools", Err: err, Files: relFiles}
 				return nil
@@ -1195,7 +1200,7 @@ func prefetch(cfg config.Config, root, cacheDir, repoRoot string, refs []downloa
 // resolveShimDirs resolves (downloading first if not already cached) every tool id's shim, and
 // returns the directory each shim lives in -- a Command.Run string references its tool(s) by bare
 // name, so those directories become the PATH prefix that lets `sh -c` find them.
-func resolveShimDirs(cfg config.Config, root, cacheDir, repoRoot string, toolIDs []string, failed map[string]error, emit func(Event)) ([]string, error) {
+func resolveShimDirs(ctx context.Context, cfg config.Config, root, cacheDir, repoRoot string, toolIDs []string, failed map[string]error, healthChecked map[string]error, emit func(Event), log *runlog.Writer) ([]string, error) {
 	dirs := make([]string, 0, len(toolIDs))
 	for _, id := range toolIDs {
 		tool, ok := cfg.Tools[id]
@@ -1217,9 +1222,47 @@ func resolveShimDirs(cfg config.Config, root, cacheDir, repoRoot string, toolIDs
 			}
 		}
 		download.Touch(root, "tools", id, version)
-		dirs = append(dirs, filepath.Dir(shimPath))
+
+		shimDir := filepath.Dir(shimPath)
+		if len(tool.HealthChecks) > 0 {
+			if err, checked := healthChecked[id]; checked {
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				err := runToolHealthChecks(ctx, tool, id, shimDir, repoRoot, log)
+				healthChecked[id] = err
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		dirs = append(dirs, shimDir)
 	}
 	return dirs, nil
+}
+
+// runToolHealthChecks runs every one of tool's declared HealthChecks (exit-code-only, no output
+// parsing -- see Tool.HealthChecks's own doc comment), using shimDir as the PATH prefix so the
+// check invokes the tool this install just resolved, not whatever else might be on PATH. A tool
+// has no plugin-source directory of its own (unlike a Linter/Action), so pluginDir/cwdDir are
+// empty and repoRoot is used as the invocation's own working directory.
+func runToolHealthChecks(ctx context.Context, tool config.Tool, toolID, shimDir, repoRoot string, log *runlog.Writer) error {
+	for _, check := range tool.HealthChecks {
+		checkCmd := config.Command{Name: "health_check", Run: check}
+		id := log.NextID()
+		inv := runlog.Event{T: runlog.KindInvocation, ID: id, Linter: toolID, Sandbox: ""}
+		_, stderrOut, exitCode, err := runOneInvocation(ctx, checkCmd, repoRoot, shimDir, nil, "", "", log, inv, "")
+		if err != nil {
+			return err
+		}
+		if exitCode != 0 {
+			msg := strings.TrimSpace(stderrOut)
+			return fmt.Errorf("engine: tool %q: health check failed (exit %d): %s", toolID, exitCode, msg)
+		}
+	}
+	return nil
 }
 
 // resolveRuntimeShimDir resolves (downloading first if not already cached) runtimeID's own shim

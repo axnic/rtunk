@@ -2125,6 +2125,188 @@ func TestRun_NoPrepareRun_Unaffected(t *testing.T) {
 	assert.ElementsMatch(t, []string{"pa", "pb"}, got)
 }
 
+// TestRun_ToolHealthCheck_FailsResolutionOnNonZeroExit covers Tool.HealthChecks's whole point: a
+// broken install must fail resolution for every linter referencing that tool, before the linter's
+// own command ever runs -- not just surface later when the command itself happens to fail. The
+// health check here ("exit 1") never invokes faketool at all; only its non-zero exit matters.
+func TestRun_ToolHealthCheck_FailsResolutionOnNonZeroExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c only on POSIX")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	runMarker := filepath.Join(t.TempDir(), "run-marker")
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {
+			Name: "faketool", KnownGoodVersion: "1.0.0", HealthChecks: []string{"exit 1"},
+		}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"healthfail": {
+						Name: "healthfail", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Output: "pass_fail",
+							Run: "echo run >> " + runMarker + "; true ${target}",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var failedEvents []Event
+	for ev := range events {
+		if ev.Phase == Failed {
+			failedEvents = append(failedEvents, ev)
+		}
+	}
+	require.Len(t, failedEvents, 1, "the linter must report exactly one Failed event")
+	require.Error(t, failedEvents[0].Err)
+	assert.Contains(t, failedEvents[0].Err.Error(), "health check failed")
+
+	_, statErr := os.Stat(runMarker)
+	assert.True(t, os.IsNotExist(statErr),
+		"the linter's own command must never run when its tool's health check fails")
+}
+
+// TestRun_ToolHealthCheck_RunsOncePerRunAcrossMultipleLinters covers the caching side: two
+// unrelated linters that happen to reference the same Tool must trigger its HealthChecks exactly
+// once for the whole Run call, not once per linter that references it.
+func TestRun_ToolHealthCheck_RunsOncePerRunAcrossMultipleLinters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c only on POSIX")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "sharedtool", "1.0.0", "sharedtool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	marker := filepath.Join(t.TempDir(), "health-marker")
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"sharedtool": {
+			Name: "sharedtool", KnownGoodVersion: "1.0.0",
+			HealthChecks: []string{"echo check >> " + marker},
+		}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"linterA": {
+						Name: "linterA", Files: []string{"ALL"}, Tools: []string{"sharedtool"},
+						Commands: []config.Command{{Name: "lint", Output: "pass_fail", Run: "true ${target}"}},
+					},
+					"linterB": {
+						Name: "linterB", Files: []string{"ALL"}, Tools: []string{"sharedtool"},
+						Commands: []config.Command{{Name: "lint", Output: "pass_fail", Run: "true ${target}"}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 2}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var doneCount int
+	for ev := range events {
+		if ev.Phase == Done {
+			doneCount++
+		}
+	}
+	assert.Equal(t, 2, doneCount, "both linters must complete successfully for this to be a real test of the caching, not the failure path")
+
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	assert.Equal(t, []string{"check"}, lines,
+		"the shared tool's health check must run exactly once across both linters, got lines: %v", lines)
+}
+
+// TestRun_ToolNoHealthChecks_Unaffected mirrors TestRun_NoPrepareRun_Unaffected: same fixture as
+// TestRun_NoPrepareRun_Unaffected, whose Tool declares no HealthChecks, proving the new field is a
+// true no-op for every tool that doesn't declare one -- the overwhelming majority of the real
+// catalog.
+func TestRun_ToolNoHealthChecks_Unaffected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, f := range []string{"pa/one.tp", "pa/two.tp", "pb/three.tp"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, filepath.Dir(f)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, f), []byte("x\n"), 0o644))
+	}
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{"tp": {Name: "tp", Extensions: []string{"tp"}}},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"parent-linter": {
+						Name: "parent-linter", Files: []string{"tp"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool sarif ${target}", Output: "sarif", Target: "${parent}",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var running int
+	var done Event
+	for ev := range events {
+		switch ev.Phase {
+		case Running:
+			running++
+		case Done:
+			done = ev
+		}
+	}
+	assert.Equal(t, 2, running, "pa/ holds two files but must be linted once, pb/ once")
+	require.Len(t, done.Findings, 2)
+	got := []string{done.Findings[0].File, done.Findings[1].File}
+	assert.ElementsMatch(t, []string{"pa", "pb"}, got)
+}
+
 // TestRun_InPlaceWithSandboxIsSkipped covers the new explicit skip: no real catalog formatter
 // combines InPlace with SandboxType (a sandboxed write would be silently lost), so this project
 // rejects the combination outright rather than silently discarding a fix.

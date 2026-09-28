@@ -56,6 +56,12 @@ type Tool struct {
 	Download         string   `yaml:"download,omitempty"`
 	Shims            ShimList `yaml:"shims,omitempty"`
 	KnownGoodVersion string   `yaml:"known_good_version,omitempty"`
+	// HealthChecks are invocation templates run once per installed version of this tool, per
+	// engine.Run call, right after its shim is resolved -- each one exit-code-only (no output
+	// parsing, matching Command.PrepareRun's own convention): a non-zero exit or a process that
+	// doesn't run at all fails resolution for every linter that references this tool, instead of
+	// only surfacing a broken install later when some linter's own command finally fails.
+	HealthChecks []string `yaml:"health_checks,omitempty"`
 }
 
 // ShimList is the shims: field's value. Most entries are a bare executable name, but some
