@@ -1755,6 +1755,92 @@ func TestRun_PrepareRunExecutesOnceBeforeFirstUse(t *testing.T) {
 	assert.Equal(t, 3, runCount, "the command's own Run must still execute once per file, unaffected by PrepareRun")
 }
 
+// TestRun_PrepareRunFailurePropagatesToAllConcurrentSiblingJobs covers the failure side of
+// Command.PrepareRun that TestRun_PrepareRunExecutesOnceBeforeFirstUse doesn't: when the setup
+// invocation exits non-zero while MULTIPLE jobs for the same (linter,command) are genuinely
+// blocked on the same sync.Once.Do call (not just the one that happens to trigger it), every one
+// of them must see the failure and skip its own real Run -- not just the triggering job. The
+// mechanism (prepareRunState{once, err} in engine.go) relies on sync.Once.Do's happens-before
+// guarantee to hand the triggering call's state.err to every blocked caller; if a sibling job ever
+// raced past Do without observing state.err, it would slip through and actually invoke the real
+// command below, which would show up as a line in runMarker.
+//
+// Same shape as TestRun_PrepareRunExecutesOnceBeforeFirstUse (3 files, a Run string containing
+// ${target} so buildJobs splits into one job per file, Concurrency: 3 so all 3 are queued to
+// workers at once) plus a deliberate short sleep in PrepareRun itself: the sleep buys the other 2
+// workers time to reach their own state.once.Do call (a channel receive + mutex check, orders of
+// magnitude faster than spawning a subprocess) before the first one's prepare_run returns, so all
+// 3 are reliably blocked on the same Do call rather than racing to see whether 2 of them happen to
+// start late enough to already observe state.failed.
+func TestRun_PrepareRunFailurePropagatesToAllConcurrentSiblingJobs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c only on POSIX")
+	}
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	prepMarker := filepath.Join(t.TempDir(), "prep-marker")
+	runMarker := filepath.Join(t.TempDir(), "run-marker")
+
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"prepfail": {
+						Name: "prepfail", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							Name: "check", Output: "pass_fail",
+							PrepareRun: "sleep 0.2; echo prep >> " + prepMarker + "; exit 7",
+							Run:        "echo run >> " + runMarker + "; true ${target}",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 3}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var jobDoneCount, doneCount int
+	var failedEvents []Event
+	for ev := range events {
+		switch ev.Phase {
+		case JobDone:
+			jobDoneCount++
+		case Done:
+			doneCount++
+		case Failed:
+			failedEvents = append(failedEvents, ev)
+		}
+	}
+
+	assert.Equal(t, 3, jobDoneCount,
+		"all 3 jobs must run to completion (released by Do, not stuck or skipped) for this to be a real test of concurrent blocking")
+	assert.Zero(t, doneCount, "a linter with a failed job must never also report Done")
+	require.Len(t, failedEvents, 1, "one linter reports its terminal event exactly once, no matter how many of its jobs failed")
+
+	got := failedEvents[0]
+	assert.Equal(t, "check", got.Note)
+	require.Error(t, got.Err)
+	assert.Contains(t, got.Err.Error(), "prepare_run exited 7",
+		"the failure must be attributed to prepare_run, not the command's own Run")
+	assert.ElementsMatch(t, []string{"a.txt", "b.txt", "c.txt"}, got.Files)
+
+	prepData, err := os.ReadFile(prepMarker)
+	require.NoError(t, err)
+	prepLines := strings.Split(strings.TrimSpace(string(prepData)), "\n")
+	assert.Equal(t, []string{"prep"}, prepLines,
+		"prepare_run must still execute exactly once, even though it fails and 3 jobs are blocked on it")
+
+	_, statErr := os.Stat(runMarker)
+	assert.True(t, os.IsNotExist(statErr),
+		"the real command's Run must never execute for ANY of the 3 blocked jobs when their shared prepare_run failed, not just skip the triggering one")
+}
+
 // TestRun_NoPrepareRun_Unaffected mirrors TestRun_TargetParentRunsOncePerDirectory (no
 // Command.PrepareRun set) to prove the new field is a true no-op for every command that doesn't
 // declare one -- the overwhelming majority of the real catalog.
