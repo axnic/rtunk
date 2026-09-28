@@ -19,7 +19,7 @@ import (
 // output; the build target dir is multi-hundred-MB-to-multi-GB build ephemera that must never be
 // kept forever, and would otherwise make every later `rtunk cache clean`/`prune` on this tool drag
 // that scratch along too.
-func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
+func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
 	cargo := filepath.Join(runtimeInstallDir, "bin", "cargo")
 	if _, err := os.Stat(cargo); err != nil {
 		return fmt.Errorf("runtime: cargo not found at %s: %w", cargo, err)
@@ -39,14 +39,26 @@ func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	}
 	defer func() { _ = os.RemoveAll(buildDir) }()
 
-	cmd := exec.Command(cargo, "install", "--root", tmpDir, "--version", version, pkg)
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"CARGO_TARGET_DIR="+filepath.Join(buildDir, "target"),
 	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("runtime: cargo install %s --version %s: %w: %s", pkg, version, err, out)
+	install_ := func(name, ver string) error {
+		cmd := exec.Command(cargo, "install", "--root", tmpDir, "--version", ver, name)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("runtime: cargo install %s --version %s: %w: %s", name, ver, err, out)
+		}
+		return nil
+	}
+	if err := install_(pkg, version); err != nil {
+		return err
+	}
+	for _, e := range extra {
+		if err := install_(e.Name, e.Version); err != nil {
+			return err
+		}
 	}
 	return install.Finalize(tmpDir, pkgInstallDir)
 }

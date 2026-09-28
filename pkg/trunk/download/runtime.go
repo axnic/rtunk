@@ -11,12 +11,12 @@ import (
 // each runtime type does lives in pkg/trunk/runtime; a type it doesn't know (java, ...) fails
 // explicitly rather than guessing, since trunk's own per-runtime install commands for anything
 // else aren't part of the open plugin schema (see the spec's "Fetch mechanisms").
-func InstallPackage(rt config.Runtime, runtimeInstallDir, pkgInstallDir, pkg, version string) error {
+func InstallPackage(rt config.Runtime, runtimeInstallDir, pkgInstallDir, pkg, version string, extra []runtime.PackageSpec) error {
 	r, ok := runtime.Lookup(rt.Type)
 	if !ok || r.Install == nil {
 		return fmt.Errorf("download: package-based fetch not yet supported for runtime %q", rt.Type)
 	}
-	return r.Install(runtimeInstallDir, pkgInstallDir, pkg, version)
+	return r.Install(runtimeInstallDir, pkgInstallDir, pkg, version, extra)
 }
 
 // InstallPackagesFile installs every dependency named in the manifest at packagesFilePath through

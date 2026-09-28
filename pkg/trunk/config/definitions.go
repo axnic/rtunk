@@ -62,6 +62,12 @@ type Tool struct {
 	// doesn't run at all fails resolution for every linter that references this tool, instead of
 	// only surfacing a broken install later when some linter's own command finally fails.
 	HealthChecks []string `yaml:"health_checks,omitempty"`
+	// ExtraPackages are companion runtime packages installed alongside this tool's own Package,
+	// into the same install tree, so both are importable/usable together (e.g. a linter plugin
+	// package the main tool loads at runtime) -- real catalog shape unconfirmed in this repo's own
+	// fixtures; each entry is "name@version" (mandatory pin, AGENTS.md "Reproducibility": no
+	// unpinned install, extras included).
+	ExtraPackages []string `yaml:"extra_packages,omitempty"`
 }
 
 // ShimList is the shims: field's value. Most entries are a bare executable name, but some

@@ -4,11 +4,22 @@
 // pkg/trunk/renovate consult it through Lookup and know no runtime by name.
 package runtime
 
+// PackageSpec is one companion package to install alongside a runtime package's own main
+// pkg@version -- see config.Tool.ExtraPackages. Every entry, main package included, is
+// version-pinned (AGENTS.md "Reproducibility": no unpinned install).
+type PackageSpec struct {
+	Name    string
+	Version string
+}
+
 // Runtime is everything rtunk knows about one runtime type. A nil func / empty string means "not
 // supported".
 type Runtime struct {
-	// Install installs pkg@version through the runtime's package manager into pkgDir.
-	Install func(runtimeDir, pkgDir, pkg, version string) error
+	// Install installs pkg@version, plus every one of extra (each its own name@version), through
+	// the runtime's package manager into pkgDir, as one atomic unit: either all of them land
+	// together or none do (see install.Finalize -- a second call against an already-finalized
+	// pkgDir would otherwise silently no-op).
+	Install func(runtimeDir, pkgDir, pkg, version string, extra []PackageSpec) error
 	// InstallFile installs every dependency named in a manifest (node's package.json only).
 	InstallFile func(runtimeDir, pkgDir, file string) error
 	// ShimEnv returns environment an installed package tool's shim needs beyond what the plugin's

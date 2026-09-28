@@ -17,7 +17,7 @@ import (
 // docs/superpowers/specs/2026-09-12-package-runtimes-design.md's ruling): php already relies on
 // the system for its own interpreter, so requiring a hermetically-downloaded Composer next to a
 // system-provided PHP would be a stricter, inconsistent half-hermetic middle ground.
-func installPhpPackage(_, pkgInstallDir, pkg, version string) error {
+func installPhpPackage(_, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
 	composer, err := exec.LookPath("composer")
 	if err != nil {
 		return fmt.Errorf("runtime: composer not found on PATH: %w", err)
@@ -31,10 +31,21 @@ func installPhpPackage(_, pkgInstallDir, pkg, version string) error {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	cmd := exec.Command(composer, "require", "--working-dir="+tmpDir, "--no-interaction", pkg+":"+version)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("runtime: composer require %s:%s: %w: %s", pkg, version, err, out)
+	install_ := func(name, ver string) error {
+		cmd := exec.Command(composer, "require", "--working-dir="+tmpDir, "--no-interaction", name+":"+ver)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("runtime: composer require %s:%s: %w: %s", name, ver, err, out)
+		}
+		return nil
+	}
+	if err := install_(pkg, version); err != nil {
+		return err
+	}
+	for _, e := range extra {
+		if err := install_(e.Name, e.Version); err != nil {
+			return err
+		}
 	}
 	return install.Finalize(tmpDir, pkgInstallDir)
 }

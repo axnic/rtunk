@@ -48,7 +48,7 @@ func TestInstallPackage_Php(t *testing.T) {
 	pkgDir := filepath.Join(t.TempDir(), "install")
 	// runtimeInstallDir is irrelevant for php -- pass a path that doesn't exist to prove it's
 	// never touched.
-	err := download.InstallPackage(config.Runtime{Type: "php"}, "/does/not/exist", pkgDir, "friendsofphp/php-cs-fixer", "3.40.0")
+	err := download.InstallPackage(config.Runtime{Type: "php"}, "/does/not/exist", pkgDir, "friendsofphp/php-cs-fixer", "3.40.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -66,6 +66,6 @@ func TestInstallPackage_Php(t *testing.T) {
 
 func TestInstallPackage_Php_ComposerNotOnPath(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // empty dir, guaranteed no composer
-	err := download.InstallPackage(config.Runtime{Type: "php"}, "/does/not/exist", filepath.Join(t.TempDir(), "install"), "pkg", "1.0.0")
+	err := download.InstallPackage(config.Runtime{Type: "php"}, "/does/not/exist", filepath.Join(t.TempDir(), "install"), "pkg", "1.0.0", nil)
 	assert.ErrorContains(t, err, "composer")
 }

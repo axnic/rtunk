@@ -55,7 +55,7 @@ func TestInstallPackage_Rust(t *testing.T) {
 	fakeCargo(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "rust"}, runtimeDir, pkgDir, "ripgrep", "14.1.0")
+	err := download.InstallPackage(config.Runtime{Type: "rust"}, runtimeDir, pkgDir, "ripgrep", "14.1.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -95,7 +95,7 @@ func TestInstallPackage_Rust_CargoTargetDirHermeticity(t *testing.T) {
 	t.Setenv("CARGO_TARGET_DIR", "/nonexistent/bogus/target")
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "rust"}, runtimeDir, pkgDir, "ripgrep", "14.1.0")
+	err := download.InstallPackage(config.Runtime{Type: "rust"}, runtimeDir, pkgDir, "ripgrep", "14.1.0", nil)
 	require.NoError(t, err, "install must succeed even with a bogus CARGO_TARGET_DIR in the calling environment")
 
 	// Verify the fake cargo script received the correct CARGO_TARGET_DIR override, not the bogus one

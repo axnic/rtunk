@@ -51,7 +51,7 @@ func TestInstallPackage_Go(t *testing.T) {
 	fakeGo(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0")
+	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -95,7 +95,7 @@ func TestInstallPackage_Go_GoRootHermeticity(t *testing.T) {
 	t.Setenv("GOROOT", "/nonexistent/bogus/goroot")
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0")
+	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0", nil)
 	require.NoError(t, err, "install must succeed even with a bogus GOROOT in the calling environment")
 
 	// Verify the fake go script received the correct GOROOT override, not the bogus one

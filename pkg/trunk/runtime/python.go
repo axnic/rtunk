@@ -14,7 +14,7 @@ import (
 // AGENTS.md "Reproducibility" -- no silent fallback to whatever happens to be on PATH). pip's
 // --prefix scheme places console-script entry points at <prefix>/bin/<name>, matching
 // shimSearchPaths' existing bin/ check with no further changes needed there.
-func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
+func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
 	pip := filepath.Join(runtimeInstallDir, "bin", "pip")
 	if _, err := os.Stat(pip); err != nil {
 		return fmt.Errorf("runtime: pip not found at %s: %w", pip, err)
@@ -28,8 +28,7 @@ func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once install.Finalize renames it into pkgInstallDir
 
-	cmd := exec.Command(pip, "install", "--prefix", tmpDir, pkg+"=="+version)
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 		// Empirically confirmed against real pip 26.1: an inherited PIP_TARGET/PIP_USER makes
 		// `pip install --prefix` fail outright ("Cannot set --home and --prefix together" /
@@ -43,9 +42,22 @@ func installPythonPackage(runtimeInstallDir, pkgInstallDir, pkg, version string)
 		"PIP_TARGET=",
 		"PIP_USER=",
 	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("runtime: pip install %s==%s: %w: %s", pkg, version, err, out)
+	install_ := func(name, ver string) error {
+		cmd := exec.Command(pip, "install", "--prefix", tmpDir, name+"=="+ver)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("runtime: pip install %s==%s: %w: %s", name, ver, err, out)
+		}
+		return nil
+	}
+	if err := install_(pkg, version); err != nil {
+		return err
+	}
+	for _, e := range extra {
+		if err := install_(e.Name, e.Version); err != nil {
+			return err
+		}
 	}
 	return install.Finalize(tmpDir, pkgInstallDir)
 }

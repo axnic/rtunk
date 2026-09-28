@@ -43,7 +43,7 @@ func TestInstallPackage_Ruby(t *testing.T) {
 	fakeGem(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "ruby"}, runtimeDir, pkgDir, "rufo", "0.15.0")
+	err := download.InstallPackage(config.Runtime{Type: "ruby"}, runtimeDir, pkgDir, "rufo", "0.15.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)

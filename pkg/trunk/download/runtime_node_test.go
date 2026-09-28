@@ -36,7 +36,7 @@ func TestInstallPackage_Node(t *testing.T) {
 	// npm has actually succeeded (Fix 3), matching how InstallDir() hands it a not-yet-existing
 	// path in real use.
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "node"}, runtimeDir, pkgDir, "eslint", "8.10.0")
+	err := download.InstallPackage(config.Runtime{Type: "node"}, runtimeDir, pkgDir, "eslint", "8.10.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -55,6 +55,6 @@ func TestInstallPackage_Node(t *testing.T) {
 }
 
 func TestInstallPackage_UnsupportedRuntime(t *testing.T) {
-	err := download.InstallPackage(config.Runtime{Type: "java"}, t.TempDir(), t.TempDir(), "checkstyle", "10.0.0")
+	err := download.InstallPackage(config.Runtime{Type: "java"}, t.TempDir(), t.TempDir(), "checkstyle", "10.0.0", nil)
 	assert.ErrorContains(t, err, "java")
 }

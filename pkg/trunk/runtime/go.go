@@ -22,7 +22,7 @@ import (
 // later `os.RemoveAll` on pkgInstallDir (rtunk cache clean/prune) would fail outright the moment
 // any go tool had ever been installed. GOFLAGS=-modcacherw makes that module cache deletable too,
 // so this scratch dir's own unconditional cleanup below doesn't hit the same failure.
-func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
+func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
 	goBin := filepath.Join(runtimeInstallDir, "bin", "go")
 	if _, err := os.Stat(goBin); err != nil {
 		return fmt.Errorf("runtime: go not found at %s: %w", goBin, err)
@@ -47,13 +47,7 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) err
 	}
 	defer func() { _ = os.RemoveAll(buildDir) }()
 
-	// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see goRuntime.ExtractVersion).
-	if version != "" && version[0] >= '0' && version[0] <= '9' {
-		version = "v" + version
-	}
-	//nolint:gosec // goBin is rtunk's own installed toolchain; pkg/version come from the pinned plugin catalog
-	cmd := exec.Command(goBin, "install", pkg+"@"+version)
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GOBIN="+binDir,
 		"GOPATH="+filepath.Join(buildDir, "gopath"),
@@ -62,9 +56,27 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string) err
 		"GOTOOLCHAIN=local",
 		"GOFLAGS=-modcacherw",
 	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("runtime: go install %s@%s: %w: %s", pkg, version, err, out)
+	install_ := func(name, ver string) error {
+		// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see goRuntime.ExtractVersion).
+		if ver != "" && ver[0] >= '0' && ver[0] <= '9' {
+			ver = "v" + ver
+		}
+		//nolint:gosec // goBin is rtunk's own installed toolchain; pkg/version come from the pinned plugin catalog
+		cmd := exec.Command(goBin, "install", name+"@"+ver)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("runtime: go install %s@%s: %w: %s", name, ver, err, out)
+		}
+		return nil
+	}
+	if err := install_(pkg, version); err != nil {
+		return err
+	}
+	for _, e := range extra {
+		if err := install_(e.Name, e.Version); err != nil {
+			return err
+		}
 	}
 	return install.Finalize(tmpDir, pkgInstallDir)
 }

@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
+	pkgruntime "github.com/xunleii/rtunk/pkg/trunk/runtime"
 )
 
 // Ref identifies one item to fetch. Version "" defers to whatever the enabled list (or the
@@ -293,7 +295,16 @@ func fetchToolRef(cfg config.Config, root, repoRoot string, ref Ref, events chan
 	}
 	defer release()
 	events <- Event{Ref: ref, Phase: Started}
-	if err := InstallPackage(rt, runtimeInstallDir, installDir, tool.Package, version); err != nil {
+	extra := make([]pkgruntime.PackageSpec, 0, len(tool.ExtraPackages))
+	for _, e := range tool.ExtraPackages {
+		name, ver, ok := strings.Cut(e, "@")
+		if !ok || ver == "" {
+			events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: tool %q: extra_packages entry %q has no @version pin", ref.ID, e)}
+			return
+		}
+		extra = append(extra, pkgruntime.PackageSpec{Name: name, Version: ver})
+	}
+	if err := InstallPackage(rt, runtimeInstallDir, installDir, tool.Package, version, extra); err != nil {
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return
 	}

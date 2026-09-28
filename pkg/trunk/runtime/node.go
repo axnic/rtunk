@@ -19,7 +19,7 @@ import (
 // actually succeeded (see Fix 3) -- otherwise a failed/killed `npm install` left pkgInstallDir
 // existing (MkdirAll used to be this function's first action), and dirNonEmpty(pkgInstallDir)
 // would wrongly treat that as a completed, cached install forever.
-func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string) error {
+func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string, extra []PackageSpec) error {
 	npm := filepath.Join(runtimeInstallDir, "bin", "npm")
 	if _, err := os.Stat(npm); err != nil {
 		return fmt.Errorf("runtime: npm not found at %s: %w", npm, err)
@@ -33,12 +33,24 @@ func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string) e
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once install.Finalize renames it into pkgInstallDir
 
-	//nolint:gosec // npm is rtunk's own installed runtime; pkg/version come from the pinned plugin catalog
-	cmd := exec.Command(npm, "install", "--prefix", tmpDir, pkg+"@"+version)
-	cmd.Env = append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("runtime: npm install %s@%s: %w: %s", pkg, version, err, out)
+	env := append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	install_ := func(name, ver string) error {
+		//nolint:gosec // npm is rtunk's own installed runtime; pkg/version come from the pinned plugin catalog
+		cmd := exec.Command(npm, "install", "--prefix", tmpDir, name+"@"+ver)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("runtime: npm install %s@%s: %w: %s", name, ver, err, out)
+		}
+		return nil
+	}
+	if err := install_(pkg, version); err != nil {
+		return err
+	}
+	for _, e := range extra {
+		if err := install_(e.Name, e.Version); err != nil {
+			return err
+		}
 	}
 	return install.Finalize(tmpDir, pkgInstallDir)
 }

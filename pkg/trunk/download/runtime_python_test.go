@@ -54,7 +54,7 @@ func TestInstallPackage_Python(t *testing.T) {
 	fakePip(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "python"}, runtimeDir, pkgDir, "black", "24.0.0")
+	err := download.InstallPackage(config.Runtime{Type: "python"}, runtimeDir, pkgDir, "black", "24.0.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -95,7 +95,7 @@ func TestInstallPackage_Python_PipHermeticity(t *testing.T) {
 	t.Setenv("PYTHONPATH", "/bogus/pythonpath")
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "python"}, runtimeDir, pkgDir, "black", "24.0.0")
+	err := download.InstallPackage(config.Runtime{Type: "python"}, runtimeDir, pkgDir, "black", "24.0.0", nil)
 	require.NoError(t, err, "install must succeed even with hostile pip/python env vars inherited")
 
 	envContent, err := os.ReadFile(envFile)
