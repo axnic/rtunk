@@ -102,9 +102,9 @@ output="$(RENOVATE_ONBOARDING=false RENOVATE_REQUIRE_CONFIG=ignored LOG_LEVEL=de
 # -- it matches an EMPTY array ("updates": []) just as much as a real one, which would let a
 # fixture with no actual update available silently pass. "newVersion": only ever appears inside a
 # real update entry, never in an empty array, regardless of Renovate's own JSON formatting.
-if echo "$output" | grep -q '"depName": "koalaman/shellcheck"' && echo "$output" | grep -q '"newVersion":'; then
+if grep -q '"depName": "koalaman/shellcheck"' <<<"$output" && grep -q '"newVersion":' <<<"$output"; then
 	echo "==> PASS: Renovate found a real update for koalaman/shellcheck"
-	echo "$output" | grep -A6 '"depName": "koalaman/shellcheck"' | head -20
+	grep -A10 '"depName": "koalaman/shellcheck"' <<<"$output" | head -20
 	exit 0
 fi
 

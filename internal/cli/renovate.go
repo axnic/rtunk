@@ -171,6 +171,14 @@ func printRenovateReport(w io.Writer, r renovateReport) {
 // enabled linters/tools/runtimes change. Verified directly against real annotated output (both
 // the flat "- id@version" sequence-entry shape and the "ref: <value>" mapping-entry shape) in
 // Node.js (the engine Renovate actually runs), not just eyeballed.
+//
+// Known drift (found during ROADMAP v0.12's own end-to-end verification, scripts/
+// verify-renovate-e2e.sh): a real Renovate run auto-migrates this in memory to its current
+// schema (`regexManagers` -> `customManagers` with `customType: "regex"`, `fileMatch` ->
+// `managerFilePatterns`) and logs "Config migration necessary" -- it still works today, but a
+// real repo would additionally get an unwanted config-migration PR, and a future Renovate could
+// drop the auto-migration entirely. Worth updating this snippet to the current schema directly;
+// deliberately left as a documented follow-up rather than an unplanned scope addition to v0.12.
 const renovateConfigSnippet = `{
   "regexManagers": [
     {
