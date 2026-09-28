@@ -1263,6 +1263,102 @@ func TestRun_ContextCancellationStopsNewWorkAndKillsInFlight(t *testing.T) {
 	assert.Less(t, elapsed, 200*time.Millisecond, "canceling must not wait out even one of the fake tool's 250ms sleeps, let alone all four")
 }
 
+// TestRun_LinterRunTimeout_FailsSlowCommand covers config.Linter.RunTimeout actually being
+// enforced: a linter declaring a run_timeout shorter than its command's real runtime must have
+// that invocation killed and reported Failed, not left to run forever.
+func TestRun_LinterRunTimeout_FailsSlowCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"slow": {
+						Name: "slow", Files: []string{"ALL"}, Tools: []string{"faketool"}, RunTimeout: "50ms",
+						Commands: []config.Command{{Name: "lint", Run: "faketool sleep ${target}", Output: "pass_fail"}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var failed int
+	for ev := range events {
+		if ev.Phase == Failed {
+			failed++
+		}
+	}
+	assert.Equal(t, 1, failed, "a command exceeding its linter's run_timeout must report Failed")
+}
+
+// TestRun_LinterNoRunTimeout_SlowCommandStillSucceeds proves the RunTimeout addition is a true
+// no-op for the overwhelming majority of linters that never declare one: the same slow command,
+// with RunTimeout left at its default "", must still complete normally.
+func TestRun_LinterNoRunTimeout_SlowCommandStillSucceeds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("x\n"), 0o644))
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"slow": {
+						Name: "slow", Files: []string{"ALL"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{Name: "lint", Run: "faketool sleep ${target}", Output: "pass_fail"}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var done, failed int
+	for ev := range events {
+		switch ev.Phase {
+		case Done:
+			done++
+		case Failed:
+			failed++
+		}
+	}
+	assert.Equal(t, 1, done, "no run_timeout declared must not change the slow command's normal success")
+	assert.Equal(t, 0, failed)
+}
+
 // TestRun_ParserConvertsRawOutputThroughStdinStdout proves the real Command.Parser contract every
 // trunk-io converter script this feature's research found actually uses (trufflehog_to_sarif.py,
 // tfsec/parse.py, ruff_to_sarif.py, all read in full): the real command's raw stdout becomes the

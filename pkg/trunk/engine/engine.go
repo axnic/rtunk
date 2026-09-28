@@ -561,6 +561,18 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // after-hash cycle over the same file. A dry run (job.dryRun) never reaches the real file at all
 // -- see the sandboxType computation below.
 func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
+	if j.linter.RunTimeout != "" {
+		if d, err := time.ParseDuration(j.linter.RunTimeout); err == nil {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, d)
+			defer cancel()
+		}
+		// An unparseable run_timeout value is silently ignored here, matching how a malformed
+		// value in the real catalog would already have been accepted by config.Resolve (no
+		// existing validation rejects it) -- this task adds consumption of the field, not new
+		// validation of it. If a future task adds config-time validation, revisit this.
+	}
+
 	// A stdin/stdout formatter (Formatter, not InPlace, rewrite/shfmt output) never touches its
 	// own target directly -- it reads content on stdin and writes the reformatted result to its
 	// own stdout, so none of the InPlace hashing/sandboxing/mutex machinery below applies; it gets
@@ -639,6 +651,17 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 	out, stderr, exitCode, err := runOneInvocation(ctx, j.cmd, workDir, j.pathEnv, j.batch, pluginDir, cwdDir, log, inv, "")
 	if err != nil {
 		return nil, nil, err
+	}
+	// A negative exitCode means the process was killed or crashed rather than exiting normally
+	// (Go's ExitCode() reports -1 for a signal-terminated process, e.g. ctx.WithTimeout's kill
+	// above, or a top-level ctx cancellation) -- mirrors the same guard runStdinFormatterFile
+	// already has. Without this, a killed pass_fail command's exitCode!=0 would fall through to
+	// ParsePassFail below and get silently reported as "found violations" instead of the tool
+	// having been killed, and a killed JSON-output command's empty stdout would fall through to
+	// the isJSONFormat empty-output guard and get silently reported as a clean run -- both would
+	// make RunTimeout effectively invisible for every non-formatter command shape.
+	if exitCode < 0 {
+		return nil, nil, fmt.Errorf("engine: %s: %s: process did not exit cleanly (killed or crashed)", j.linterName, j.cmd.Name)
 	}
 	if msg, failed := commandFailed(j.cmd, out, stderr, exitCode); failed {
 		return nil, nil, fmt.Errorf("engine: %s: %s exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
