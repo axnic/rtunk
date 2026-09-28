@@ -229,10 +229,10 @@ repository file matched against the linter's `files:` criteria.
 
 ## Renovate
 
-- **`rtunk toolbox renovate enable|disable`**: turn Renovate annotations in the configuration on or
+- **`rtunk renovate enable|disable`**: turn Renovate annotations in the configuration on or
   off (`enable` is the former `annotate`; `disable` strips the annotations). Both warn on stderr when
   no Renovate config file at the repo root contains the regexManager. (Implemented.)
-- **`rtunk toolbox renovate config`**: print the Renovate configuration with the custom
+- **`rtunk renovate config`**: print the Renovate configuration with the custom
   regexManager used for version management. Eventually includes `postUpgradeTasks: rtunk lock`.
   (Implemented, without the `postUpgradeTasks` entry.)
 
@@ -261,7 +261,7 @@ A versioned `rtunk.lock` in the repo, `id@version@platform -> sha256` (go.sum st
 - entry absent locally: download and record;
 - entry absent with `--locked` or `CI=true`: error;
 - hidden `rtunk lock` precomputes hashes for the other platforms;
-- Renovate: `postUpgradeTasks: rtunk lock`, to be added to `toolbox renovate config`.
+- Renovate: `postUpgradeTasks: rtunk lock`, to be added to `renovate config`.
 
 ### Later (v1+)
 
