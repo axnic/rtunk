@@ -21,10 +21,10 @@ import (
 func ResolveRuntimeShimDir(cfg config.Config, root, cacheDir, repoRoot, runtimeID string, onEvent func(Event)) (string, error) {
 	rt, ok := cfg.Runtimes.Definitions[runtimeID]
 	if !ok {
-		return "", fmt.Errorf("download: parser runtime %q referenced but not found in resolved config", runtimeID)
+		return "", fmt.Errorf("download: runtime %q referenced but not found in resolved config", runtimeID)
 	}
 	if len(rt.Shims) == 0 {
-		return "", fmt.Errorf("download: parser runtime %q has no shims declared", runtimeID)
+		return "", fmt.Errorf("download: runtime %q has no shims declared", runtimeID)
 	}
 	version := ResolveVersion(cfg.Runtimes.Enabled, runtimeID, rt.KnownGoodVersion)
 	shimPath := ShimPath(root, "runtimes", runtimeID, version, rt.Shims[0])

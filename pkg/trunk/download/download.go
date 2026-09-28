@@ -467,7 +467,8 @@ func fetchActionPackagesRef(cfg config.Config, root, repoRoot string, ref Ref, e
 	runtimeInstallDir := InstallDir(root, "runtimes", action.Runtime, runtimeVersion)
 	if !dirNonEmpty(runtimeInstallDir) {
 		if err := fetchRuntimeRef(cfg, root, repoRoot, Ref{Category: "runtimes", ID: action.Runtime, Version: runtimeVersion}, events); err != nil {
-			events <- Event{Ref: ref, Phase: Failed, Err: fmt.Errorf("download: action %q: runtime %q: %w", ref.ID, action.Runtime, err)}
+			// fetchRuntimeRef already emitted its own Failed event on this channel; sending a
+			// second one here would block forever once the caller stops draining after the first.
 			return
 		}
 	}

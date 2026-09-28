@@ -332,7 +332,9 @@ on concurrent-process usage that the lock-file design removes).
 
 ### 14. Duplicated variable substitution and runtime-shim resolution
 
-**Status**: accepted — implement.
+**Status**: partially implemented (v0.11 shared-provisioning plan) — runtime-shim resolution and
+quote helpers unified; the two callers' variable-substitution tables remain separate on purpose
+(they support different, non-overlapping variable sets).
 
 **What**: the execution engine and the action runner each independently implement invocation-template
 variable substitution (including basic shell-quoting helpers) and runtime-shim-directory resolution,

@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -706,6 +707,51 @@ func TestDownload_ToolRef_RuntimePackage_UnknownRuntime(t *testing.T) {
 	ev := <-events
 	assert.Equal(t, download.Failed, ev.Phase)
 	assert.ErrorContains(t, ev.Err, `no runtime "missing-runtime"`)
+}
+
+// TestDownload_ActionPackagesRef_RuntimeFetchFailure_EmitsExactlyOneFailedEvent guards against a
+// goroutine leak: fetchRuntimeRef already sends its own Failed event on this unbuffered channel
+// when the action's runtime fails to fetch. If fetchActionPackagesRef also sent a second, wrapped
+// Failed event of its own (as it used to), a caller that stops draining after the first Failed --
+// e.g. resolvePackagesFileBinDir -- would leave that second send blocked forever, leaking this
+// goroutine and Download's own wait-group goroutine with it.
+func TestDownload_ActionPackagesRef_RuntimeFetchFailure_EmitsExactlyOneFailedEvent(t *testing.T) {
+	cfg := config.Config{
+		Runtimes: config.CategoryConfig[config.Runtime]{
+			Definitions: map[string]config.Runtime{
+				"node": {Type: "node", Download: "missing-recipe", KnownGoodVersion: "18.0.0"},
+			},
+		},
+		Actions: config.CategoryConfig[config.Action]{
+			Definitions: map[string]config.Action{
+				"commitlint": {ID: "commitlint", Runtime: "node", PackagesFile: "package.json"},
+			},
+		},
+	}
+
+	events, err := download.Download(cfg, t.TempDir(), "/repo", download.Ref{Category: "action-packages", ID: "commitlint"})
+	require.NoError(t, err)
+
+	// Drain fully with a timeout instead of reading just one event: a resurrected second Failed
+	// send would block this drain forever on the unbuffered channel, and that hang -- not a
+	// failed assertion -- is the signal a regression re-introduced the leak.
+	var failedCount int
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range events {
+			if ev.Phase == download.Failed {
+				failedCount++
+				assert.ErrorContains(t, ev.Err, `no download recipe "missing-recipe"`)
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Download's events channel never closed -- a second Failed event is blocking forever (goroutine leak)")
+	}
+	assert.Equal(t, 1, failedCount, "fetchActionPackagesRef must not emit its own Failed event on top of fetchRuntimeRef's")
 }
 
 // TestDownload_AllRefs_DefaultsToEveryToolAndRuntime covers Download()'s empty-refs default path
