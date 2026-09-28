@@ -238,6 +238,29 @@ repository file matched against the linter's `files:` criteria.
 
 These replace the former `rtunk renovate annotate|config` (`v1.1`).
 
+### End-to-end verification
+
+`scripts/verify-renovate-e2e.sh` proves the printed regexManager snippet and the "# renovate:
+..." annotations actually work against a real Renovate run, not just a plausible-looking regex
+that was never executed: it builds rtunk, gets the real config snippet from `rtunk renovate
+config` and a real annotated fixture from `rtunk renovate enable` (a local plugin declaring a
+tool backed by `koalaman/shellcheck`, pinned at an old real tag), then runs the actual `renovate`
+CLI (via `npx`) against them and asserts its debug output shows a proposed update for that
+dependency.
+
+It is a manual script, not part of `go test ./...` or CI: it needs network access, a real GitHub
+token, and downloads the real `renovate` npm package via `npx` (a few hundred MB, cached after the
+first run) — a real external dependency with real latency that would make the default test suite
+flaky and slow for everyone. Run it with:
+
+```bash
+GITHUB_COM_TOKEN="$(gh auth token)" ./scripts/verify-renovate-e2e.sh
+```
+
+Last verified 2026-09-28: found `koalaman/shellcheck` pinned at `v0.7.0` → Renovate's own
+`dry-run=lookup` proposed a real update to `v0.11.0` (`"datasource": "github-releases"`,
+`"updateType": "minor"`), via the exact regexManager `rtunk renovate config` prints.
+
 ## Download integrity
 
 ### Current model
