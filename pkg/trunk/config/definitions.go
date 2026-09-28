@@ -158,6 +158,11 @@ type Command struct {
 	// per inconsistencies.md entry #2, with no consumer yet.
 	FixPrompt string `yaml:"fix_prompt,omitempty"`
 	FixVerb   string `yaml:"fix_verb,omitempty"`
+	// PrepareRun is a one-time setup invocation run once per engine.Run call, before this
+	// command's own first invocation -- for a tool that needs initialization (e.g. a plugin-
+	// download step) before it can run correctly. Unlike Run, it has no per-file target: it runs
+	// once regardless of how many files/batches this command's own Run ends up invoked against.
+	PrepareRun string `yaml:"prepare_run,omitempty"`
 	// Platforms restricts this command variant to specific host platforms (trunk's own
 	// vocabulary: "linux", "macos", "windows") -- real catalog example: a Windows-only invocation
 	// of the same command name alongside an unrestricted variant (linters/pmd/plugin.yaml).

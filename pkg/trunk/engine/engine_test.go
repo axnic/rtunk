@@ -1691,6 +1691,128 @@ func TestRun_InPlaceReportsOnlyGenuinelyChangedFiles(t *testing.T) {
 		"only the file whose content genuinely differs before/after must be reported changed")
 }
 
+// TestRun_PrepareRunExecutesOnceBeforeFirstUse covers Command.PrepareRun: a setup invocation
+// declared on a command must run exactly once per (linter,command), before that command's own
+// Run, no matter how many files/jobs/batches the command's own Run ends up split into. Both
+// PrepareRun and Run are plain shell commands (no faketool binary needed) that append a marker
+// line to the same file, so this needs no Tools/shim machinery at all -- mirrors
+// TestRunOneInvocation_EmptyPathEnvHasNoCwdComponent's use of a Tools-less config.Command with a
+// literal shell Run string.
+func TestRun_PrepareRunExecutesOnceBeforeFirstUse(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c only on POSIX")
+	}
+
+	repoRoot := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, name), []byte("x\n"), 0o644))
+	}
+	marker := filepath.Join(t.TempDir(), "marker")
+
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"prep": {
+						Name: "prep", Files: []string{"ALL"},
+						Commands: []config.Command{{
+							// Run references ${target} so buildJobs splits it into one job per
+							// file (a Run string with no ${target} at all auto-collapses into a
+							// single job regardless of the Batch flag -- see
+							// TestRun_NoTargetCommandBatchesEvenWithoutBatchFlag -- which would
+							// defeat this test's whole point of proving PrepareRun runs once
+							// across MULTIPLE jobs/batches).
+							Name: "check", Output: "pass_fail",
+							PrepareRun: "echo prep >> " + marker,
+							Run:        "true ${target}; echo run >> " + marker,
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: t.TempDir(), Concurrency: 3}, nil, notFormatter)
+	require.NoError(t, err)
+	for range events { //nolint:revive // draining the channel is the whole point; there is nothing to do per event
+	}
+
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+
+	var prepCount, runCount int
+	for _, l := range lines {
+		switch l {
+		case "prep":
+			prepCount++
+		case "run":
+			runCount++
+		}
+	}
+	assert.Equal(t, 1, prepCount, "PrepareRun must execute exactly once, not once per job/batch, got lines: %v", lines)
+	assert.Equal(t, 3, runCount, "the command's own Run must still execute once per file, unaffected by PrepareRun")
+}
+
+// TestRun_NoPrepareRun_Unaffected mirrors TestRun_TargetParentRunsOncePerDirectory (no
+// Command.PrepareRun set) to prove the new field is a true no-op for every command that doesn't
+// declare one -- the overwhelming majority of the real catalog.
+func TestRun_NoPrepareRun_Unaffected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("faketool invoked via sh -c")
+	}
+
+	binPath := buildFakeToolBinary(t)
+	cacheDir := t.TempDir()
+	root, err := download.Root(cacheDir)
+	require.NoError(t, err)
+	shimPath := download.ShimPath(root, "tools", "faketool", "1.0.0", "faketool")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), 0o755))
+	require.NoError(t, download.WriteShim(shimPath, binPath))
+
+	repoRoot := t.TempDir()
+	for _, f := range []string{"pa/one.tp", "pa/two.tp", "pb/three.tp"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, filepath.Dir(f)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(repoRoot, f), []byte("x\n"), 0o644))
+	}
+
+	cfg := config.Config{
+		Tools: map[string]config.Tool{"faketool": {Name: "faketool", KnownGoodVersion: "1.0.0"}},
+		Lint: config.LintConfig{
+			Files: map[string]config.FileType{"tp": {Name: "tp", Extensions: []string{"tp"}}},
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"parent-linter": {
+						Name: "parent-linter", Files: []string{"tp"}, Tools: []string{"faketool"},
+						Commands: []config.Command{{
+							Name: "lint", Run: "faketool sarif ${target}", Output: "sarif", Target: "${parent}",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	events, err := Run(context.Background(), Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}, nil, notFormatter)
+	require.NoError(t, err)
+
+	var running int
+	var done Event
+	for ev := range events {
+		switch ev.Phase {
+		case Running:
+			running++
+		case Done:
+			done = ev
+		}
+	}
+	assert.Equal(t, 2, running, "pa/ holds two files but must be linted once, pb/ once")
+	require.Len(t, done.Findings, 2)
+	got := []string{done.Findings[0].File, done.Findings[1].File}
+	assert.ElementsMatch(t, []string{"pa", "pb"}, got)
+}
+
 // TestRun_InPlaceWithSandboxIsSkipped covers the new explicit skip: no real catalog formatter
 // combines InPlace with SandboxType (a sandboxed write would be silently lost), so this project
 // rejects the combination outright rather than silently discarding a fix.

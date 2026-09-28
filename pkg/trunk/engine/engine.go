@@ -126,6 +126,17 @@ type job struct {
 	// setting, not a per-command one; see runBatch's own use of it.
 }
 
+// prepareRunState pairs a sync.Once with the error the one call it actually runs produces --
+// sync.Once.Do itself has no return value, so every caller blocked on the same Do call (not just
+// the one that triggered it) reads err after Do returns to know whether the command's PrepareRun
+// invocation it was waiting on actually succeeded. Safe with no extra locking: sync.Once.Do
+// already establishes happens-before between the closure's writes and every Do call's return, the
+// blocked ones included.
+type prepareRunState struct {
+	once sync.Once
+	err  error
+}
+
 // linterState accumulates one linter's concurrently-completing jobs into the single terminal
 // event (Done or Failed) a sequential run would send once its last command finished. Jobs for the
 // same linter can now finish on different workers in any order, so "is this linter done" is
@@ -250,6 +261,24 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 		}
 		close(jobCh)
 
+		// prepareRunOnce holds one entry per (linter,command) pair whose Command.PrepareRun is set
+		// -- built once, from the already-fully-built jobs slice, before any worker goroutine
+		// starts; a plain map is safe here for the same reason states is: read-only for the rest
+		// of this run. Each entry pairs a sync.Once with its own error slot (see runBatch's use of
+		// it) rather than relying on sync.Once.Do's return value, which carries no success/failure
+		// signal of its own -- every job blocked on the same Do call must see the triggering call's
+		// own error, not silently proceed as if setup had succeeded.
+		prepareRunOnce := make(map[string]*prepareRunState, len(jobs))
+		for _, j := range jobs {
+			if j.cmd.PrepareRun == "" {
+				continue
+			}
+			key := j.linterName + "/" + j.cmd.Name
+			if _, ok := prepareRunOnce[key]; !ok {
+				prepareRunOnce[key] = &prepareRunState{}
+			}
+		}
+
 		var inPlaceMu sync.Mutex
 		var wg sync.WaitGroup
 		for i := 0; i < concurrency; i++ {
@@ -258,7 +287,7 @@ func Run(ctx context.Context, env Env, paths []string, include func(config.Comma
 					if ctx.Err() != nil {
 						return
 					}
-					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, events, env.Log)
+					runJob(ctx, j, states[j.linterName], repoRoot, &inPlaceMu, prepareRunOnce, events, env.Log)
 				}
 			})
 		}
@@ -508,7 +537,7 @@ func findUnsupportedParserVar(run string) (string, bool) {
 // marks the linter failed (any of its not-yet-started jobs are then skipped, best-effort: a job
 // already picked up by a worker still runs to completion), and the linter's single terminal event
 // fires exactly once, the moment its last job finishes.
-func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inPlaceMu *sync.Mutex, events chan<- Event, log *runlog.Writer) {
+func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inPlaceMu *sync.Mutex, prepareRunOnce map[string]*prepareRunState, events chan<- Event, log *runlog.Writer) {
 	state.mu.Lock()
 	if state.failed {
 		state.mu.Unlock()
@@ -518,7 +547,7 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 
 	events <- Event{Linter: j.linterName, Phase: Running, File: strings.Join(j.batch, ", ")}
 	id := log.NextID()
-	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu, log, id)
+	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu, prepareRunOnce, log, id)
 	events <- Event{Linter: j.linterName, Phase: JobDone, File: strings.Join(j.batch, ", ")}
 	if err == nil && len(findings) > 0 {
 		log.Emit(runlog.Event{T: runlog.KindFindings, ID: id, Linter: j.linterName, Findings: findings})
@@ -559,8 +588,11 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 // invocation, and runStdinFormatter's own writes, across the whole run
 // (see the lock acquired below) so two of them can never interleave their before-hash/invoke/
 // after-hash cycle over the same file. A dry run (job.dryRun) never reaches the real file at all
-// -- see the sandboxType computation below.
-func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
+// -- see the sandboxType computation below. If j.cmd.PrepareRun is set, it runs -- exactly once
+// per (linter,command), across every job/batch this command's own Run ever gets split into (see
+// prepareRunOnce/prepareRunState) -- before anything else here: a killed/failed PrepareRun fails
+// every job for this command, not just whichever one happened to trigger it.
+func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex, prepareRunOnce map[string]*prepareRunState, log *runlog.Writer, id int) ([]output.Finding, []string, error) {
 	if j.linter.RunTimeout != "" {
 		if d, err := time.ParseDuration(j.linter.RunTimeout); err == nil {
 			var cancel context.CancelFunc
@@ -571,6 +603,36 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		// value in the real catalog would already have been accepted by config.Resolve (no
 		// existing validation rejects it) -- this task adds consumption of the field, not new
 		// validation of it. If a future task adds config-time validation, revisit this.
+	}
+
+	if j.cmd.PrepareRun != "" {
+		state := prepareRunOnce[j.linterName+"/"+j.cmd.Name]
+		state.once.Do(func() {
+			pluginDir := j.linter.SourceRoot
+			cwdDir := filepath.Join(j.linter.SourceRoot, j.linter.SourceDir)
+			setupCmd := j.cmd
+			setupCmd.Run = j.cmd.PrepareRun
+			setupID := log.NextID()
+			inv := runlog.Event{T: runlog.KindInvocation, ID: setupID, Linter: j.linterName, Sandbox: ""}
+			_, stderrOut, exitCode, err := runOneInvocation(ctx, setupCmd, j.resolvedDir, j.pathEnv, nil, pluginDir, cwdDir, log, inv, "")
+			switch {
+			case err != nil:
+				state.err = err
+			case exitCode < 0:
+				// Mirrors the exitCode < 0 guard on the command's own real invocation below: a
+				// negative exit code means the process was killed (e.g. this job's own ctx
+				// cancellation/timeout, set up above) or crashed, not a normal exit.
+				state.err = fmt.Errorf("engine: %s: %s: prepare_run process did not exit cleanly (killed or crashed)", j.linterName, j.cmd.Name)
+			case exitCode != 0:
+				// PrepareRun has no output to parse -- exit-code only: any non-zero exit fails
+				// every job for this command, not just this one.
+				msg := strings.TrimSpace(stderrOut)
+				state.err = fmt.Errorf("engine: %s: %s: prepare_run exited %d: %s", j.linterName, j.cmd.Name, exitCode, msg)
+			}
+		})
+		if state.err != nil {
+			return nil, nil, state.err
+		}
 	}
 
 	// A stdin/stdout formatter (Formatter, not InPlace, rewrite/shfmt output) never touches its
