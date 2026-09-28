@@ -204,7 +204,11 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		}
 		findings, _, skipped, failed = drainEvents(cfg, collectEvents(events2), r.Event)
 	} else {
-		replayEvents(raw1, r.Event)
+		// raw1 was only drained above through a no-op printFn (line ~159), so it still carries
+		// every suppressed linter's findings -- filter it the same way drainEvents itself does
+		// before replaying it into the real renderer, or a superseded linter's findings would
+		// reappear in the report here even though drainEvents already excluded them from findings.
+		replayEvents(suppressUpstreamEvents(cfg, raw1), r.Event)
 	}
 	runFailed = failed != nil || runFailedBy(fixFailed) || runFailedBy(fixCmdFailed)
 
@@ -346,7 +350,16 @@ func drainRunEvents(cfg config.Config, printFn func(engine.Event), events <-chan
 // drainEvents is drainRunEvents over an already-collected slice instead of a live channel -- for
 // a pass buffered via collectEvents because whether it's the one to print (via printFn) isn't
 // known until after it's fully drained (see check --fix's pass 1).
+//
+// events is filtered via suppressUpstreamEvents BEFORE printFn ever sees any of it: printFn is
+// what actually renders the human/json/sarif report (internal/cli/render/base.go reads
+// ev.Findings straight off each Done event as it's printed), so filtering only the returned
+// findings slice -- as this used to do -- left a suppressed linter's findings out of the count
+// but still visible in the printed report. Filtering events up front means printFn and the
+// accumulation below agree by construction.
 func drainEvents(cfg config.Config, events []engine.Event, printFn func(engine.Event)) (findings []output.Finding, changed []string, skipped []string, failed error) {
+	events = suppressUpstreamEvents(cfg, events)
+
 	skippedLinters := map[string]bool{}
 	seenChanged := map[string]bool{}
 	for _, ev := range events {
@@ -373,19 +386,57 @@ func drainEvents(cfg config.Config, events []engine.Event, printFn func(engine.E
 			}
 		}
 	}
-	findings = suppressUpstream(cfg, findings)
 	return findings, changed, skipped, failed
 }
 
-// suppressUpstream drops every Finding from a linter another enabled linter's own Command
-// declares as DisableUpstream, but only once the superseding linter has itself produced at least
-// one finding -- being merely enabled isn't enough (a "combined" linter that ran clean this time
-// must not silently hide a real "narrow" finding). Whole-linter suppression, not fine-grained
-// per-finding matching: see docs/architecture/inconsistencies.md for why.
-func suppressUpstream(cfg config.Config, findings []output.Finding) []output.Finding {
+// suppressUpstreamEvents returns a copy of events with every Done event's Findings stripped of
+// any finding from a linter another enabled linter's own Command declares as DisableUpstream --
+// but only once the superseding linter has itself produced at least one finding across the whole
+// batch (see supersededLinters), matching drainEvents' pre-fix behavior of suppressing whole
+// linters, not fine-grained per-finding matching (see docs/architecture/inconsistencies.md for
+// why). Every other event field, and every non-Done event, passes through unchanged. events'
+// backing array is never mutated -- a fresh output slice (and, for any Done event whose Findings
+// actually changed, a fresh Findings slice) is built instead, since events may be a buffered pass
+// check --fix still needs unfiltered elsewhere (raw1's own findings-only use).
+func suppressUpstreamEvents(cfg config.Config, events []engine.Event) []engine.Event {
+	suppress := supersededLinters(cfg, events)
+	if len(suppress) == 0 {
+		return events
+	}
+
+	out := make([]engine.Event, len(events))
+	for i, ev := range events {
+		if ev.Phase != engine.Done || len(ev.Findings) == 0 {
+			out[i] = ev
+			continue
+		}
+		findings := make([]output.Finding, 0, len(ev.Findings))
+		for _, f := range ev.Findings {
+			if !suppress[f.Linter] {
+				findings = append(findings, f)
+			}
+		}
+		ev.Findings = findings
+		out[i] = ev
+	}
+	return out
+}
+
+// supersededLinters scans every Done event's Findings once to find which linter ids another
+// enabled linter's own Command supersedes via DisableUpstream -- shared by suppressUpstreamEvents
+// so the produced/suppress map-building logic exists in exactly one place. A linter only counts
+// as "produced" (and so only suppresses its own DisableUpstream target) once it has actually
+// reported at least one finding; being merely enabled isn't enough -- a "combined" linter that ran
+// clean this time must not silently hide a real "narrow" finding.
+func supersededLinters(cfg config.Config, events []engine.Event) map[string]bool {
 	produced := map[string]bool{}
-	for _, f := range findings {
-		produced[f.Linter] = true
+	for _, ev := range events {
+		if ev.Phase != engine.Done {
+			continue
+		}
+		for _, f := range ev.Findings {
+			produced[f.Linter] = true
+		}
 	}
 
 	suppress := map[string]bool{}
@@ -401,17 +452,7 @@ func suppressUpstream(cfg config.Config, findings []output.Finding) []output.Fin
 			}
 		}
 	}
-	if len(suppress) == 0 {
-		return findings
-	}
-
-	out := findings[:0]
-	for _, f := range findings {
-		if !suppress[f.Linter] {
-			out = append(out, f)
-		}
-	}
-	return out
+	return suppress
 }
 
 // checkListCmd is `rtunk linters list`: enabled linters (with their pinned version), the ones

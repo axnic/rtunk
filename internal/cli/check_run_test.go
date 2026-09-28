@@ -627,6 +627,38 @@ func TestCheckRunCmd_Fix_ScopedToReportingLinter(t *testing.T) {
 	assert.Equal(t, "SOMETHING-ELSE", string(got), "fixer's own fix command must not touch a file only 'other' flagged")
 }
 
+// TestCheckRunCmd_DisableUpstream_SuppressesReportedFinding is a CLI-level regression test for
+// the final whole-branch review's second finding: without --fix, checkRunCmd.Run's "nothing to
+// fix" path replays pass 1's raw buffered events straight into the real renderer via
+// replayEvents(raw1, r.Event), entirely bypassing drainEvents (and so its suppression) a second,
+// separate way. "combined" declares disable_upstream: [narrow] and both linters report a finding
+// on the same file -- the printed report must show only "combined"'s finding, and the count in
+// the final error must be 1, not 2.
+func TestCheckRunCmd_DisableUpstream_SuppressesReportedFinding(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"combined", "narrow"}, `    - name: combined
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+          disable_upstream: [narrow]
+    - name: narrow
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+`)
+	f := filepath.Join(repoRoot, "a.txt")
+	require.NoError(t, os.WriteFile(f, []byte("x"), 0o644))
+
+	stdout, stderr, err := run2(t, "--config", cfgPath, "check", f)
+	require.Error(t, err, "stderr: %s", stderr)
+	assert.EqualError(t, err, "rtunk: check found 1 issue(s)", "narrow's superseded finding must not be counted")
+	assert.Contains(t, stdout, "combined", "combined's own finding must still be reported")
+	assert.NotContains(t, stdout, "narrow", "narrow's finding must be suppressed from the printed report, not just the count")
+}
+
 func TestValidFixTargets(t *testing.T) {
 	repoRoot := t.TempDir()
 	realFile := filepath.Join(repoRoot, "a.txt")

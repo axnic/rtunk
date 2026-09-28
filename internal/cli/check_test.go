@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/engine"
@@ -88,4 +89,52 @@ func TestDrainEvents_DisableUpstream_KeepsFindings_WhenSupersedingLinterProduced
 
 	assert.Len(t, findings, 1)
 	assert.Equal(t, "narrow", findings[0].Linter)
+}
+
+// TestDrainEvents_DisableUpstream_PrintFnAlsoSeesFiltered is the gap the final whole-branch
+// review found: earlier tests only asserted drainEvents' own return value, which was filtered,
+// while the events actually handed to printFn (what the real renderer -- internal/cli/render's
+// report-building -- reads Findings from) were still the raw, unfiltered ones. printFn here
+// records every event it receives so the test can inspect what the renderer would actually have
+// seen, not just what drainEvents returns.
+func TestDrainEvents_DisableUpstream_PrintFnAlsoSeesFiltered(t *testing.T) {
+	cfg := config.Config{
+		Lint: config.LintConfig{
+			CategoryConfig: config.CategoryConfig[config.Linter]{
+				Definitions: map[string]config.Linter{
+					"combined": {Commands: []config.Command{{DisableUpstream: []string{"narrow"}}}},
+					"narrow":   {},
+				},
+			},
+		},
+	}
+	events := []engine.Event{
+		{Linter: "combined", Phase: engine.Done, Findings: []output.Finding{{Linter: "combined"}}},
+		{Linter: "narrow", Phase: engine.Done, Findings: []output.Finding{{Linter: "narrow"}}},
+	}
+
+	var printed []engine.Event
+	findings, _, _, _ := drainEvents(cfg, events, func(ev engine.Event) { printed = append(printed, ev) })
+
+	// The returned findings must be filtered (already covered above, re-asserted here to tie the
+	// two together)...
+	var linters []string
+	for _, f := range findings {
+		linters = append(linters, f.Linter)
+	}
+	assert.NotContains(t, linters, "narrow")
+
+	// ...and so must every Done event actually handed to printFn -- the thing the real renderer
+	// consumes.
+	require.Len(t, printed, 2)
+	for _, ev := range printed {
+		for _, f := range ev.Findings {
+			assert.NotEqual(t, "narrow", f.Linter, "printFn must never see a suppressed linter's finding")
+		}
+	}
+
+	// events itself must not have been mutated in place -- drainEvents/suppressUpstreamEvents
+	// build a fresh slice instead.
+	require.Len(t, events[1].Findings, 1)
+	assert.Equal(t, "narrow", events[1].Findings[0].Linter)
 }
