@@ -133,7 +133,7 @@ var renovateConfigFiles = []string{
 }
 
 // warnIfNoRegexManager warns on stderr when none of the Renovate config files at the repo root
-// carries the regexManager `toolbox renovate config` prints (matched on its "renovate: datasource"
+// carries the regexManager `renovate config` prints (matched on its "renovate: datasource"
 // pattern) -- without it the annotations are inert.
 func warnIfNoRegexManager(stderr io.Writer, configPath string) {
 	repoRoot := filepath.Dir(filepath.Dir(configPath))
@@ -142,7 +142,7 @@ func warnIfNoRegexManager(stderr io.Writer, configPath string) {
 			return
 		}
 	}
-	_, _ = fmt.Fprintln(stderr, "warning: no Renovate regexManager found for the annotations; add the output of `rtunk toolbox renovate config` to your Renovate config")
+	_, _ = fmt.Fprintln(stderr, "warning: no Renovate regexManager found for the annotations; add the output of `rtunk renovate config` to your Renovate config")
 }
 
 // renovateReport summarizes what `rtunk renovate annotate` did.
