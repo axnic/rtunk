@@ -357,9 +357,11 @@ resolution, used by both the execution engine and the action runner.
 ## Declared-but-inert catalog fields
 
 **Status**: accepted — implement (each field below, to its stated intended behavior). `run_timeout`,
-`disable_upstream`, `prepare_run`, and `max_concurrency` are done (v0.11 catalog-fidelity-execution
-plan); the remainder (`suggest_if`, `is_security`, `health_checks`, `extra_packages`, `output_type`)
-are tracked separately (v0.11 catalog-fidelity — installs/suggestions plan).
+`disable_upstream`, `prepare_run`, `max_concurrency` (v0.11 catalog-fidelity-execution plan), and
+`suggest_if`, `is_security`, `health_checks`, `extra_packages` (v0.11 catalog-fidelity —
+installs/suggestions plan) are all done. `output_type` (action-level, the one remaining field from
+the original survey) is not part of either plan or of ROADMAP v0.11's own checklist — left as its
+own future follow-up.
 
 Beyond the fields already covered above (version range, platform restriction, fix prompt/verb, and
 the two caching opt-outs), the real catalog declares a further set of fields on commands, tools, and
@@ -370,7 +372,10 @@ the full field-by-field index with catalog occurrence counts.
 
 - **`suggest_if` (linter-level, the single most common of these fields in the real catalog)**:
   intended behavior — drive a "suggested linters" surface (e.g. onboarding/listing output) that
-  recommends enabling a matching linter when its declared condition holds. **(maintainability)**
+  recommends enabling a matching linter when its declared condition holds. **Implemented (v0.11
+  catalog-fidelity — installs/suggestions plan)** — `rtunk linters list`'s Available bucket now
+  honors all 3 real values (`files_present`, `config_present` via `DirectConfigs` presence, `never`);
+  unset keeps the pre-existing files-matched default for backward compatibility.
 - **`run_timeout` (linter-level)**: intended behavior — enforce a maximum run time for that linter's
   commands, failing the invocation if exceeded, instead of relying only on whatever general execution
   timeout (if any) applies uniformly. **Implemented (v0.11 catalog-fidelity-execution plan)** — wraps
@@ -378,7 +383,10 @@ the full field-by-field index with catalog occurrence counts.
   correctly surfaces as a `Failed` event on every command shape, not only the stdin-formatter path.
 - **`is_security` (command-level, common across the real catalog's security/vulnerability scanners)**:
   intended behavior — tag that command's findings as security-category, so filtering/display can
-  distinguish them from an ordinary linter's findings. **(compatibility)**
+  distinguish them from an ordinary linter's findings. **Implemented (v0.11 catalog-fidelity —
+  installs/suggestions plan)** — `output.ApplyIsSecurity` (mirrors `ApplyIssueURL`'s post-parse
+  shape) tags every finding; surfaced as a `[security]` marker in human output, a `security` field
+  in JSON, and a `properties.tags: ["security"]` on the matching rule in SARIF.
 - **`disable_upstream` (command-level)**: intended behavior — when both an overlap-marked command and
   the generic linter it supersedes are enabled, suppress the superseded one's duplicate findings on
   the same signal. **Implemented (v0.11 catalog-fidelity-execution plan)** — modeled as `[]string` on
@@ -403,10 +411,17 @@ the full field-by-field index with catalog occurrence counts.
   the same linter are capped fully independently of each other.
 - **`health_checks` (tool-level)**: intended behavior — proactively verify an installed tool actually
   works (run a declared version-check invocation) as part of provisioning it, instead of only
-  discovering a broken install when a linter command using it fails at run time. **(maintainability)**
+  discovering a broken install when a linter command using it fails at run time. **Implemented
+  (v0.11 catalog-fidelity — installs/suggestions plan)** — runs once per tool per `engine.Run` call,
+  right after its shim is resolved and before any linter referencing it can use it; a non-zero exit
+  fails resolution for every linter sharing that tool, not just whichever one triggered the check.
 - **`extra_packages` (tool-level)**: intended behavior — install declared companion packages alongside
-  a tool's main package as part of provisioning it. **(correctness, inferred impact — not observed
-  against a real tool declaring this)**
+  a tool's main package as part of provisioning it. **Implemented (v0.11 catalog-fidelity —
+  installs/suggestions plan)** — every one of the 6 runtime package installers now installs the main
+  package and every extra (each independently version-pinned, `name@version`) into one shared
+  install tree via a single atomic `Finalize`, avoiding a real landmine (`install.Finalize`'s
+  rename-based caching would otherwise silently no-op a second install into an already-finalized
+  directory).
 - **`output_type` (action-level)**: present on a small number of actions in the real catalog; not
   investigated further — flagged for completeness, intended behavior unconfirmed. **(inferred,
   unconfirmed)**
