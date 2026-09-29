@@ -9,9 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	goruntime "runtime"
 	"strings"
 	"time"
+
+	"github.com/0xAX/notificator"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 	"github.com/xunleii/rtunk/pkg/trunk/download"
@@ -125,18 +126,14 @@ func notifyOnError(action config.Action) bool {
 	return action.NotifyOnError == nil || *action.NotifyOnError
 }
 
+// notifier sends the native OS notification -- darwin (osascript/terminal-notifier), linux
+// (notify-send), and windows (SnoreToast) are each handled by the notificator package itself.
+var notifier = notificator.New(notificator.Options{AppName: "rtunk"})
+
 // notify is a best-effort native notification -- failures are silently swallowed, since a
 // notification that can't be shown must never fail the action run that triggered it.
 func notify(title, body string) {
-	switch goruntime.GOOS {
-	case "darwin":
-		script := fmt.Sprintf("display notification %q with title %q", body, title)
-		_ = exec.Command("osascript", "-e", script).Run()
-	case "linux":
-		if path, err := exec.LookPath("notify-send"); err == nil {
-			_ = exec.Command(path, title, body).Run()
-		}
-	}
+	_ = notifier.Push(title, body, "", notificator.UR_NORMAL)
 }
 
 // Run executes action's Run string once: substituting template vars, resolving its Runtime/
