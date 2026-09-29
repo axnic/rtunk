@@ -55,8 +55,8 @@ func TestSelectFiles_NoUpstream_DiffFromHEADAndUntracked(t *testing.T) {
 
 	write(t, dir, "a.txt", "a2")
 	git(t, dir, "add", "a.txt")                                // staged
-	write(t, dir, "b.txt", "b2")                                // unstaged
-	write(t, dir, "new.txt", "n")                               // untracked
+	write(t, dir, "b.txt", "b2")                               // unstaged
+	write(t, dir, "new.txt", "n")                              // untracked
 	require.NoError(t, os.Remove(filepath.Join(dir, "c.txt"))) // deleted: not selected
 
 	files, err := selectFiles(dir, "")
@@ -73,7 +73,7 @@ func TestSelectFiles_NoUpstream_NoCommitsYet(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "-b", "main")
 	write(t, dir, "a.txt", "a")
-	git(t, dir, "add", "a.txt") // staged
+	git(t, dir, "add", "a.txt")   // staged
 	write(t, dir, "new.txt", "n") // untracked
 
 	files, err := selectFiles(dir, "")
@@ -108,6 +108,21 @@ func TestSelectFiles_From(t *testing.T) {
 
 	_, err = selectFiles(dir, "nope")
 	assert.Error(t, err)
+}
+
+// TestResolvePaths_DropsSymlinks: an untracked symlink (e.g. a root-level `.markdownlint.yaml` ->
+// `.trunk/configs/.markdownlint.yaml` convention) must not reach formatters -- prettier refuses an
+// explicit symlink target outright, and the link's real content is already selected separately
+// under its target path.
+func TestResolvePaths_DropsSymlinks(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "new.txt", "n") // untracked, alongside the symlink
+	require.NoError(t, os.Symlink(filepath.Join(dir, "a.txt"), filepath.Join(dir, "link.txt")))
+
+	files, err := resolvePaths(dir, nil, "")
+	require.NoError(t, err)
+	assert.NotContains(t, files, filepath.Join(dir, "link.txt"))
+	assert.Contains(t, files, filepath.Join(dir, "new.txt"))
 }
 
 func TestExpandPaths(t *testing.T) {

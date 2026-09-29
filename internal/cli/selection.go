@@ -34,10 +34,25 @@ func resolvePaths(repoRoot string, paths []string, from string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
+	files = dropSymlinks(files)
 	if len(files) == 0 {
 		return nil, errNoFiles
 	}
 	return files, nil
+}
+
+// dropSymlinks removes symlinks from files: linters like prettier refuse an explicit symlink
+// target outright, and a tracked symlink's real content is already selected separately under its
+// target path, so nothing is lost by skipping the link itself.
+func dropSymlinks(files []string) []string {
+	out := files[:0]
+	for _, f := range files {
+		if info, err := os.Lstat(f); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // gitOut runs git in dir and returns its trimmed stdout split by line (nil when empty).
