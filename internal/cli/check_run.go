@@ -41,6 +41,7 @@ type checkRunCmd struct {
 	VerifyStable      bool   `help:"With --format-before-check, verify the formatting result is stable instead of a single pass."`
 	Filter            string `help:"Comma-separated linter id allow-list, or --filter=-id,-id... deny-list (trunk compatibility)."`
 	Exclude           string `help:"Comma-separated linter id deny-list; shorthand for an inverse --filter (trunk compatibility)."`
+	SecurityOnly      bool   `help:"Run only commands tagged is_security: true, skipping every other check."`
 	// NoFix is accepted for trunk compatibility and has no effect: check's default (neither
 	// --fix nor --format-before-check) already applies no fix. Note: --fix wins if both are
 	// given.
@@ -134,7 +135,9 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 
 	started := time.Now()
 	r := newRenderer(c.Format, stdout, stderr, render.Check, progressOpts{c.NoProgress, c.ASCII, c.LiveHeight})
-	checkPredicate := func(cmd config.Command) bool { return !cmd.Formatter && !cmd.InPlace }
+	checkPredicate := func(cmd config.Command) bool {
+		return !cmd.Formatter && !cmd.InPlace && (!c.SecurityOnly || cmd.IsSecurity)
+	}
 	events, err := engine.Run(context.Background(), env, files, checkPredicate)
 	if err != nil {
 		return err

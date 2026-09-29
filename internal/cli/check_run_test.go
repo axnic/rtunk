@@ -45,6 +45,40 @@ func TestCheckRunCmd_SkipsUnsupportedFormats(t *testing.T) {
 	assert.NotContains(t, stderr, "formatter-only", "formatter-only produces no event at all")
 }
 
+// TestCheckRunCmd_SecurityOnly: --security-only keeps commands tagged is_security: true and
+// drops every other command entirely -- "secure" always reports a finding (pass_fail, exit 1,
+// is_security: true), "plain" always reports one too (pass_fail, exit 1, no is_security tag).
+func TestCheckRunCmd_SecurityOnly(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"secure", "plain"}, `    - name: secure
+      description: Security linter
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+          is_security: true
+    - name: plain
+      description: Non-security linter
+      files: [ALL]
+      commands:
+        - name: check
+          run: "false"
+          output: pass_fail
+`)
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "work"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "work", "file.txt"), []byte("hi\n"), 0o644))
+
+	cacheDir := t.TempDir()
+	stdout, _, err := run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"))
+	require.Error(t, err)
+	assert.Contains(t, stdout, "work/file.txt  (2)\n", "without --security-only, both linters report")
+
+	stdout, _, err = run2(t, "--config", cfgPath, "--cache-dir", cacheDir, "check", filepath.Join(repoRoot, "work"), "--security-only")
+	require.Error(t, err)
+	assert.Contains(t, stdout, "work/file.txt  (1)\n  0:0  high    file did not pass  secure [security]\n")
+	assert.NotContains(t, stdout, "plain", "--security-only must drop the non-security linter entirely")
+}
+
 // writeLinterFixture builds a trunk.yaml + local plugin source under t.TempDir(), laid out the
 // way findTrunkYAML/checkRunCmd expect a real repo (<repoRoot>/.trunk/trunk.yaml, repoRoot two
 // directories up): enabled lists the linter ids to turn on, and lintYAML is the raw `lint:
