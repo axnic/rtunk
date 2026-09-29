@@ -3,6 +3,13 @@
 // presentation state only (grouping, counting); it makes no decision about what to run or what
 // the exit code is. NewLive is a decorator over any of them: on a terminal it draws a live area on
 // stderr while the run progresses and erases it before the inner renderer writes its report. See docs/superpowers/specs/2026-09-26-v0.9.1-event-stream-plain-renderer-design.md.
+//
+// This is deliberately one package, not one per format: human.go/json.go/sarif.go already are
+// format-specific files behind the common Renderer interface below, sharing an unexported base
+// (base.go) for the bookkeeping every format needs. Splitting each into its own importable
+// package would force base to become exported API surface for no consumer benefit -- nothing
+// outside this package needs a format as an independently importable unit; New dispatches
+// entirely at compile time via a private switch on Options.Format, not a runtime plugin registry.
 package render
 
 import (
