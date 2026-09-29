@@ -97,7 +97,7 @@ var supportedOutputFormats = map[string]bool{
 	"sarif": true, "sarif_uri": true, "pass_fail": true,
 	"actionlint": true, "bandit": true, "buildifier": true, "cfnlint": true,
 	"eslint": true, "hadolint": true, "haml_lint": true, "markdownlint": true,
-	"pylint": true, "rubocop": true, "stylelint": true, "taplo": true, "regex": true,
+	"pylint": true, "rubocop": true, "shellcheck": true, "stylelint": true, "taplo": true, "regex": true,
 	// rewrite/shfmt: real catalog formatter commands (gofmt, black, rustfmt, isort, autopep8,
 	// rubocop's fix-layout, stylelint's fix) with nothing to parse -- success is decided purely
 	// by ErrorCodes; the caller learns what changed via Event.ChangedFiles instead.
@@ -885,6 +885,8 @@ func runBatch(ctx context.Context, j job, repoRoot string, inPlaceMu *sync.Mutex
 		findings, err = output.ParsePylint([]byte(out), j.linterName)
 	case "rubocop":
 		findings, err = output.ParseRubocop([]byte(out), j.linterName)
+	case "shellcheck":
+		findings, err = output.ParseShellcheck([]byte(out), j.linterName)
 	case "stylelint":
 		findings, err = output.ParseStylelint([]byte(out), j.linterName)
 	case "taplo":
