@@ -54,4 +54,4 @@ func installPhpPackage(_, pkgInstallDir, pkg, version string, extra []string) er
 	return install.Finalize(tmpDir, pkgInstallDir)
 }
 
-var phpRuntime = Runtime{Install: installPhpPackage, Datasource: "packagist"}
+var phpRuntime = Runtime{Install: installPhpPackage}

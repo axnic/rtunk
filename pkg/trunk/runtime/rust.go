@@ -68,4 +68,4 @@ func installRustPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 	return install.Finalize(tmpDir, pkgInstallDir)
 }
 
-var rustRuntime = Runtime{Install: installRustPackage, Datasource: "crate"}
+var rustRuntime = Runtime{Install: installRustPackage}

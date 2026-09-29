@@ -1,7 +1,8 @@
 // Package runtime holds everything rtunk knows about one runtime type (go, node, python, ...):
-// how a package is installed through that runtime's own package manager, what extra environment
-// its shims need, and which Renovate datasource tracks its packages. pkg/trunk/download and
-// pkg/trunk/renovate consult it through Lookup and know no runtime by name.
+// how a package is installed through that runtime's own package manager, and what extra
+// environment its shims need. pkg/trunk/download consults it through Lookup and knows no runtime
+// by name. Which Renovate datasource tracks a runtime's packages is pkg/renovate's own concern,
+// not this package's -- see that package's runtimeDatasources.
 package runtime
 
 // Runtime is everything rtunk knows about one runtime type. A nil func / empty string means "not
@@ -20,11 +21,6 @@ type Runtime struct {
 	// own runtime_environment/linter_environment provides -- a value only known once the package
 	// is on disk, which those templates can't express (python's PYTHONPATH only).
 	ShimEnv func(installDir string) ([]string, error)
-	// Datasource is the Renovate datasource tracking this runtime's packages; "" means none.
-	Datasource string
-	// ExtractVersion is the Renovate extractVersion regex, when the datasource's versions carry
-	// something a trunk.yaml pin doesn't (go's "v" prefix only).
-	ExtractVersion string
 }
 
 // registry is keyed by config.Runtime.Type. Types absent here (java, ...) are unsupported.

@@ -87,9 +87,8 @@ func pythonSitePackages(installDir string) (string, error) {
 }
 
 var pythonRuntime = Runtime{
-	Install:    installPythonPackage,
-	ShimEnv:    pythonShimEnv,
-	Datasource: "pypi",
+	Install: installPythonPackage,
+	ShimEnv: pythonShimEnv,
 }
 
 func pythonShimEnv(installDir string) ([]string, error) {

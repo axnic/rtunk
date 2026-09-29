@@ -10,7 +10,6 @@ import (
 	"regexp"
 
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/runtime"
 )
 
 // Annotation is a resolved Renovate regex-manager target: the datasource and dependency name
@@ -73,6 +72,22 @@ func resolveDownloadRecipe(cfg config.Config, downloadName string) (owner, repo 
 	return owner, repo, true
 }
 
+// runtimeDatasources is the Renovate datasource (+ extractVersion, when the datasource's versions
+// carry something a trunk.yaml pin doesn't) for each runtime type this package can confidently
+// annotate. A type absent here means Renovate can't track it (ruby: no datasource).
+var runtimeDatasources = map[string]Annotation{
+	"go": {
+		Datasource: "go",
+		// Go module versions are always "v"-prefixed, but a trunk.yaml pin isn't (rtunk's own
+		// installer adds the "v" back right before `go install`; see pkg/trunk/runtime/go.go).
+		ExtractVersion: `^v(?<version>.+)$`,
+	},
+	"node":   {Datasource: "npm"},
+	"python": {Datasource: "pypi"},
+	"php":    {Datasource: "packagist"},
+	"rust":   {Datasource: "crate"},
+}
+
 // resolveToolAnnotation is the Tool-source resolution shared by ForLint's bridged Tool. Tries a
 // Download recipe first, then Runtime+Package; neither present (or neither resolvable) is
 // ok=false.
@@ -85,11 +100,11 @@ func resolveToolAnnotation(cfg config.Config, tool config.Tool) (Annotation, str
 		return Annotation{Datasource: "github-releases", DepName: owner + "/" + repo}, tool.KnownGoodVersion, true
 	}
 	if tool.Runtime != "" && tool.Package != "" {
-		rt, ok := runtime.Lookup(tool.Runtime)
-		if !ok || rt.Datasource == "" {
+		ds, ok := runtimeDatasources[tool.Runtime]
+		if !ok {
 			return Annotation{}, "", false
 		}
-		return Annotation{Datasource: rt.Datasource, DepName: tool.Package, ExtractVersion: rt.ExtractVersion}, tool.KnownGoodVersion, true
+		return Annotation{Datasource: ds.Datasource, DepName: tool.Package, ExtractVersion: ds.ExtractVersion}, tool.KnownGoodVersion, true
 	}
 	return Annotation{}, "", false
 }

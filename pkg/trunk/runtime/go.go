@@ -58,7 +58,8 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, ext
 		"GOFLAGS=-modcacherw",
 	)
 	install_ := func(name, ver string) error {
-		// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see goRuntime.ExtractVersion).
+		// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see pkg/renovate's
+		// runtimeDatasources["go"].ExtractVersion, which strips it back off for Renovate).
 		if ver != "" && ver[0] >= '0' && ver[0] <= '9' {
 			ver = "v" + ver
 		}
@@ -89,10 +90,4 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, ext
 	return install.Finalize(tmpDir, pkgInstallDir)
 }
 
-var goRuntime = Runtime{
-	Install:    installGoPackage,
-	Datasource: "go",
-	// Go module versions are always "v"-prefixed, but a trunk.yaml pin isn't (installGoPackage
-	// adds the "v" back right before `go install`).
-	ExtractVersion: `^v(?<version>.+)$`,
-}
+var goRuntime = Runtime{Install: installGoPackage}

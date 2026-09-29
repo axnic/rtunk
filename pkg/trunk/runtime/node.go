@@ -100,8 +100,4 @@ func installNodePackagesFile(runtimeInstallDir, pkgInstallDir, packagesFilePath 
 	return install.Finalize(tmpDir, pkgInstallDir)
 }
 
-var nodeRuntime = Runtime{
-	Install:     installNodePackage,
-	InstallFile: installNodePackagesFile,
-	Datasource:  "npm",
-}
+var nodeRuntime = Runtime{Install: installNodePackage, InstallFile: installNodePackagesFile}
