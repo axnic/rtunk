@@ -104,9 +104,10 @@ func formatBytes(got, total int64) string {
 	return fmt.Sprintf("%.1f/"+tf+" %s", float64(got)/div, t, units[u])
 }
 
-// shortenPath cuts p to at most max runes in the middle, keeping the base name whole when possible.
-func shortenPath(p string, max int, ascii bool) string {
-	if utf8.RuneCountInString(p) <= max {
+// shortenPath cuts p to at most maxRunes runes in the middle, keeping the base name whole when
+// possible.
+func shortenPath(p string, maxRunes int, ascii bool) string {
+	if utf8.RuneCountInString(p) <= maxRunes {
 		return p
 	}
 	ell := "…"
@@ -115,9 +116,9 @@ func shortenPath(p string, max int, ascii bool) string {
 	}
 	base := p[strings.LastIndex(p, "/")+1:]
 	dir := strings.TrimSuffix(p[:len(p)-len(base)], "/")
-	avail := max - utf8.RuneCountInString(ell) - 1 - utf8.RuneCountInString(base)
+	avail := maxRunes - utf8.RuneCountInString(ell) - 1 - utf8.RuneCountInString(base)
 	if avail < 0 || dir == "" {
-		return truncate(p, max-utf8.RuneCountInString(ell)) + ell
+		return truncate(p, maxRunes-utf8.RuneCountInString(ell)) + ell
 	}
 	return truncate(dir, avail) + ell + "/" + base
 }
@@ -333,7 +334,7 @@ func pad(s string, w int) string {
 
 // batchLine is "a, b (+N)": the first two in-flight files, N the rest (omitted at 0).
 func batchLine(inflight []string) string {
-	var files []string
+	files := make([]string, 0, len(inflight))
 	for _, b := range inflight {
 		files = append(files, strings.Split(b, ", ")...)
 	}

@@ -594,7 +594,7 @@ func TestRun_RecordsUsageRegistry(t *testing.T) {
 	env := Env{Cfg: cfg, RepoRoot: repoRoot, CacheDir: cacheDir, Concurrency: 1}
 	events, err := Run(context.Background(), env, nil, notFormatter)
 	require.NoError(t, err)
-	for range events {
+	for range events { //nolint:revive // draining the channel so Run's own goroutines finish before the asserts below
 	}
 
 	entries, err := os.ReadDir(filepath.Join(filepath.Dir(root), "registry"))

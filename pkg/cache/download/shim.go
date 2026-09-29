@@ -54,9 +54,9 @@ func WriteEnvShim(path, target string, env []string) error {
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\n")
 	for _, kv := range env {
-		script.WriteString(fmt.Sprintf("export %s\n", shellQuoteAssignment(kv)))
+		_, _ = fmt.Fprintf(&script, "export %s\n", shellQuoteAssignment(kv))
 	}
-	script.WriteString(fmt.Sprintf("exec %s \"$@\"\n", shellQuote(target)))
+	_, _ = fmt.Fprintf(&script, "exec %s \"$@\"\n", shellQuote(target))
 	//nolint:gosec // a shim is a /bin/sh script the user is meant to exec; it must be executable
 	return os.WriteFile(path, []byte(script.String()), 0o755)
 }

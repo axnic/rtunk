@@ -28,7 +28,7 @@ func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	env := append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	install_ := func(name, ver string) error {
+	installOne := func(name, ver string) error {
 		args := []string{"install", "--no-document",
 			"--install-dir", tmpDir, "--bindir", filepath.Join(tmpDir, "bin"), name}
 		if ver != "" {
@@ -42,11 +42,11 @@ func installRubyPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 		}
 		return nil
 	}
-	if err := install_(pkg, version); err != nil {
+	if err := installOne(pkg, version); err != nil {
 		return err
 	}
 	for _, e := range extra {
-		if err := install_(e, ""); err != nil {
+		if err := installOne(e, ""); err != nil {
 			return err
 		}
 	}

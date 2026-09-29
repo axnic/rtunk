@@ -75,8 +75,9 @@ func sarifLevel(s string) string {
 func (r *sarifRenderer) Close(s Summary) error {
 	rules := []sarifRule{}
 	ruleIdx := map[string]int{}
-	results := []sarifResult{}
-	for _, f := range r.sortedFindings() {
+	sorted := r.sortedFindings()
+	results := make([]sarifResult, 0, len(sorted))
+	for _, f := range sorted {
 		id := linterRule(f)
 		i, seen := ruleIdx[id]
 		if !seen {
@@ -102,8 +103,9 @@ func (r *sarifRenderer) Close(s Summary) error {
 		})
 	}
 
-	notes := []sarifNotification{}
-	for _, f := range r.sortedFailures(s.Failures...) {
+	failures := r.sortedFailures(s.Failures...)
+	notes := make([]sarifNotification, 0, len(failures))
+	for _, f := range failures {
 		notes = append(notes, sarifNotification{Level: "error", Message: sarifMessage{Text: f.Linter + ": " + f.Err}})
 	}
 

@@ -65,18 +65,18 @@ func TestStartNilWarnDoesNotPanic(t *testing.T) {
 
 func TestRepoKeyResolvesSymlinks(t *testing.T) {
 	cache := t.TempDir()
-	real := t.TempDir()
+	target := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
-	require.NoError(t, os.Symlink(real, link))
+	require.NoError(t, os.Symlink(target, link))
 
 	w, _ := start(t, cache, link, "check")
 	require.NotNil(t, w)
 	w.End(false)
-	w, _ = start(t, cache, real, "fmt")
+	w, _ = start(t, cache, target, "fmt")
 	require.NotNil(t, w)
 	w.End(false)
 
-	for _, root := range []string{link, real} {
+	for _, root := range []string{link, target} {
 		runs, err := List(cache, root)
 		require.NoError(t, err)
 		assert.Len(t, runs, 2, "repo root %s", root)

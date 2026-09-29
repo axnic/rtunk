@@ -57,7 +57,7 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, ext
 		"GOTOOLCHAIN=local",
 		"GOFLAGS=-modcacherw",
 	)
-	install_ := func(name, ver string) error {
+	installOne := func(name, ver string) error {
 		// Go module versions are "v"-prefixed; trunk.yaml pins aren't (see pkg/renovate's
 		// runtimeDatasources["go"].ExtractVersion, which strips it back off for Renovate).
 		if ver != "" && ver[0] >= '0' && ver[0] <= '9' {
@@ -72,7 +72,7 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, ext
 		}
 		return nil
 	}
-	if err := install_(pkg, version); err != nil {
+	if err := installOne(pkg, version); err != nil {
 		return err
 	}
 	// go modules require an explicit version always present ("go install pkg" with no "@version"
@@ -83,7 +83,7 @@ func installGoPackage(runtimeInstallDir, pkgInstallDir, pkg, version string, ext
 		if !ok {
 			name, ver = e, "latest"
 		}
-		if err := install_(name, ver); err != nil {
+		if err := installOne(name, ver); err != nil {
 			return err
 		}
 	}

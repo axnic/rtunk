@@ -17,7 +17,7 @@ import (
 
 // runLogged runs action with a real run log attached and returns what the log recorded, plus
 // Run's own results and streams.
-func runLogged(t *testing.T, action config.Action, repoRoot string) (logged []runlog.Event, res actions.Result, runErr error, stdout, stderr string) {
+func runLogged(t *testing.T, action config.Action, repoRoot string) (logged []runlog.Event, res actions.Result, stdout, stderr string, runErr error) {
 	t.Helper()
 	cache := t.TempDir()
 	w := runlog.Start(runlog.StartOpts{CacheDir: cache, RepoRoot: repoRoot, Cmd: "actions-run", Warn: os.Stderr})
@@ -32,7 +32,7 @@ func runLogged(t *testing.T, action config.Action, repoRoot string) (logged []ru
 	require.Len(t, runs, 1)
 	logged, err = runlog.Load(runs[0].Path)
 	require.NoError(t, err)
-	return logged, res, runErr, out.String(), errOut.String()
+	return logged, res, out.String(), errOut.String(), runErr
 }
 
 func kinds(events []runlog.Event) []string {
@@ -47,7 +47,7 @@ func TestRun_LogsInvocationOutputAndExit(t *testing.T) {
 	repoRoot := t.TempDir()
 	action := config.Action{ID: "greet", Run: "echo hi; echo oops >&2"}
 
-	logged, res, err, stdout, stderr := runLogged(t, action, repoRoot)
+	logged, res, stdout, stderr, err := runLogged(t, action, repoRoot)
 	require.NoError(t, err)
 
 	assert.Equal(t, "hi\n", stdout, "the live stream must still receive everything")
@@ -67,7 +67,7 @@ func TestRun_LogsInvocationOutputAndExit(t *testing.T) {
 }
 
 func TestRun_LogsNonZeroExit(t *testing.T) {
-	logged, res, err, _, _ := runLogged(t, config.Action{ID: "boom", Run: "exit 3"}, t.TempDir())
+	logged, res, _, _, err := runLogged(t, config.Action{ID: "boom", Run: "exit 3"}, t.TempDir())
 	require.Error(t, err)
 	assert.Equal(t, 3, res.ExitCode)
 	require.Equal(t, []string{"run_start", "invocation", "exit", "run_end"}, kinds(logged))
@@ -77,7 +77,7 @@ func TestRun_LogsNonZeroExit(t *testing.T) {
 }
 
 func TestRun_LogsFailureBeforeExecAsLinterEnd(t *testing.T) {
-	logged, _, err, _, _ := runLogged(t, config.Action{ID: "bad", Run: "echo ${bogus}"}, t.TempDir())
+	logged, _, _, _, err := runLogged(t, config.Action{ID: "bad", Run: "echo ${bogus}"}, t.TempDir())
 	require.Error(t, err)
 	require.Equal(t, []string{"run_start", "linter_end", "run_end"}, kinds(logged), "nothing was launched, so no invocation")
 	assert.Equal(t, "bad", logged[1].Linter)
@@ -97,7 +97,7 @@ func TestRun_NilLogStillWorks(t *testing.T) {
 // attached stdout/stderr are wrapped writers, so exec waits on copy goroutines until WaitDelay.
 func TestRun_LogBackgroundChildDoesNotBlock(t *testing.T) {
 	start := time.Now()
-	logged, res, err, stdout, _ := runLogged(t, config.Action{ID: "bg", Run: "sleep 3 & echo hi"}, t.TempDir())
+	logged, res, stdout, _, err := runLogged(t, config.Action{ID: "bg", Run: "sleep 3 & echo hi"}, t.TempDir())
 	require.NoError(t, err)
 	assert.Less(t, time.Since(start), 2800*time.Millisecond)
 	assert.Equal(t, 0, res.ExitCode)

@@ -31,7 +31,7 @@ func installPhpPackage(_, pkgInstallDir, pkg, version string, extra []string) er
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	install_ := func(name, ver string) error {
+	installOne := func(name, ver string) error {
 		spec := name
 		if ver != "" {
 			spec = name + ":" + ver
@@ -43,11 +43,11 @@ func installPhpPackage(_, pkgInstallDir, pkg, version string, extra []string) er
 		}
 		return nil
 	}
-	if err := install_(pkg, version); err != nil {
+	if err := installOne(pkg, version); err != nil {
 		return err
 	}
 	for _, e := range extra {
-		if err := install_(e, ""); err != nil {
+		if err := installOne(e, ""); err != nil {
 			return err
 		}
 	}

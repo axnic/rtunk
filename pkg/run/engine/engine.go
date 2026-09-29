@@ -1029,7 +1029,9 @@ func runStdinFormatterFile(ctx context.Context, j job, f, pluginDir, cwdDir stri
 		return false, nil
 	}
 	if !j.dryRun {
-		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		// 0600: os.WriteFile only applies this mode when creating a new file -- an existing target
+		// (the normal case) keeps its own permissions untouched.
+		if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
 			return false, err
 		}
 	}

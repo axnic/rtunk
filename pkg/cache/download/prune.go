@@ -10,7 +10,7 @@ import (
 // Prune removes every cache entry not referenced by any registry entry whose repository still
 // exists on disk. A repository that no longer exists is itself dropped from the registry, along
 // with everything it alone was keeping alive -- there is no age or duration to pick, per
-// ROADMAP.md: staleness is "no live repository needs this," not "unused for N days."
+// ROADMAP.md: staleness is "no live repository needs this," not "unused for N days.".
 func Prune(cacheDir string) error {
 	root, err := Root(cacheDir)
 	if err != nil {

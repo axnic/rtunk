@@ -55,7 +55,9 @@ func ApplyInlineFixes(findings []output.Finding) ([]string, error) {
 		if !applied {
 			continue
 		}
-		if err := os.WriteFile(file, out, 0o644); err != nil {
+		// 0600: os.WriteFile only applies this mode when creating a new file -- an existing target
+		// (the normal case) keeps its own permissions untouched.
+		if err := os.WriteFile(file, out, 0o600); err != nil {
 			return changed, err
 		}
 		changed = append(changed, file)

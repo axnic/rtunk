@@ -108,8 +108,8 @@ func repoKey(repoRoot string) string {
 	if abs, err := filepath.Abs(repoRoot); err == nil {
 		repoRoot = abs
 		// Physical path, so /tmp and /private/tmp (macOS) key the same repo; keep abs if it cannot resolve.
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			repoRoot = real
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			repoRoot = resolved
 		}
 	}
 	sum := sha256.Sum256([]byte(repoRoot))

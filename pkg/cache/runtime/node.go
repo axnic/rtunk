@@ -34,7 +34,7 @@ func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once install.Finalize renames it into pkgInstallDir
 
 	env := append(os.Environ(), "PATH="+filepath.Join(runtimeInstallDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	install_ := func(name, ver string) error {
+	installOne := func(name, ver string) error {
 		spec := name
 		if ver != "" {
 			spec = name + "@" + ver
@@ -48,14 +48,14 @@ func installNodePackage(runtimeInstallDir, pkgInstallDir, pkg, version string, e
 		}
 		return nil
 	}
-	if err := install_(pkg, version); err != nil {
+	if err := installOne(pkg, version); err != nil {
 		return err
 	}
 	// Every real catalog entry is either a bare unpinned name or already carries npm's own
 	// "@scope/pkg" syntax embedded in the string -- passed through as name with version always ""
-	// so install_ uses it bare, exactly as-is.
+	// so installOne uses it bare, exactly as-is.
 	for _, e := range extra {
-		if err := install_(e, ""); err != nil {
+		if err := installOne(e, ""); err != nil {
 			return err
 		}
 	}

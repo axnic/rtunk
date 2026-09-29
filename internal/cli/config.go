@@ -71,7 +71,7 @@ func resolveConfig(configPath, cacheDir string, all bool) (config.Config, error)
 func checkDeprecations(cfg config.Config, stderr io.Writer) error {
 	warnings, err := cfg.CheckDeprecations()
 	for _, w := range warnings {
-		fmt.Fprintln(stderr, "rtunk: warning:", w)
+		_, _ = fmt.Fprintln(stderr, "rtunk: warning:", w)
 	}
 	return err
 }
