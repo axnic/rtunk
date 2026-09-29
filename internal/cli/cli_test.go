@@ -42,9 +42,9 @@ func TestConfigPrint_All(t *testing.T) {
 	assert.Contains(t, stdout, "shellcheck")
 }
 
-func TestFindTrunkYAML(t *testing.T) {
+func TestFindConfig(t *testing.T) {
 	// EvalSymlinks: on macOS, t.TempDir() lives under /var, a symlink to /private/var, and
-	// os.Getwd() (which findTrunkYAML calls) returns the resolved physical path -- normalize here
+	// os.Getwd() (which findConfig calls) returns the resolved physical path -- normalize here
 	// so the two sides of the comparison below agree.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -59,12 +59,12 @@ func TestFindTrunkYAML(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
 	require.NoError(t, os.Chdir(sub))
 
-	found, err := findTrunkYAML()
+	found, err := findConfig()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(root, ".trunk", "trunk.yaml"), found)
 }
 
-func TestFindTrunkYAML_BoundedByGitRoot(t *testing.T) {
+func TestFindConfig_BoundedByGitRoot(t *testing.T) {
 	// trunk.yaml sits outside the git repo; the walk must stop at the repo root and not fall
 	// through to it, or a subdirectory of some unrelated repo could pick up a stranger's config.
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -82,21 +82,21 @@ func TestFindTrunkYAML_BoundedByGitRoot(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
 	require.NoError(t, os.Chdir(sub))
 
-	_, err = findTrunkYAML()
+	_, err = findConfig()
 	assert.Error(t, err)
 }
 
-func TestFindTrunkYAML_NotFound(t *testing.T) {
+func TestFindConfig_NotFound(t *testing.T) {
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
 	require.NoError(t, os.Chdir(t.TempDir()))
 
-	_, err = findTrunkYAML()
+	_, err = findConfig()
 	assert.Error(t, err)
 }
 
-func TestFindTrunkYAML_PrefersRtunkYAMLOverTrunkYAML(t *testing.T) {
+func TestFindConfig_PrefersRtunkYAMLOverTrunkYAML(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rtunk"), 0o755))
@@ -109,12 +109,12 @@ func TestFindTrunkYAML_PrefersRtunkYAMLOverTrunkYAML(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
 	require.NoError(t, os.Chdir(root))
 
-	found, err := findTrunkYAML()
+	found, err := findConfig()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(root, ".rtunk", "rtunk.yaml"), found)
 }
 
-func TestFindTrunkYAML_FindsRtunkYAMLAlone(t *testing.T) {
+func TestFindConfig_FindsRtunkYAMLAlone(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rtunk"), 0o755))
@@ -125,12 +125,12 @@ func TestFindTrunkYAML_FindsRtunkYAMLAlone(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
 	require.NoError(t, os.Chdir(root))
 
-	found, err := findTrunkYAML()
+	found, err := findConfig()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(root, ".rtunk", "rtunk.yaml"), found)
 }
 
-func TestFindTrunkYAML_FallsBackToTrunkYAMLWhenNoRtunkYAML(t *testing.T) {
+func TestFindConfig_FallsBackToTrunkYAMLWhenNoRtunkYAML(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".trunk"), 0o755))
@@ -141,7 +141,7 @@ func TestFindTrunkYAML_FallsBackToTrunkYAMLWhenNoRtunkYAML(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.Chdir(cwd)) })
 	require.NoError(t, os.Chdir(root))
 
-	found, err := findTrunkYAML()
+	found, err := findConfig()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(root, ".trunk", "trunk.yaml"), found)
 }

@@ -22,7 +22,7 @@ func initGitRepo(t *testing.T) string {
 
 // chdir switches the test process's cwd to dir for the duration of the test, restoring the
 // original cwd via t.Cleanup -- init/deinit resolve their own repo root from os.Getwd(), same as
-// findTrunkYAML already does (see cli_test.go's own TestFindTrunkYAML for the identical pattern).
+// findConfig already does (see cli_test.go's own TestFindConfig for the identical pattern).
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	cwd, err := os.Getwd()
@@ -72,14 +72,14 @@ func TestInitCmd_ForceOverwrites(t *testing.T) {
 	assert.Equal(t, initScaffold, string(data))
 }
 
-// TestInitCmd_ScaffoldIsActuallyFoundByFindTrunkYAML is the direct proof Task 1's fix closes the
+// TestInitCmd_ScaffoldIsActuallyFoundByFindConfig is the direct proof Task 1's fix closes the
 // gap this whole feature exists for: NOT a config-resolution test (which would need to fetch the
 // scaffold's own real https://github.com/trunk-io/plugins source over the network -- never done in
 // a test), just confirming the freshly-scaffolded file is actually locatable afterward.
-func TestInitCmd_ScaffoldIsActuallyFoundByFindTrunkYAML(t *testing.T) {
+func TestInitCmd_ScaffoldIsActuallyFoundByFindConfig(t *testing.T) {
 	repo := initGitRepo(t)
 	// EvalSymlinks: on macOS, t.TempDir() lives under /var, a symlink to /private/var, and
-	// os.Getwd() (which findTrunkYAML calls) returns the resolved physical path -- normalize here
+	// os.Getwd() (which findConfig calls) returns the resolved physical path -- normalize here
 	// so the two sides of the comparison below agree.
 	repo, err := filepath.EvalSymlinks(repo)
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestInitCmd_ScaffoldIsActuallyFoundByFindTrunkYAML(t *testing.T) {
 	_, stderr, err := run2(t, "init")
 	require.NoError(t, err, "stderr: %s", stderr)
 
-	found, err := findTrunkYAML()
+	found, err := findConfig()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(repo, ".rtunk", "rtunk.yaml"), found)
 }

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"strings"
 
@@ -11,59 +10,6 @@ import (
 	"github.com/xunleii/rtunk/pkg/renovate"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 )
-
-// lintersCmd is `rtunk linters`, symmetric with `rtunk actions {list,enable,disable}`.
-type lintersCmd struct {
-	List    checkListCmd    `cmd:"" default:"withargs" help:"List all linters available for the current configuration."`
-	Enable  checkEnableCmd  `cmd:"" help:"Enable one or more linters."`
-	Disable checkDisableCmd `cmd:"" help:"Disable one or more linters."`
-}
-
-// checkListCmd is `rtunk linters list`: enabled linters (with their pinned version), the ones
-// available for this repo (matching at least one file), and with --all the rest.
-type checkListCmd struct {
-	All    bool   `help:"Also list the linters that match no file in this repository."`
-	Format string `enum:"human,json" default:"human" help:"Output format: human or json."`
-}
-
-func (c *checkListCmd) Run(cli *CLI, stdout io.Writer) error {
-	// all=true (config.ResolveAll): the full catalog, not only the enabled+used subset.
-	cfg, err := resolveConfig(cli.Config, cli.CacheDir, true)
-	if err != nil {
-		return err
-	}
-	repoRoot, err := logsRepoRoot(cli)
-	if err != nil {
-		return err
-	}
-	files, err := repoFiles(repoRoot)
-	if err != nil {
-		return err
-	}
-	return writeListing(stdout, buildLintersList(cfg, repoRoot, files), c.Format, "linter", "linters enable", c.All)
-}
-
-// checkEnableCmd is `rtunk linters enable <id>[@version]...`.
-type checkEnableCmd struct {
-	ID []string `arg:"" help:"Linter id(s) to enable, optionally @version."`
-}
-
-func (c *checkEnableCmd) Run(cli *CLI) error {
-	return editEnabled(cli, "lint", func(existing []string) []string {
-		return addEnabled(existing, c.ID)
-	})
-}
-
-// checkDisableCmd is `rtunk linters disable <id>...`.
-type checkDisableCmd struct {
-	ID []string `arg:"" help:"Linter id(s) to disable."`
-}
-
-func (c *checkDisableCmd) Run(cli *CLI) error {
-	return editEnabled(cli, "lint", func(existing []string) []string {
-		return removeEnabled(existing, c.ID)
-	})
-}
 
 // editEnabled loads the trunk.yaml in effect, applies edit to category's (here always "lint")
 // enabled: list -- creating the category/enabled nodes if entirely absent, a valid trunk.yaml
@@ -76,7 +22,7 @@ func (c *checkDisableCmd) Run(cli *CLI) error {
 func editEnabled(cli *CLI, category string, edit func([]string) []string) error {
 	configPath := cli.Config
 	if configPath == "" {
-		found, err := findTrunkYAML()
+		found, err := findConfig()
 		if err != nil {
 			return err
 		}

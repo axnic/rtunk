@@ -46,7 +46,7 @@ func (c *fmtCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error
 	}
 	configPath := cli.Config
 	if configPath == "" {
-		found, err := findTrunkYAML()
+		found, err := findConfig()
 		if err != nil {
 			return err
 		}

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,19 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeScratchTrunkYAML writes content into a fresh git repo's root (actions/git-hooks commands
-// resolve repoRoot via `git rev-parse --show-toplevel`, so callers exercising those code paths
-// need a real repo here, not a bare tempdir).
-func writeScratchTrunkYAML(t *testing.T, content string) string {
-	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, exec.Command("git", "-C", dir, "init", "-q").Run())
-	path := filepath.Join(dir, "trunk.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
-	return path
-}
-
-func TestCheckEnableCmd_AddsAndPreservesComments(t *testing.T) {
+func TestLintersEnableCmd_AddsAndPreservesComments(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n# a leading comment, must survive\nlint:\n  enabled: []\n")
 
 	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
@@ -35,7 +22,7 @@ func TestCheckEnableCmd_AddsAndPreservesComments(t *testing.T) {
 	assert.Contains(t, string(got), "shellcheck")
 }
 
-func TestCheckEnableCmd_Idempotent(t *testing.T) {
+func TestLintersEnableCmd_Idempotent(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck]\n")
 
 	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
@@ -46,7 +33,7 @@ func TestCheckEnableCmd_Idempotent(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(string(got), "shellcheck"))
 }
 
-func TestCheckEnableCmd_VersionPinReplacesOldPin(t *testing.T) {
+func TestLintersEnableCmd_VersionPinReplacesOldPin(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck@1.0.0]\n")
 
 	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck@2.0.0")
@@ -58,7 +45,7 @@ func TestCheckEnableCmd_VersionPinReplacesOldPin(t *testing.T) {
 	assert.NotContains(t, string(got), "shellcheck@1.0.0")
 }
 
-func TestCheckEnableCmd_NoLintKeyAtAll(t *testing.T) {
+func TestLintersEnableCmd_NoLintKeyAtAll(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n")
 
 	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
@@ -69,35 +56,12 @@ func TestCheckEnableCmd_NoLintKeyAtAll(t *testing.T) {
 	assert.Contains(t, string(got), "shellcheck")
 }
 
-func TestCheckDisableCmd_RemovesEntry(t *testing.T) {
-	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck, prettier]\n")
-
-	_, stderr, err := run2(t, "--config", path, "linters", "disable", "shellcheck")
-	require.NoError(t, err, "stderr: %s", stderr)
-
-	got, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.NotContains(t, string(got), "shellcheck")
-	assert.Contains(t, string(got), "prettier")
-}
-
-func TestCheckDisableCmd_AbsentIsNoOp(t *testing.T) {
-	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [prettier]\n")
-
-	_, stderr, err := run2(t, "--config", path, "linters", "disable", "shellcheck")
-	require.NoError(t, err, "stderr: %s", stderr)
-
-	got, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Contains(t, string(got), "prettier")
-}
-
-// TestCheckEnableCmd_LintKeyWithNoValue guards against a real silent data-loss bug: a
+// TestLintersEnableCmd_LintKeyWithNoValue guards against a real silent data-loss bug: a
 // hand-edited/partial trunk.yaml with a bare "lint:" key (no value at all) parses that key's
 // value as a null scalar node, not a mapping. Appending onto a non-mapping node's Content is
 // silently ignored by the yaml.v3 encoder, so without coercing the node back to a MappingNode
 // first, the whole edit vanished on write and the command still reported success.
-func TestCheckEnableCmd_LintKeyWithNoValue(t *testing.T) {
+func TestLintersEnableCmd_LintKeyWithNoValue(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n")
 
 	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
@@ -109,27 +73,11 @@ func TestCheckEnableCmd_LintKeyWithNoValue(t *testing.T) {
 	assert.Contains(t, string(got), "enabled")
 }
 
-// TestCheckDisableCmd_VersionedIDRemoves guards against disable silently no-op'ing when the id
-// passed on the command line still carries an @version pin (as copy-pasted straight out of
-// enabled: or `linters list` output) -- removeEnabled must bare-compare its own ids too, not just
-// the existing entries.
-func TestCheckDisableCmd_VersionedIDRemoves(t *testing.T) {
-	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nlint:\n  enabled: [shellcheck@1.0.0, prettier]\n")
-
-	_, stderr, err := run2(t, "--config", path, "linters", "disable", "shellcheck@1.0.0")
-	require.NoError(t, err, "stderr: %s", stderr)
-
-	got, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.NotContains(t, string(got), "shellcheck")
-	assert.Contains(t, string(got), "prettier")
-}
-
-// TestCheckEnableCmd_PreservesSourceIndentWidth guards against editEnabled reformatting the
+// TestLintersEnableCmd_PreservesSourceIndentWidth guards against editEnabled reformatting the
 // whole file to yaml.v3's default 4-space indent (yaml.Marshal's default) instead of keeping
 // the 2-space indent trunk.yaml's real-world convention (and this repo's own .trunk/trunk.yaml)
 // actually uses -- untouched keys must keep their original indentation exactly.
-func TestCheckEnableCmd_PreservesSourceIndentWidth(t *testing.T) {
+func TestLintersEnableCmd_PreservesSourceIndentWidth(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\nruntimes:\n  enabled:\n    - node@22.18.0\nlint:\n  enabled:\n    - prettier\n")
 
 	_, stderr, err := run2(t, "--config", path, "linters", "enable", "shellcheck")
@@ -141,8 +89,8 @@ func TestCheckEnableCmd_PreservesSourceIndentWidth(t *testing.T) {
 	assert.Contains(t, string(got), "shellcheck")
 }
 
-func TestCheckEnableCmd_NoAnnotations_BehaviorUnchanged(t *testing.T) {
-	// Same fixture/assertion as TestCheckEnableCmd_AddsAndPreservesComments -- no # renovate:
+func TestLintersEnableCmd_NoAnnotations_BehaviorUnchanged(t *testing.T) {
+	// Same fixture/assertion as TestLintersEnableCmd_AddsAndPreservesComments -- no # renovate:
 	// comment anywhere means the new annotation-aware branch in editEnabled must never trigger.
 	// This is this plan's own proof the fix is genuinely opt-in.
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n# a leading comment, must survive\nlint:\n  enabled: []\n")
@@ -157,7 +105,7 @@ func TestCheckEnableCmd_NoAnnotations_BehaviorUnchanged(t *testing.T) {
 	assert.NotContains(t, string(got), "# renovate:")
 }
 
-func TestCheckEnableCmd_AnnotatedSurvivor_KeepsExactComment(t *testing.T) {
+func TestLintersEnableCmd_AnnotatedSurvivor_KeepsExactComment(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@1.0.0"})
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
@@ -174,14 +122,14 @@ func TestCheckEnableCmd_AnnotatedSurvivor_KeepsExactComment(t *testing.T) {
 	assert.Contains(t, string(after), "# renovate: datasource=github-releases depName=acme/widget\n    - fixture@1.0.0\n")
 }
 
-// TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood guards against bug 1
+// TestLintersEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood guards against bug 1
 // from the whole-branch review: the old survivor-shortcut restored an already-annotated entry's
 // prior HeadComment verbatim but never re-applied the version-pin rule, so re-enabling an
 // already-annotated, already-pinned entry bare (no @version) produced an entry that was annotated
 // but unpinned -- a dead annotation Renovate's regex manager can't capture a version from. The
 // fixed loop always re-resolves via renovate.ForLint, so a bare re-enable must come back both
 // annotated AND re-pinned to the known_good_version.
-func TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood(t *testing.T) {
+func TestLintersEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture@9.9.9"})
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
@@ -200,7 +148,7 @@ func TestCheckEnableCmd_AnnotatedPinnedSurvivor_ReEnableBareRepinsToKnownGood(t 
 	assert.Contains(t, string(got), "# renovate: datasource=github-releases depName=acme/widget\n    - fixture@1.2.3\n")
 }
 
-func TestCheckEnableCmd_NewEntryInAnnotatedCategory_GetsFreshComment(t *testing.T) {
+func TestLintersEnableCmd_NewEntryInAnnotatedCategory_GetsFreshComment(t *testing.T) {
 	cfgPath, repoRoot := writeToolLinterFixture(t, []string{"fixture"})
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
@@ -242,7 +190,7 @@ lint:
 	assert.Contains(t, string(got), "# renovate: datasource=github-releases depName=other/second\n    - second@4.5.6\n")
 }
 
-func TestCheckEnableCmd_UnresolvableNewEntryInAnnotatedCategory_NoCommentNoForcedPin(t *testing.T) {
+func TestLintersEnableCmd_UnresolvableNewEntryInAnnotatedCategory_NoCommentNoForcedPin(t *testing.T) {
 	cfgPath, _ := writeToolLinterFixture(t, []string{"fixture"})
 	_, stderr, err := run2(t, "--config", cfgPath, "renovate", "enable")
 	require.NoError(t, err, "stderr: %s", stderr)
@@ -257,7 +205,7 @@ func TestCheckEnableCmd_UnresolvableNewEntryInAnnotatedCategory_NoCommentNoForce
 	// phantom itself must get no annotation of its own. Note this can't be a whole-file
 	// NotContains(got, "depName=") check: "fixture" is itself resolvable, so the "renovate
 	// annotate" step above already wrote its own "depName=acme/widget" survivor comment into the
-	// file, which TestCheckEnableCmd_AnnotatedSurvivor_KeepsExactComment requires editEnabled to
+	// file, which TestLintersEnableCmd_AnnotatedSurvivor_KeepsExactComment requires editEnabled to
 	// preserve -- so "depName=" legitimately appears elsewhere in the file. Only phantom's own
 	// line is asserted comment-free here.
 	lines := strings.Split(string(got), "\n")

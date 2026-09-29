@@ -137,12 +137,6 @@ func unstableError(stillUnstable []string, round1, round2 map[string][]string) e
 	return unstableFormatError(strings.TrimRight(b.String(), "\n"))
 }
 
-// unstableFormatError is the "did not converge" verdict: a result about the formatters, like
-// `fmt --check` finding files to reformat, not a run that failed to run.
-type unstableFormatError string
-
-func (e unstableFormatError) Error() string { return string(e) }
-
 // isUnstable reports whether err is the "did not converge" verdict.
 func isUnstable(err error) bool {
 	var u unstableFormatError

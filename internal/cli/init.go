@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xunleii/rtunk/pkg/run/githooks"
+	"github.com/xunleii/rtunk/pkg/git"
 )
 
 // initScaffold is the exact content `rtunk init` writes to a fresh .rtunk/rtunk.yaml -- v1.11.0 is
@@ -34,7 +34,7 @@ func (c *initCmd) Run(stdout io.Writer, stderr Stderr) error {
 	if err != nil {
 		return err
 	}
-	repoRoot, err := gitRepoRoot(cwd)
+	repoRoot, err := git.RepoRoot(cwd)
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func (c *initCmd) Run(stdout io.Writer, stderr Stderr) error {
 		}
 	}
 
-	// Task 1 made findTrunkYAML prefer .rtunk/rtunk.yaml over .trunk/trunk.yaml -- so writing the
+	// Task 1 made findConfig prefer .rtunk/rtunk.yaml over .trunk/trunk.yaml -- so writing the
 	// scaffold here would silently shadow a real, already-in-use .trunk/trunk.yaml for every other
 	// command from this point on. Warn (not fail: init still succeeds) so that isn't silent.
 	trunkYAMLPath := filepath.Join(repoRoot, ".trunk", "trunk.yaml")
@@ -67,58 +67,5 @@ func (c *initCmd) Run(stdout io.Writer, stderr Stderr) error {
 
 	_, _ = fmt.Fprintf(stdout, "initialized rtunk at %s\n", configPath)
 	_, _ = fmt.Fprintln(stdout, "next: rtunk linters enable <linter>, rtunk actions enable <action>, rtunk git-hooks sync")
-	return nil
-}
-
-// deinitCmd is `rtunk deinit`: ROADMAP.md v0.7, reversing `rtunk init` -- removes .rtunk/ and any
-// git hooks `rtunk git-hooks install` (a separate, already-shipped command any real init'd repo
-// would have run) could have added, since "reversing init" means undoing everything rtunk itself
-// could have set up, not just the config file alone. Yes is accepted for trunk compatibility and
-// has no effect: rtunk's deinit never prompts (an established non-goal since v0.7's own design),
-// so -y/--yes asks for behavior deinit already has.
-type deinitCmd struct {
-	Yes bool `short:"y" help:"Accepted for trunk compatibility; deinit never prompts, this has no effect."`
-}
-
-func (c *deinitCmd) Run(stdout io.Writer) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	repoRoot, err := gitRepoRoot(cwd)
-	if err != nil {
-		return err
-	}
-
-	// githooks.Uninstall always runs, regardless of whether .rtunk/ exists -- a repo that only
-	// ever used .trunk/trunk.yaml (rtunk's own primary drop-in-to-an-existing-trunk-repo use case)
-	// can still have an installed hook, and it must not be left behind. It also runs BEFORE
-	// removing .rtunk/: if Uninstall fails partway, the user keeps .rtunk/ rather than being left
-	// with neither the config nor a working hook (every subsequent `git commit` would then fail to
-	// find any config at all).
-	removed, err := githooks.Uninstall(repoRoot)
-	if err != nil {
-		return err
-	}
-
-	rtunkDir := filepath.Join(repoRoot, ".rtunk")
-	dirExisted := false
-	if _, statErr := os.Stat(rtunkDir); statErr == nil {
-		dirExisted = true
-		if err := os.RemoveAll(rtunkDir); err != nil {
-			return err
-		}
-	}
-
-	if !dirExisted && len(removed) == 0 {
-		_, _ = fmt.Fprintln(stdout, "nothing to deinit")
-		return nil
-	}
-	for _, name := range removed {
-		_, _ = fmt.Fprintf(stdout, "removed hook: %s\n", name)
-	}
-	if dirExisted {
-		_, _ = fmt.Fprintf(stdout, "removed %s\n", rtunkDir)
-	}
 	return nil
 }

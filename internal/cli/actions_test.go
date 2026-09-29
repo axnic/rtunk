@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xunleii/rtunk/pkg/git"
 	"github.com/xunleii/rtunk/pkg/run/actions"
 )
 
@@ -81,7 +82,7 @@ func TestActionsHistoryCmd_ReflectsPastRuns(t *testing.T) {
 	// repoRoot must match actionsHistoryCmd.Run's own computation (gitRepoRoot, the real git
 	// toplevel) or the seeded entry's key and the CLI's lookup key diverge and history reads back
 	// empty.
-	repoRoot, err := gitRepoRoot(filepath.Dir(path))
+	repoRoot, err := git.RepoRoot(filepath.Dir(path))
 	require.NoError(t, err)
 	require.NoError(t, seedHistoryForTest(cacheDir, repoRoot))
 
@@ -95,7 +96,7 @@ func TestActionsHistoryCmd_ReflectsPastRuns(t *testing.T) {
 func TestActionsHistoryCmd_CountAlias_MatchesLimitFlag(t *testing.T) {
 	path := writeScratchTrunkYAML(t, "version: \"0.1\"\n")
 	cacheDir := t.TempDir()
-	repoRoot, err := gitRepoRoot(filepath.Dir(path))
+	repoRoot, err := git.RepoRoot(filepath.Dir(path))
 	require.NoError(t, err)
 	require.NoError(t, actions.AppendHistory(cacheDir, repoRoot, actions.Result{ActionID: "first-action", StartedAt: time.Now()}))
 	require.NoError(t, actions.AppendHistory(cacheDir, repoRoot, actions.Result{ActionID: "second-action", StartedAt: time.Now()}))

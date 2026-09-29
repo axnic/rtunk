@@ -12,7 +12,7 @@ import (
 // Stderr is a defined type (not an alias) with the same method set as io.Writer, so that Kong's
 // by-type dependency injection can bind it separately from stdout. Kong resolves Run() parameters
 // by static type only: a command with two plain io.Writer parameters would have both resolve to
-// whichever single io.Writer binding is registered (see execCmd.Run in exec.go, which needs both
+// whichever single io.Writer binding is registered (see execCmd.Run in toolbox_exec.go, which needs both
 // streams distinct so a shim's real stderr isn't merged into rtunk's stdout).
 type Stderr io.Writer
 

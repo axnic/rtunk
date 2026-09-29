@@ -80,9 +80,9 @@ func TestCheckRunCmd_SecurityOnly(t *testing.T) {
 }
 
 // writeLinterFixture builds a trunk.yaml + local plugin source under t.TempDir(), laid out the
-// way findTrunkYAML/checkRunCmd expect a real repo (<repoRoot>/.trunk/trunk.yaml, repoRoot two
+// way findConfig/checkRunCmd expect a real repo (<repoRoot>/.trunk/trunk.yaml, repoRoot two
 // directories up): enabled lists the linter ids to turn on, and lintYAML is the raw `lint:
-// definitions:` block content (everything checkRunCmd/checkListCmd need -- names, descriptions,
+// definitions:` block content (everything checkRunCmd/lintersListCmd need -- names, descriptions,
 // files, commands). Returns the trunk.yaml path and repoRoot.
 func writeLinterFixture(t *testing.T, enabled []string, lintYAML string) (cfgPath, repoRoot string) {
 	t.Helper()
@@ -108,24 +108,6 @@ lint:
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "pluginrepo", "linters", "fixture", "plugin.yaml"),
 		[]byte("lint:\n  definitions:\n"+lintYAML), 0o644))
 	return filepath.Join(repoRoot, ".trunk", "trunk.yaml"), repoRoot
-}
-
-// TestCheckListCmd_ShowsDisabledLinters covers item 6: ROADMAP.md promises `rtunk linters list`
-// shows every linter available for the configuration, not only enabled ones. Before the fix,
-// checkListCmd.Run resolved enabled+used only (config.Resolve), so a defined-but-disabled linter
-// (here "beta") could never appear, and the "*" enabled marker was always "*" -- dead code.
-func TestCheckListCmd_ShowsDisabledLinters(t *testing.T) {
-	cfgPath, _ := writeLinterFixture(t, []string{"alpha"}, `    - name: alpha
-      description: Alpha linter
-      files: [ALL]
-    - name: beta
-      description: Beta linter
-      files: [ALL]
-`)
-	stdout, stderr, err := run2(t, "--config", cfgPath, "linters", "list")
-	require.NoError(t, err, "stderr: %s", stderr)
-	assert.Contains(t, stdout, "Enabled\n  ✔ alpha")
-	assert.Contains(t, stdout, "Available for this repo (not enabled)\n  ◯ beta")
 }
 
 // TestCheckRunCmd_FailedLinterKeepsOtherFindings covers item 4: a Failed event used to return

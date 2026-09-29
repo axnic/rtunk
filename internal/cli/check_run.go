@@ -18,12 +18,6 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 
-// checkCmd is `rtunk check`: ROADMAP.md v0.3, running enabled linters read-only. Bare `rtunk check
-// [paths...]` is the default subcommand; listing and enabling linters lives in `rtunk linters`.
-type checkCmd struct {
-	Run checkRunCmd `cmd:"" default:"withargs" help:"Run enabled checks."`
-}
-
 // checkRunCmd is `rtunk check [paths...]`: given paths, or the whole repository if none.
 type checkRunCmd struct {
 	Paths      []string `arg:"" optional:"" help:"Paths to check (default: changed files, see --from)."`
@@ -54,7 +48,7 @@ type checkRunCmd struct {
 func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) error {
 	configPath := cli.Config
 	if configPath == "" {
-		found, err := findTrunkYAML()
+		found, err := findConfig()
 		if err != nil {
 			return err
 		}
@@ -71,7 +65,7 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 	if err != nil {
 		return err
 	}
-	// configPath is <repoRoot>/.rtunk/rtunk.yaml or <repoRoot>/.trunk/trunk.yaml (findTrunkYAML's
+	// configPath is <repoRoot>/.rtunk/rtunk.yaml or <repoRoot>/.trunk/trunk.yaml (findConfig's
 	// only supported layouts) -- repoRoot is two directories up either way.
 	repoRoot := filepath.Dir(filepath.Dir(configPath))
 
