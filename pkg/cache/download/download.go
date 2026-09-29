@@ -296,7 +296,7 @@ func fetchToolRef(cfg config.Config, root, repoRoot string, ref Ref, events chan
 	// tool.ExtraPackages entries are passed straight through, unparsed -- each runtime's own
 	// installer is the only place that knows its own ecosystem's "name[==@:]version" syntax (see
 	// config.Tool.ExtraPackages's doc comment).
-	if err := InstallPackage(rt, runtimeInstallDir, installDir, tool.Package, version, tool.ExtraPackages); err != nil {
+	if err := InstallPackage(rt, runtimeInstallDir, installDir, tool.ResolvedPackage(version), version, tool.ExtraPackages); err != nil {
 		events <- Event{Ref: ref, Phase: Failed, Err: err}
 		return
 	}

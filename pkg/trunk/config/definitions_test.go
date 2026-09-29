@@ -113,6 +113,17 @@ health_checks:
 	}, tool.HealthChecks[0])
 }
 
+func TestTool_ResolvedPackage(t *testing.T) {
+	// Real catalog examples: shfmt/gitleaks' `package: mvdan.cc/sh/v${major_version}/cmd/shfmt`
+	// (Go's module-path major-version convention) left unsubstituted, `go install` rejects the
+	// literal "${major_version}" as an invalid module path character.
+	tool := config.Tool{Package: "mvdan.cc/sh/v${major_version}/cmd/shfmt"}
+	assert.Equal(t, "mvdan.cc/sh/v3/cmd/shfmt", tool.ResolvedPackage("3.11.0"))
+
+	plain := config.Tool{Package: "golang.org/x/tools/cmd/goimports"}
+	assert.Equal(t, "golang.org/x/tools/cmd/goimports", plain.ResolvedPackage("0.27.0"))
+}
+
 func TestCommand_FixPromptAndVerb(t *testing.T) {
 	var cmd config.Command
 	require.NoError(t, yaml.Unmarshal([]byte(`

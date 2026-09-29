@@ -1,6 +1,10 @@
 package config
 
-import "gopkg.in/yaml.v3"
+import (
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
 
 // Download is a reusable, OS/CPU-templated download recipe (ARCHITECTURE.md `downloads:`).
 type Download struct {
@@ -50,8 +54,13 @@ func (s *OSSpec) UnmarshalYAML(node *yaml.Node) error {
 // Tool is a downloadable/runnable tool (ARCHITECTURE.md `tools:`), fetched either via a runtime's
 // package manager (Runtime+Package) or a Download recipe. The two are mutually exclusive.
 type Tool struct {
-	Name             string   `yaml:"name"`
-	Runtime          string   `yaml:"runtime,omitempty"`
+	Name    string `yaml:"name"`
+	Runtime string `yaml:"runtime,omitempty"`
+	// Package is the runtime-native package identifier passed to Runtime's installer. Its only
+	// template placeholder is `${major_version}` (real catalog examples: shfmt's
+	// `mvdan.cc/sh/v${major_version}/cmd/shfmt`, gitleaks'
+	// `github.com/zricethezav/gitleaks/v${major_version}` -- Go's module-path major-version
+	// convention for v2+); ResolvedPackage substitutes it from a resolved version string.
 	Package          string   `yaml:"package,omitempty"`
 	Download         string   `yaml:"download,omitempty"`
 	Shims            ShimList `yaml:"shims,omitempty"`
@@ -80,6 +89,16 @@ type Tool struct {
 	// cache clean` (or bumping the tool's own pinned version) is the workaround. Accepted for now,
 	// not fixed in code.
 	ExtraPackages []string `yaml:"extra_packages,omitempty"`
+}
+
+// ResolvedPackage substitutes Package's `${major_version}` placeholder, when present, with
+// version's leading major component (e.g. "3" from "3.11.0"); a no-op otherwise.
+func (t Tool) ResolvedPackage(version string) string {
+	if !strings.Contains(t.Package, "${major_version}") {
+		return t.Package
+	}
+	major, _, _ := strings.Cut(version, ".")
+	return strings.ReplaceAll(t.Package, "${major_version}", major)
 }
 
 // HealthCheck is one entry of Tool.HealthChecks -- real catalog shape confirmed against the

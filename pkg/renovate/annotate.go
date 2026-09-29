@@ -98,7 +98,7 @@ func resolveToolAnnotation(cfg config.Config, tool config.Tool) (Annotation, str
 		if !ok {
 			return Annotation{}, "", false
 		}
-		return Annotation{Datasource: ds.Datasource, DepName: tool.Package, ExtractVersion: ds.ExtractVersion}, tool.KnownGoodVersion, true
+		return Annotation{Datasource: ds.Datasource, DepName: tool.ResolvedPackage(tool.KnownGoodVersion), ExtractVersion: ds.ExtractVersion}, tool.KnownGoodVersion, true
 	}
 	return Annotation{}, "", false
 }
