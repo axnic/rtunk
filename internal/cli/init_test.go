@@ -12,7 +12,7 @@ import (
 
 // initGitRepo creates a real, empty git repo in a fresh temp dir -- gitRepoRoot shells out to a
 // real `git rev-parse --show-toplevel`, so init/deinit's own tests need a real repo, not a fixture
-// trunk.yaml alone (mirrors pkg/trunk/githooks' own established real-git-repo test convention).
+// trunk.yaml alone (mirrors pkg/run/githooks' own established real-git-repo test convention).
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -130,7 +130,7 @@ func TestDeinitCmd_RemovesRtunkDir(t *testing.T) {
 // directly (rather than via `rtunk init`, whose own scaffold points at the real
 // https://github.com/trunk-io/plugins -- never resolved in a test) so `git-hooks sync` has a
 // real, local, enabled action with a git_hooks trigger to work from, matching
-// pkg/trunk/githooks' own established real-git-repo test pattern.
+// pkg/run/githooks' own established real-git-repo test pattern.
 func TestDeinitCmd_RemovesInstalledGitHooks(t *testing.T) {
 	repo := initGitRepo(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".rtunk"), 0o755))

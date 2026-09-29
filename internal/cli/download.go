@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/cache/download"
 )
 
 // toolboxCategory maps the CLI's `runtime|tools` argument to the cache's category name.

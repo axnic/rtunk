@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xunleii/rtunk/pkg/cache/download"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/download"
 )
 
 func TestCacheClean(t *testing.T) {

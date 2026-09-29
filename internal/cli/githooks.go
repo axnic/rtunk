@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xunleii/rtunk/pkg/trunk/githooks"
+	"github.com/xunleii/rtunk/pkg/run/githooks"
 )
 
 // gitHooksCmd is `rtunk git-hooks`: ROADMAP.md v0.5. "sync" is real trunk's own subcommand name

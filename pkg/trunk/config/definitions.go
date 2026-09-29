@@ -266,7 +266,7 @@ type Action struct {
 	Interactive  Interactivity `yaml:"interactive,omitempty"`
 	// NotifyOnError is nil when the plugin.yaml omits it -- every real trunk-io/plugins action
 	// that sets it explicitly sets it to false (to suppress the implied default), so nil is
-	// treated as "true" by pkg/trunk/actions.Run, mirroring Command.Enabled's own *bool
+	// treated as "true" by pkg/run/actions.Run, mirroring Command.Enabled's own *bool
 	// "unset vs. explicit false" convention.
 	NotifyOnError *bool `yaml:"notify_on_error,omitempty"`
 	// Environment contributes extra process env vars beyond runtime/PATH (real catalog example:

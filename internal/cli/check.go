@@ -16,10 +16,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/xunleii/rtunk/internal/cli/render"
+	"github.com/xunleii/rtunk/pkg/renovate"
+	"github.com/xunleii/rtunk/pkg/run/engine"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/engine"
 	"github.com/xunleii/rtunk/pkg/trunk/output"
-	"github.com/xunleii/rtunk/pkg/trunk/renovate"
 )
 
 // checkCmd is `rtunk check`: ROADMAP.md v0.3, running enabled linters read-only. Bare `rtunk check

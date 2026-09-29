@@ -16,7 +16,7 @@ import (
 
 // nodeTarGz builds a minimal tar.gz archive laid out the way a real runtime download's
 // strip_components: 1 recipe expects: one top-level dir wrapping the shimmed executable, mirroring
-// pkg/trunk/download/download_test.go's own tarGzBytes helper (unexported there, in a different
+// pkg/cache/download/download_test.go's own tarGzBytes helper (unexported there, in a different
 // package, so duplicated here rather than exported cross-package for one test).
 func nodeTarGz(t *testing.T) []byte {
 	t.Helper()
@@ -73,7 +73,7 @@ runtimes:
 }
 
 // TestDownloadCmd_Targeted fetches one item (runtimes/node) end to end through the real CLI/Kong
-// wiring and pkg/trunk/download.Download, against an httptest.Server standing in for the download
+// wiring and pkg/cache/download.Download, against an httptest.Server standing in for the download
 // recipe's URL -- not the shared trunkYAML fixture's real nodejs.org URL, which would make this
 // test network-dependent and unreliable in a sandboxed/offline run.
 func TestDownloadCmd_Targeted(t *testing.T) {

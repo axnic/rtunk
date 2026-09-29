@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/xunleii/rtunk/pkg/trunk/runlog"
+	"github.com/xunleii/rtunk/pkg/run/runlog"
 )
 
 // lastRun loads the newest run log of repoRoot, failing the test if there is none.

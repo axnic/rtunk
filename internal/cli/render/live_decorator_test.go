@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/xunleii/rtunk/pkg/trunk/engine"
+	"github.com/xunleii/rtunk/pkg/run/engine"
 	"github.com/xunleii/rtunk/pkg/trunk/output"
 )
 

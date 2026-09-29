@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/xunleii/rtunk/pkg/trunk/runlog"
+	"github.com/xunleii/rtunk/pkg/run/runlog"
 )
 
 // logsCmd is `rtunk logs`: reads back, and cleans, the per-run JSONL logs that check, fmt and
-// actions run write (pkg/trunk/runlog). Every subcommand but `clean --all` is scoped to the
+// actions run write (pkg/run/runlog). Every subcommand but `clean --all` is scoped to the
 // current repository.
 type logsCmd struct {
 	List  logsListCmd  `cmd:"" default:"withargs" help:"List this repository's recent runs."`

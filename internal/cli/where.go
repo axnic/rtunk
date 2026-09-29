@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/cache/download"
 )
 
 // whereCmd is `rtunk toolbox where {runtime,tools} <id>[@version]`: prints the absolute path of

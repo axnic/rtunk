@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/xunleii/rtunk/pkg/trunk/runlog"
+	"github.com/xunleii/rtunk/pkg/run/runlog"
 )
 
 func TestLogsCmd_ListShowAndClean(t *testing.T) {

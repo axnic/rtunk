@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/xunleii/rtunk/pkg/trunk/actions"
+	"github.com/xunleii/rtunk/pkg/run/actions"
 )
 
 // seedHistoryForTest writes one history entry directly (bypassing actions.Run), so
@@ -45,7 +45,7 @@ func TestActionsRunCmd_ByID(t *testing.T) {
 	// A trunk.yaml with no plugin source defining "greet" can't resolve it -- this test instead
 	// exercises the "unknown action" error path, proving ID-mode dispatch reaches Definitions
 	// lookup at all (a real end-to-end run against a defined action is covered by
-	// pkg/trunk/actions' own TestRun_* suite; this CLI layer only needs to prove wiring).
+	// pkg/run/actions' own TestRun_* suite; this CLI layer only needs to prove wiring).
 	_, stderr, err := run2(t, "--config", path, "actions", "run", "greet")
 	require.Error(t, err)
 	assert.Contains(t, stderr+err.Error(), "unknown action")

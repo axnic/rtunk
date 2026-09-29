@@ -12,9 +12,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/xunleii/rtunk/pkg/trunk/actions"
+	"github.com/xunleii/rtunk/pkg/run/actions"
+	"github.com/xunleii/rtunk/pkg/run/runlog"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/runlog"
 )
 
 // actionsCmd is `rtunk actions`: ROADMAP.md v0.5.

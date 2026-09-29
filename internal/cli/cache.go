@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/cache/download"
 )
 
 // cacheCmd is `rtunk cache`: clean wipes the entire cache root (downloads, plugin sources, and

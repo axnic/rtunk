@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xunleii/rtunk/pkg/run/engine"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/engine"
 )
 
 // collectChangedByLinter drains events like drainRunEvents, but preserves per-linter attribution

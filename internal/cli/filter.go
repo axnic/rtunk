@@ -9,7 +9,7 @@ import (
 
 // filterLinters implements check/fmt's --filter and --exclude flags: a runtime-only restriction
 // on which linters run this invocation, applied by trimming cfg.Lint.Definitions before it
-// reaches engine.Run (engine.Run iterates exactly that map -- see pkg/trunk/engine/engine.go's
+// reaches engine.Run (engine.Run iterates exactly that map -- see pkg/run/engine/engine.go's
 // own Run, which ranges over env.Cfg.Lint.Definitions -- so trimming it here needs no engine
 // change). Nothing is written back to trunk.yaml; this only affects the one invocation.
 //

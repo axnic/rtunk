@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xunleii/rtunk/pkg/trunk/githooks"
+	"github.com/xunleii/rtunk/pkg/run/githooks"
 )
 
 // initScaffold is the exact content `rtunk init` writes to a fresh .rtunk/rtunk.yaml -- v1.11.0 is

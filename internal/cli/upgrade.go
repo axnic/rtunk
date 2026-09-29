@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/xunleii/rtunk/pkg/trunk/upgrade"
+	"github.com/xunleii/rtunk/pkg/upgrade"
 )
 
 // githubAPIBase overrides upgrade.LatestRelease's apiBase -- "" means the real

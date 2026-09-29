@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/cache/download"
 )
 
 // recentFmtRun is a plain fmt/check --fix run's own outcome, persisted so the next invocation
@@ -23,7 +23,7 @@ type recentFmtRun struct {
 }
 
 // recentFmtRunPath is <cacheDir>/fmt-last-run/<sha256(repoRoot)>.json -- keyed by repo root the
-// same way pkg/trunk/actions' history log is, since this is likewise per-repo state with no home
+// same way pkg/run/actions' history log is, since this is likewise per-repo state with no home
 // in .rtunk/ yet (see that package's own history.go doc comment for why).
 func recentFmtRunPath(cacheDir, repoRoot string) (string, error) {
 	root, err := download.Root(cacheDir)
@@ -55,7 +55,7 @@ func loadRecentFmtRun(cacheDir, repoRoot string) (r recentFmtRun, ok bool, err e
 }
 
 // saveRecentFmtRun overwrites repoRoot's recorded run, atomically (temp file + rename, same
-// pattern as pkg/trunk/actions/history.go's writeHistory) so a crash mid-write never leaves a
+// pattern as pkg/run/actions/history.go's writeHistory) so a crash mid-write never leaves a
 // half-written file behind to be mistaken for a valid record.
 func saveRecentFmtRun(cacheDir, repoRoot string, r recentFmtRun) error {
 	path, err := recentFmtRunPath(cacheDir, repoRoot)

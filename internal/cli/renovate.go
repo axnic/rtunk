@@ -11,8 +11,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/xunleii/rtunk/pkg/renovate"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/renovate"
 )
 
 // renovateCmd is `rtunk renovate`: ROADMAP.md's v1.1 addition, generating Renovate

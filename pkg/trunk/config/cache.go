@@ -57,7 +57,7 @@ type cacheEnvelope struct {
 }
 
 // SourceHash is a git plugin source's stable identity (uri+ref), shared by this package's own
-// cacheFilePath/checkoutDirPath and by pkg/trunk/download's usage registry (RecordUsage), which
+// cacheFilePath/checkoutDirPath and by pkg/cache/download's usage registry (RecordUsage), which
 // needs the same identity to record which plugin sources a repository's resolved config uses.
 func SourceHash(src PluginSource) string {
 	sum := sha256.Sum256([]byte(src.URI + "@" + src.Ref))

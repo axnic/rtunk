@@ -89,7 +89,7 @@ func TestResolve_WithPluginRepo(t *testing.T) {
 	}, cfg.Lint.CommentFormats)
 
 	// SourceDir/SourceRoot let ${cwd}/${plugin} resolve into this local source's own directory
-	// tree (pkg/trunk/engine's job): SourceDir is derived from the plugin.yaml's own path within
+	// tree (pkg/run/engine's job): SourceDir is derived from the plugin.yaml's own path within
 	// the source; SourceRoot is that source's own directory as mergePluginRepo resolved it.
 	assert.Equal(t, filepath.Join("linters", "actionlint"), cfg.Lint.Definitions["actionlint"].SourceDir)
 	wantRoot, err := filepath.Abs(filepath.Join("testdata", "pluginrepo"))

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/xunleii/rtunk/pkg/trunk/engine"
+	"github.com/xunleii/rtunk/pkg/run/engine"
 )
 
 var t0 = time.UnixMilli(999_999_996_800) // Dots and Sand both sit on frame index 0 at this instant

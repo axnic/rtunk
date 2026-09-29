@@ -4,8 +4,8 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/xunleii/rtunk/pkg/trunk/actions"
-	"github.com/xunleii/rtunk/pkg/trunk/runlog"
+	"github.com/xunleii/rtunk/pkg/run/actions"
+	"github.com/xunleii/rtunk/pkg/run/runlog"
 )
 
 // stdinIsTerminal is a variable so tests can pin it: `go test` may hand the test binary the

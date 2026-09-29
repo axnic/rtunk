@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/xunleii/rtunk/pkg/trunk/download"
+	"github.com/xunleii/rtunk/pkg/cache/download"
 )
 
 // execCmd is `rtunk toolbox exec|x {runtime,tools} <id>[@version] -- <cmd> [<args>...]`: downloads

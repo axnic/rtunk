@@ -7,8 +7,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/xunleii/rtunk/pkg/cache/download"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/download"
 )
 
 // configCmd is `rtunk config`: currently just print, the fully resolved configuration.
@@ -78,7 +78,7 @@ func checkDeprecations(cfg config.Config, stderr io.Writer) error {
 
 // resolvedVersionFor is the version `where`/`exec` (Tasks 12/13) resolve for category+id when the
 // CLI arg wasn't pinned with @version -- mirrors fetchToolRef/fetchRuntimeRef's own resolution
-// (pkg/trunk/download.Download) so both commands predict the exact cache path Download would use,
+// (pkg/cache/download.Download) so both commands predict the exact cache path Download would use,
 // without invoking it. "actions" has no KnownGoodVersion of its own (only Actions.Enabled's own
 // @version pin, if any); "lint"/"plugins" resolve to a linter/plugin, not a concrete tool or
 // runtime build, so there is no path to predict -- reject rather than guess.

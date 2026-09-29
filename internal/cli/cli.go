@@ -22,7 +22,7 @@ type Argv []string
 
 // Version is rtunk's own version string, set by cmd/rtunk/main.go before calling Run (see that
 // file's own fallback chain: ldflags -X main.version=... -> debug.ReadBuildInfo() -> "dev").
-// pkg/trunk/upgrade's Available treats "dev" as "cannot determine current version" and never
+// pkg/upgrade's Available treats "dev" as "cannot determine current version" and never
 // reports an upgrade available against it.
 var Version = "dev"
 

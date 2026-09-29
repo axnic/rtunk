@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xunleii/rtunk/pkg/run/engine"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
-	"github.com/xunleii/rtunk/pkg/trunk/engine"
 )
 
 // listItem is one row of `rtunk linters list` / `rtunk actions list`. Files is nil for actions
