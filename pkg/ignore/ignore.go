@@ -13,16 +13,33 @@ import (
 // directiveRE matches an (rtunk|trunk)-ignore directive anywhere on a line: the bare form
 // (same-line or next-line), -all (whole file), or -begin/-end (block range). Group 1 is the
 // variant suffix ("", "-all", "-begin", "-end"); group 2 is the comma-separated linter[/rule]
-// list.
-//
-// ponytail: matches anywhere on the line, not just inside a real comment -- a string literal
-// that happens to spell out this exact text is a false positive (over-suppression, not
-// under-suppression). Add a comment-delimiter check against cfg.Lint.CommentFormats if that ever
-// bites in practice; resolving it per-FileType instead would be wrong (config.filterEnabled trims
+// list. A match only counts as a real directive when hasCommentLeader also confirms one of the
+// caller's known comment-opening delimiters precedes it on the line -- see that function's own
+// doc for why this is a global check, not a per-FileType one.
+var directiveRE = regexp.MustCompile(`(?:rtunk|trunk)-ignore(-all|-begin|-end)?\(([^)]*)\)`)
+
+// hasCommentLeader reports whether any of leaders (comment-opening delimiters, e.g. "#", "//",
+// "<!--") appears in s, the line's text before a directiveRE match -- the gate that keeps a
+// directive-shaped string literal or code sample from being mistaken for a real one. leaders is
+// meant to be every config.CommentFormat.LeadingDelimiter cfg.Lint.CommentFormats carries, used
+// as one global set rather than resolved per file type: config.filterEnabled trims
 // cfg.Lint.Files down to what enabled linters reference, so a broad linter like cspell running on
 // a file whose own language linter isn't enabled would find no FileType and silently skip every
-// directive in it).
-var directiveRE = regexp.MustCompile(`(?:rtunk|trunk)-ignore(-all|-begin|-end)?\(([^)]*)\)`)
+// directive in it -- CommentFormats itself carries no such trim (see resolve.go), so checking
+// against the whole set stays correct regardless of which linters are enabled. Empty leaders
+// means the caller doesn't know its delimiters; every match counts, matching this package's
+// original permissive behavior, rather than silently going inert.
+func hasCommentLeader(s string, leaders []string) bool {
+	if len(leaders) == 0 {
+		return true
+	}
+	for _, l := range leaders {
+		if l != "" && strings.Contains(s, l) {
+			return true
+		}
+	}
+	return false
+}
 
 // isCommentLeaderOnly reports whether s (the text on a line before a directive match) is nothing
 // but a comment opener and/or whitespace -- no letter or digit -- so the directive reads as
@@ -134,14 +151,14 @@ func (idx *fileIndex) suppresses(f output.Finding) bool {
 // forgotten -end. A stray -end with no open -begin is likewise ignored. Ranges are tracked per
 // (linter, rule) with a stack, so nested or overlapping blocks for different linters/rules don't
 // interfere with each other.
-func buildIndex(content []byte) *fileIndex {
+func buildIndex(content []byte, leaders []string) *fileIndex {
 	idx := &fileIndex{all: map[string]*ruleSet{}, lines: map[int]map[string]*ruleSet{}}
 	open := map[target][]int{}
 
 	for i, raw := range strings.Split(string(content), "\n") {
 		lineNo := i + 1
 		m := directiveRE.FindStringSubmatchIndex(raw)
-		if m == nil {
+		if m == nil || !hasCommentLeader(raw[:m[0]], leaders) {
 			continue
 		}
 		variant := "" // group 1 (the variant suffix) didn't participate: bare directive
@@ -201,9 +218,12 @@ func buildIndex(content []byte) *fileIndex {
 }
 
 // Filter drops findings an rtunk-ignore/trunk-ignore directive in their own file suppresses.
-// suppressed is the number dropped. A finding whose File is empty, or that can't be read back
-// under repoRoot, passes through unfiltered -- there is no content to scan.
-func Filter(repoRoot string, findings []output.Finding) (kept []output.Finding, suppressed int) {
+// suppressed is the number dropped. leaders is every known comment-opening delimiter (typically
+// every config.CommentFormat.LeadingDelimiter the resolved config carries) -- see
+// hasCommentLeader's own doc for why a directive only counts when one of them precedes it. A
+// finding whose File is empty, or that can't be read back under repoRoot, passes through
+// unfiltered -- there is no content to scan.
+func Filter(repoRoot string, leaders []string, findings []output.Finding) (kept []output.Finding, suppressed int) {
 	kept = make([]output.Finding, 0, len(findings))
 	indexes := map[string]*fileIndex{}
 	for _, f := range findings {
@@ -213,7 +233,7 @@ func Filter(repoRoot string, findings []output.Finding) (kept []output.Finding, 
 		}
 		idx, cached := indexes[f.File]
 		if !cached {
-			idx = loadIndex(repoRoot, f.File)
+			idx = loadIndex(repoRoot, f.File, leaders)
 			indexes[f.File] = idx
 		}
 		if idx != nil && idx.suppresses(f) {
@@ -225,10 +245,10 @@ func Filter(repoRoot string, findings []output.Finding) (kept []output.Finding, 
 	return kept, suppressed
 }
 
-func loadIndex(repoRoot, file string) *fileIndex {
+func loadIndex(repoRoot, file string, leaders []string) *fileIndex {
 	content, err := os.ReadFile(filepath.Join(repoRoot, file))
 	if err != nil {
 		return nil
 	}
-	return buildIndex(content)
+	return buildIndex(content, leaders)
 }
