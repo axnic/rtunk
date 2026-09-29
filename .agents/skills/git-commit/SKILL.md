@@ -19,7 +19,7 @@ review, bisection, and revert all cheaper.
 
 ## Commit format
 
-```
+```text
 type[scope]: Subject starting with uppercase
 
 Body providing context and intent, max 80 chars per line
@@ -29,7 +29,7 @@ Assisted-by: <provider>:<model-id>
 
 Breaking change variant — the `BREAKING CHANGE:` paragraph is mandatory:
 
-```
+```text
 +![check]: Subject starting with uppercase
 
 Body providing context and intent, max 80 chars per line
@@ -216,7 +216,7 @@ Prompt configuration (for interactive commit tooling, if wired up later):
 6. Write the body: ask the user for the "why" if it hasn't already come up
    in conversation. Skip the body only for genuinely trivial changes.
 7. Stage and commit:
-   ```
+   ```bash
    git commit -S -m "type[scope]: Subject" -m "Body explaining why" -m "Assisted-by: <provider>:<model-id>"
    ```
 8. Never add `-s`/`--signoff` to the command above.
@@ -225,7 +225,7 @@ Prompt configuration (for interactive commit tooling, if wired up later):
 
 **Good — simple add:**
 
-```
+```text
 +[check]: Add SARIF output normalization for gitleaks
 
 Trunk-compatible tooling expects SARIF; without it, downstream
@@ -237,13 +237,13 @@ Assisted-by: anthropic:claude-sonnet-5
 
 **Good — dependency bump, no body needed:**
 
-```
+```text
 ^[deps]: Bump golang.org/x/tools to v0.27.0
 ```
 
 **Good — breaking change:**
 
-```
+```text
 -![config]: Drop support for trunk.yaml v0.0 schema
 
 v0.0 lacked a version field, which made every later schema
@@ -258,7 +258,7 @@ Assisted-by: anthropic:claude-sonnet-5
 
 **Bad — no type/scope, restates the diff:**
 
-```
+```text
 Updated config.go to add new validation function
 ```
 
@@ -267,7 +267,7 @@ what the diff already shows instead of explaining why validation was added.
 
 **Bad — wrong trailer, wrong signing flag:**
 
-```
+```text
 ![check]: Fix nil pointer in report renderer
 
 Co-authored-by: Claude <claude@anthropic.com>
@@ -279,7 +279,7 @@ own attestation).
 
 **Bad — invalid type:**
 
-```
+```text
 !![check]: Fix and majorly change the reporting pipeline
 ```
 

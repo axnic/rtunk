@@ -34,7 +34,7 @@ unsupported — is worth calling out on its own; see [inconsistencies.md](./inco
 
 ## On-disk layout (target)
 
-```
+```text
 <cache root>/                          # one root: override, or an OS-appropriate default location
 ├── downloads/
 │   ├── installs/<category>/<id>/<version>/<platform>/   # extracted archive or package-manager install tree
