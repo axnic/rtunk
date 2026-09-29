@@ -451,6 +451,37 @@ func TestCheckRunCmd_Fix_AppliesFixCommand(t *testing.T) {
 	assert.Equal(t, "FIXED", string(got), "the fix command must have run")
 }
 
+// TestCheckRunCmd_Fix_FixCommandRenderIsSilent guards against a real rendering bug: --fix's own
+// internal renderer for the fix-commands pass (check_run.go's fixR, opened purely to detect a
+// Failed event -- its Close summary is discarded and its stdout is io.Discard) used to inherit
+// the user's real --no-progress setting, so by default it printed its own progress line
+// ("<linter> done <n> file(s) changed") to stderr on top of the real report's own line for the
+// same linter -- a leak of internal machinery output, and on a real terminal a second concurrent
+// live view fighting the main one over the same region. fixR must always render silently: only
+// the report renderer (r) may write to stderr.
+func TestCheckRunCmd_Fix_FixCommandRenderIsSilent(t *testing.T) {
+	cfgPath, repoRoot := writeLinterFixture(t, []string{"fixer"}, `    - name: fixer
+      files: [ALL]
+      commands:
+        - name: check
+          run: test "$(cat ${target})" = FIXED
+          output: pass_fail
+        - name: fix
+          run: printf FIXED > ${target}
+          output: pass_fail
+          in_place: true
+          success_codes: [0]
+`)
+	f := filepath.Join(repoRoot, "needsfix.txt")
+	require.NoError(t, os.WriteFile(f, []byte("broken"), 0o644))
+
+	_, stderr, err := run2(t, "--config", cfgPath, "check", "--fix", f)
+	require.NoError(t, err, "stderr: %s", stderr)
+	assert.Equal(t, 1, strings.Count(stderr, "fixer"),
+		"fixer must appear exactly once (pass 2's own report line) -- fixR must not also print one: stderr: %q", stderr)
+	assert.NotContains(t, stderr, "file changed", "fixR's own doneDetail must never reach stderr")
+}
+
 func TestCheckRunCmd_Fix_AppliesFindingLevelFix(t *testing.T) {
 	// The lint command reports a finding (with an inline fix) exactly once per file, marking it
 	// via a sentinel file -- so pass 2, after ApplyInlineFixes has landed, comes back clean,

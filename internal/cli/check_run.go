@@ -184,7 +184,11 @@ func (c *checkRunCmd) Run(cli *CLI, stdout io.Writer, stderr Stderr, argv Argv) 
 		if err != nil {
 			return err
 		}
-		fixR := newRenderer("human", io.Discard, stderr, render.Fmt, progressOpts{c.NoProgress, c.ASCII, c.LiveHeight})
+		// fixR exists only to detect a Failed event below (its Close summary is discarded) -- it
+		// must never itself print to stderr: r (still open, see the comment above pass 1) already
+		// owns stderr for this whole run, and a second live-capable renderer fighting r over the
+		// same region is exactly the rendering bug this NoProgress:true avoids.
+		fixR := newRenderer("human", io.Discard, stderr, render.Fmt, progressOpts{NoProgress: true, ASCII: c.ASCII, LiveHeight: c.LiveHeight})
 		onFixCmd := func(ev engine.Event) {
 			fixR.Event(ev)
 			if ev.Phase == engine.Failed {
