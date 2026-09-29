@@ -4,6 +4,8 @@ The path from a fresh clone to an accepted change: setting up a development envi
 tests and lint every change must pass locally, this project's commit conventions, and how to
 submit a pull request. Audience: external contributors.
 
+All participation in this project is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
 ## Development environment
 
 Use [docs/installation.md](docs/installation.md)'s "clone and build" path rather than

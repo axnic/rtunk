@@ -505,20 +505,54 @@ rtunk logs clean
 
 ## Renovate
 
-- **`rtunk renovate enable`**: annotate `trunk.yaml`'s version pins for Renovate. Only the global
-  flags apply.
-- **`rtunk renovate disable`**: remove the Renovate annotations from `trunk.yaml`. Only the global
-  flags apply.
-- **`rtunk renovate config`**: print the Renovate `regexManagers` config to add. Only the global
-  flags apply.
-
 Both `enable` and `disable` warn on stderr when no Renovate config file at the repository root
 contains the regexManager `renovate config` prints.
+
+### `rtunk renovate enable`
+
+Annotate `trunk.yaml`'s version pins for Renovate.
+
+```bash
+rtunk renovate enable
+```
+
+Only the global flags apply.
 
 Example:
 
 ```bash
 rtunk renovate enable
+```
+
+### `rtunk renovate disable`
+
+Remove the Renovate annotations from `trunk.yaml`.
+
+```bash
+rtunk renovate disable
+```
+
+Only the global flags apply.
+
+Example:
+
+```bash
+rtunk renovate disable
+```
+
+### `rtunk renovate config`
+
+Print the Renovate `regexManagers` config to add.
+
+```bash
+rtunk renovate config
+```
+
+Only the global flags apply.
+
+Example:
+
+```bash
 rtunk renovate config
 ```
 

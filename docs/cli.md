@@ -217,7 +217,8 @@ The two groups are symmetric:
 human|json]`. (`list` implemented, internal/cli/linters_list.go.)
 - **`rtunk actions {list,enable,disable,history}`**: list actions (`list [--format human|json]`,
   groups `Enabled` and `Available (not enabled)`, no `--all`); enable or disable them; show
-  the history of actions in this repo (`history <id>`).
+  the history of actions in this repo (`history [--id=STRING] [--limit=INT]`, restricting to one
+  action id via `--id`, not a positional argument).
 
 `linters list` and `actions list` share one layout (see [ux.md](./ux.md)). `linters ...` replaces
 `check enable|disable|list` (implemented; `check` takes paths only). File counts come from every
@@ -228,6 +229,7 @@ repository file matched against the linter's `files:` criteria.
 - **`rtunk git-hooks sync|unsync`**: enable or disable the git hooks defined by actions (implemented;
   `install`, `uninstall` and the alias are removed, with no compat aliases).
 - **`rtunk init`**: initialize a repository that has neither `.trunk` nor `.rtunk`.
+- **`rtunk deinit`**: remove rtunk's configuration and installed artifacts (the inverse of `init`).
 - **`rtunk logs list [<file>...]`**, **`rtunk logs show <uid>|latest [<file>...]`**,
   **`rtunk logs clean`**: inspect and clean per-run logs (see
   `docs/superpowers/specs/2026-09-26-run-logs-design.md`). Implemented in
