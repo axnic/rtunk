@@ -38,6 +38,9 @@ func (h *human) Close(s Summary) error {
 			ok = false
 			verdict = fmt.Sprintf("%s (%d high · %d medium · %d low)", plural(issues, "issue"), sev[0], sev[1], sev[2])
 		}
+		if h.suppressed > 0 {
+			verdict += fmt.Sprintf(" · %d suppressed", h.suppressed)
+		}
 	case Fmt:
 		verdict = "no files reformatted"
 		if changed > 0 {

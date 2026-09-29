@@ -32,6 +32,7 @@ type jsonDoc struct {
 	RunLog       string        `json:"run_log"`
 	FilesChecked int           `json:"files_checked"`
 	Linters      int           `json:"linters"`
+	Suppressed   int           `json:"suppressed"`
 	Issues       []jsonIssue   `json:"issues"`
 	Failures     []jsonFailure `json:"failures"`
 	Skipped      []string      `json:"skipped"`
@@ -41,7 +42,7 @@ type jsonDoc struct {
 func (j *jsonRenderer) Close(s Summary) error {
 	doc := jsonDoc{
 		Version: 1, Command: "check", ElapsedMs: s.Elapsed.Milliseconds(), RunLog: s.RunLog,
-		FilesChecked: len(j.files), Linters: len(j.linters),
+		FilesChecked: len(j.files), Linters: len(j.linters), Suppressed: j.suppressed,
 		Issues: []jsonIssue{}, Failures: []jsonFailure{},
 		Skipped: append([]string{}, s.Skipped...), Changed: sortedUnique(s.Changed),
 	}

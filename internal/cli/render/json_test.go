@@ -25,6 +25,7 @@ func TestJSON_CleanRunIsExactAndNeverNull(t *testing.T) {
   "run_log": "",
   "files_checked": 1,
   "linters": 1,
+  "suppressed": 0,
   "issues": [],
   "failures": [],
   "skipped": [],

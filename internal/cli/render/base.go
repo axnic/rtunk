@@ -17,6 +17,7 @@ type base struct {
 	opts           Options
 
 	findings   []output.Finding // Linter back-filled from the event
+	suppressed int              // sum of every Done event's Suppressed
 	failures   []Failure        // first Failed event per linter, arrival order
 	failedSeen map[string]bool
 	files      map[string]bool // unique files across terminal events
@@ -48,6 +49,7 @@ func (b *base) Event(ev engine.Event) {
 			}
 			b.findings = append(b.findings, f)
 		}
+		b.suppressed += ev.Suppressed
 		glyph, word, detail = "✔", "done", b.doneDetail(ev)
 		if detail != "clean" {
 			glyph = "▲"

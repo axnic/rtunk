@@ -50,10 +50,14 @@ type sarifResult struct {
 	Message   sarifMessage    `json:"message"`
 	Locations []sarifLocation `json:"locations"`
 }
+type sarifRunProperties struct {
+	Suppressed int `json:"suppressed"`
+}
 type sarifRun struct {
-	Tool        sarifTool         `json:"tool"`
-	Invocations []sarifInvocation `json:"invocations"`
-	Results     []sarifResult     `json:"results"`
+	Tool        sarifTool           `json:"tool"`
+	Invocations []sarifInvocation   `json:"invocations"`
+	Results     []sarifResult       `json:"results"`
+	Properties  *sarifRunProperties `json:"properties,omitempty"`
 }
 type sarifDoc struct {
 	Schema  string     `json:"$schema"`
@@ -109,6 +113,10 @@ func (r *sarifRenderer) Close(s Summary) error {
 		notes = append(notes, sarifNotification{Level: "error", Message: sarifMessage{Text: f.Linter + ": " + f.Err}})
 	}
 
+	var props *sarifRunProperties
+	if r.suppressed > 0 {
+		props = &sarifRunProperties{Suppressed: r.suppressed}
+	}
 	return writeJSON(r.stdout, sarifDoc{
 		Schema:  "https://json.schemastore.org/sarif-2.1.0.json",
 		Version: "2.1.0",
@@ -116,6 +124,7 @@ func (r *sarifRenderer) Close(s Summary) error {
 			Tool:        sarifTool{Driver: sarifDriver{Name: "rtunk", Version: r.opts.Version, Rules: rules}},
 			Invocations: []sarifInvocation{{ExecutionSuccessful: len(notes) == 0, Notifications: notes}},
 			Results:     results,
+			Properties:  props,
 		}},
 	})
 }

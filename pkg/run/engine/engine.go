@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/xunleii/rtunk/pkg/cache/download"
+	"github.com/xunleii/rtunk/pkg/ignore"
 	"github.com/xunleii/rtunk/pkg/run/engine/security"
 	"github.com/xunleii/rtunk/pkg/run/runlog"
 	"github.com/xunleii/rtunk/pkg/trunk/config"
@@ -72,6 +73,7 @@ type Event struct {
 	Linter       string
 	Phase        Phase
 	Findings     []output.Finding // Done only
+	Suppressed   int              // Done only -- findings an rtunk-ignore/trunk-ignore directive dropped, already excluded from Findings
 	ChangedFiles []string         // Done only, InPlace commands only -- repoRoot-relative paths this linter actually rewrote (content differed before/after)
 	Note         string           // Skipped (why) or Failed (which command)
 	Err          error            // Failed only
@@ -145,6 +147,7 @@ type linterState struct {
 	mu           sync.Mutex
 	remaining    int
 	findings     []output.Finding
+	suppressed   int // findings an rtunk-ignore/trunk-ignore directive dropped
 	changedFiles []string
 	terminalSent bool
 	failed       bool // once true, workers skip any not-yet-started job for this linter
@@ -571,6 +574,10 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 	id := log.NextID()
 	findings, changedFiles, err := runBatch(ctx, j, repoRoot, inPlaceMu, prepareRunOnce, cmdSems, log, id)
 	events <- Event{Linter: j.linterName, Phase: JobDone, File: strings.Join(j.batch, ", ")}
+	var suppressed int
+	if err == nil && len(findings) > 0 {
+		findings, suppressed = ignore.Filter(repoRoot, findings)
+	}
 	if err == nil && len(findings) > 0 {
 		log.Emit(runlog.Event{T: runlog.KindFindings, ID: id, Linter: j.linterName, Findings: findings})
 	}
@@ -590,10 +597,11 @@ func runJob(ctx context.Context, j job, state *linterState, repoRoot string, inP
 	}
 
 	state.findings = append(state.findings, findings...)
+	state.suppressed += suppressed
 	state.changedFiles = dedupeStrings(append(state.changedFiles, changedFiles...))
 	if state.remaining == 0 {
 		state.terminalSent = true
-		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings, ChangedFiles: state.changedFiles, Files: j.files}
+		events <- Event{Linter: j.linterName, Phase: Done, Findings: state.findings, Suppressed: state.suppressed, ChangedFiles: state.changedFiles, Files: j.files}
 	}
 }
 
