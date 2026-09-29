@@ -22,8 +22,7 @@ type Argv []string
 
 // Version is rtunk's own version string, set by cmd/rtunk/main.go before calling Run (see that
 // file's own fallback chain: ldflags -X main.version=... -> debug.ReadBuildInfo() -> "dev").
-// pkg/upgrade's Available treats "dev" as "cannot determine current version" and never
-// reports an upgrade available against it.
+// Only shown by --version -- rtunk never checks it against anything.
 var Version = "dev"
 
 // CLI is Kong's grammar root: the two flags every subcommand needs to locate and resolve a
@@ -52,7 +51,6 @@ type CLI struct {
 	GitHooksCmd gitHooksCmd `cmd:"" name:"git-hooks" help:"Manage git hooks that trigger actions." group:"commands"`
 	InitCmd     initCmd     `cmd:"" name:"init" help:"Initialize rtunk in this repository." group:"commands"`
 	DeinitCmd   deinitCmd   `cmd:"" name:"deinit" help:"Remove rtunk's configuration and installed artifacts." group:"commands"`
-	UpgradeCmd  upgradeCmd  `cmd:"" name:"upgrade" help:"Check for and install a newer rtunk release." group:"commands"`
 	// RunCmd is `rtunk run <id>`: real trunk's own top-level shortcut for `trunk actions run
 	// <id>` (see trunk --help's own subcommand list). Registered as the same actionsRunCmd type
 	// used by CLI.ActionsCmd.Run -- both paths share one Run method, so there is nothing to keep

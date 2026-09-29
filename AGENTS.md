@@ -69,9 +69,13 @@ rtunk is, and will remain, a 100% local tool.
 - **Zero telemetry.** No network call happens unless the user explicitly triggers it. No
   phone-home, no crash reporting, no install ID. The only network calls rtunk ever makes are:
   downloading linter/runtime/tool binaries from their official sources (GitHub Releases, PyPI,
-  npm, etc.) as declared in config; a manual `rtunk upgrade` checking the rtunk repo's own GitHub
-  Releases; and resolving a remote plugin source (`plugins.sources`), which does an explicit `git
-clone` of a repo URL pinned to a tag or SHA — never a branch.
+  npm, etc.) as declared in config; and resolving a remote plugin source (`plugins.sources`),
+  which does an explicit `git clone` of a repo URL pinned to a tag or SHA — never a branch.
+- **rtunk does not manage its own binary.** There is no `rtunk upgrade` command, and there never
+  will be: how the rtunk binary itself gets installed or updated (a package manager, mise, a CI
+  pipeline, a manual download) is entirely up to whoever deploys it. rtunk won't check GitHub
+  Releases, won't nag about a newer version, and won't touch its own binary under any
+  circumstances.
 - **Local, movable, controllable cache.** The cache lives in the OS-appropriate default location
   (XDG cache dir on Linux, `~/Library/Caches/rtunk` on macOS, `%LOCALAPPDATA%\rtunk\cache` on
   Windows), overridable via `--cache-dir` flag > `RTUNK_CACHE_DIR` env var > `cache.dir` config

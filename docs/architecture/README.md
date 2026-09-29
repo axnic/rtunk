@@ -33,7 +33,6 @@ graph TD
     CLI --> Download[Download Subsystem]
     CLI --> Hooks[Git Hooks Manager]
     CLI --> Renovate[Renovate Annotator]
-    CLI --> Upgrade[Upgrade Manager]
     CLI --> RunLog[Run Log]
     CLI --> Render[Renderer]
 
@@ -64,8 +63,8 @@ graph TD
 The **Config Resolver** is the only component with no dependency on any other architectural
 component — it is the foundation everything else builds on. The **Install Finalizer** is a tiny
 shared primitive (atomically publishing a finished install directory) used by both the download
-subsystem and the runtime behavior registry, which cannot depend on each other. The **Upgrade
-Manager** and **Output Normalizer** are standalone, with no dependency on the rest of the system.
+subsystem and the runtime behavior registry, which cannot depend on each other. The **Output
+Normalizer** is standalone, with no dependency on the rest of the system.
 
 ## Domain model
 
@@ -171,13 +170,9 @@ inspect without needing any execution machinery at all.
   configuration, resolving an upstream code-hosting location from a tool's download recipe and an
   upstream package registry from the runtime behavior registry. Deliberately never checks or
   applies updates itself — only annotates so an external update tool can.
-- **Upgrade Manager** — checks for and applies a newer release of the tool itself, from its own
-  release feed; one of only three places in the whole system that ever makes a network call
-  (alongside the download subsystem and the plugin source resolver), consistent with a
-  zero-telemetry, no-silent-network design rule.
 - **CLI / Command Layer** — the command tree; the only place that wires the config resolver
   together with the execution engine, action runner, download subsystem, git hooks manager,
-  renovate annotator, upgrade manager, and renderer. Shared entry points (resolving the project's
+  renovate annotator, and renderer. Shared entry points (resolving the project's
   configuration file, resolving which files a command should act on) exist so every command
   builds on the same foundation rather than each re-deriving it.
 
