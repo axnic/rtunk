@@ -1,9 +1,9 @@
-package download_test
+package runtime_test
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xunleii/rtunk/pkg/cache/download"
-	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/cache/runtime"
 )
 
 // fakePip writes a stub `pip` script into dir/bin that records its own argv to argvFile and,
@@ -46,7 +46,7 @@ chmod +x "$prefix/bin/black"
 }
 
 func TestInstallPackage_Python(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakePip is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -54,7 +54,9 @@ func TestInstallPackage_Python(t *testing.T) {
 	fakePip(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "python"}, runtimeDir, pkgDir, "black", "24.0.0", nil)
+	rt, ok := runtime.Lookup("python")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "black", "24.0.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -80,7 +82,7 @@ func TestInstallPackage_Python(t *testing.T) {
 // pip/setuptools. installPythonPackage must clear all of these (and set PIP_CONFIG_FILE to
 // os.DevNull) regardless of what the calling process's environment holds.
 func TestInstallPackage_Python_PipHermeticity(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakePip is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -95,7 +97,9 @@ func TestInstallPackage_Python_PipHermeticity(t *testing.T) {
 	t.Setenv("PYTHONPATH", "/bogus/pythonpath")
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "python"}, runtimeDir, pkgDir, "black", "24.0.0", nil)
+	rt, ok := runtime.Lookup("python")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "black", "24.0.0", nil)
 	require.NoError(t, err, "install must succeed even with hostile pip/python env vars inherited")
 
 	envContent, err := os.ReadFile(envFile)

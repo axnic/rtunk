@@ -1,17 +1,16 @@
-package download_test
+package runtime_test
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/xunleii/rtunk/pkg/cache/download"
-	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/cache/runtime"
 )
 
 // fakeNpm writes a stub `npm` script into dir/bin that records its own argv to argvFile instead
@@ -25,7 +24,7 @@ func fakeNpm(t *testing.T, dir, argvFile string) {
 }
 
 func TestInstallPackage_Node(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeNpm is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -36,7 +35,9 @@ func TestInstallPackage_Node(t *testing.T) {
 	// npm has actually succeeded (Fix 3), matching how InstallDir() hands it a not-yet-existing
 	// path in real use.
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "node"}, runtimeDir, pkgDir, "eslint", "8.10.0", nil)
+	rt, ok := runtime.Lookup("node")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "eslint", "8.10.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -54,18 +55,13 @@ func TestInstallPackage_Node(t *testing.T) {
 	assert.DirExists(t, pkgDir, "a successful npm install must be renamed into pkgDir")
 }
 
-func TestInstallPackage_UnsupportedRuntime(t *testing.T) {
-	err := download.InstallPackage(config.Runtime{Type: "java"}, t.TempDir(), t.TempDir(), "checkstyle", "10.0.0", nil)
-	assert.ErrorContains(t, err, "java")
-}
-
 // TestInstallPackage_Node_ExtraPackages_ScopedUnpinned mirrors the real
 // actions/commitizen/plugin.yaml catalog entry (`extra_packages: ["@commitlint/cli", ...]`): an
 // npm-scoped, unpinned name must reach npm exactly as written, never re-split on its leading "@"
 // the way a generic "name@version" parser would (splitting "@commitlint/cli" would wrongly
 // produce name="" version="commitlint/cli").
 func TestInstallPackage_Node_ExtraPackages_ScopedUnpinned(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeNpm is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -75,7 +71,9 @@ func TestInstallPackage_Node_ExtraPackages_ScopedUnpinned(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "bin", "npm"), []byte(script), 0o755))
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "node"}, runtimeDir, pkgDir, "commitizen", "4.3.0", []string{"@commitlint/cli", "inquirer"})
+	rt, ok := runtime.Lookup("node")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "commitizen", "4.3.0", []string{"@commitlint/cli", "inquirer"})
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(logFile)

@@ -1,9 +1,9 @@
-package download_test
+package runtime_test
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xunleii/rtunk/pkg/cache/download"
-	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/cache/runtime"
 )
 
 // fakeCargo writes a stub `cargo` script into dir/bin that records its own argv to argvFile and
@@ -47,7 +47,7 @@ echo build-target-entry > "$CARGO_TARGET_DIR/marker"
 }
 
 func TestInstallPackage_Rust(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeCargo is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -55,7 +55,9 @@ func TestInstallPackage_Rust(t *testing.T) {
 	fakeCargo(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "rust"}, runtimeDir, pkgDir, "ripgrep", "14.1.0", nil)
+	rt, ok := runtime.Lookup("rust")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "ripgrep", "14.1.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -83,7 +85,7 @@ func TestInstallPackage_Rust(t *testing.T) {
 }
 
 func TestInstallPackage_Rust_CargoTargetDirHermeticity(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeCargo is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -95,7 +97,9 @@ func TestInstallPackage_Rust_CargoTargetDirHermeticity(t *testing.T) {
 	t.Setenv("CARGO_TARGET_DIR", "/nonexistent/bogus/target")
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "rust"}, runtimeDir, pkgDir, "ripgrep", "14.1.0", nil)
+	rt, ok := runtime.Lookup("rust")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "ripgrep", "14.1.0", nil)
 	require.NoError(t, err, "install must succeed even with a bogus CARGO_TARGET_DIR in the calling environment")
 
 	// Verify the fake cargo script received the correct CARGO_TARGET_DIR override, not the bogus one

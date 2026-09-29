@@ -1,9 +1,9 @@
-package download_test
+package runtime_test
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xunleii/rtunk/pkg/cache/download"
-	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/cache/runtime"
 )
 
 // fakeGem writes a stub `gem` script into dir/bin that records its own argv to argvFile and
@@ -35,7 +35,7 @@ chmod +x "$bindir/rufo"
 }
 
 func TestInstallPackage_Ruby(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeGem is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -43,7 +43,9 @@ func TestInstallPackage_Ruby(t *testing.T) {
 	fakeGem(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "ruby"}, runtimeDir, pkgDir, "rufo", "0.15.0", nil)
+	rt, ok := runtime.Lookup("ruby")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "rufo", "0.15.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)

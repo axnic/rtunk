@@ -12,6 +12,15 @@ import (
 	"github.com/xunleii/rtunk/pkg/trunk/config"
 )
 
+// TestInstallPackage_UnsupportedRuntime pins down InstallPackage's own dispatch error for a
+// runtime type pkg/cache/runtime doesn't know -- unlike every other runtime test here, this one
+// tests the wrapper's error-wrapping itself, not any particular runtime's install logic, so it
+// stays in this package rather than moving to pkg/cache/runtime's own tests.
+func TestInstallPackage_UnsupportedRuntime(t *testing.T) {
+	err := download.InstallPackage(config.Runtime{Type: "java"}, t.TempDir(), t.TempDir(), "checkstyle", "10.0.0", nil)
+	assert.ErrorContains(t, err, "java")
+}
+
 // TestExtraToolEnv_Python pins down Fix 1 Part B: a python tool's shim needs PYTHONPATH pointed
 // at the site-packages dir pip install --prefix actually wrote into, since pip's --prefix scheme
 // writes no venv/pyvenv.cfg for the shebang's own python interpreter to find it by any other means.

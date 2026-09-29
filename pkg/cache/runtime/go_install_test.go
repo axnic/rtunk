@@ -1,9 +1,9 @@
-package download_test
+package runtime_test
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xunleii/rtunk/pkg/cache/download"
-	"github.com/xunleii/rtunk/pkg/trunk/config"
+	"github.com/xunleii/rtunk/pkg/cache/runtime"
 )
 
 // fakeGo writes a stub `go` script into dir/bin that records its own argv, GOBIN, and optionally
@@ -43,7 +43,7 @@ echo build-cache-entry > "$GOCACHE/marker"
 }
 
 func TestInstallPackage_Go(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeGo is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -51,7 +51,9 @@ func TestInstallPackage_Go(t *testing.T) {
 	fakeGo(t, runtimeDir, argvFile)
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0", nil)
+	rt, ok := runtime.Lookup("go")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0", nil)
 	require.NoError(t, err)
 
 	argv, err := os.ReadFile(argvFile)
@@ -83,7 +85,7 @@ func TestInstallPackage_Go(t *testing.T) {
 }
 
 func TestInstallPackage_Go_GoRootHermeticity(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeGo is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -95,7 +97,9 @@ func TestInstallPackage_Go_GoRootHermeticity(t *testing.T) {
 	t.Setenv("GOROOT", "/nonexistent/bogus/goroot")
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0", nil)
+	rt, ok := runtime.Lookup("go")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0", nil)
 	require.NoError(t, err, "install must succeed even with a bogus GOROOT in the calling environment")
 
 	// Verify the fake go script received the correct GOROOT override, not the bogus one
@@ -117,7 +121,7 @@ func TestInstallPackage_Go_GoRootHermeticity(t *testing.T) {
 // idiomatic "no pin" spelling), while an entry that already carries "@version" is split and used
 // as-is.
 func TestInstallPackage_Go_ExtraPackages_DefaultsAndExplicitVersion(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("fakeGo is a POSIX shell script")
 	}
 	runtimeDir := t.TempDir()
@@ -132,7 +136,9 @@ chmod +x "$GOBIN/gofumpt"
 	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "bin", "go"), []byte(script), 0o755))
 
 	pkgDir := filepath.Join(t.TempDir(), "install")
-	err := download.InstallPackage(config.Runtime{Type: "go"}, runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0",
+	rt, ok := runtime.Lookup("go")
+	require.True(t, ok)
+	err := rt.Install(runtimeDir, pkgDir, "mvdan.cc/gofumpt", "0.6.0",
 		[]string{"example.com/nopin", "example.com/pinned@1.2.3"})
 	require.NoError(t, err)
 
