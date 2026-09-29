@@ -1,6 +1,3 @@
-// Package download's runtime_shim.go implements ROADMAP.md v0.11's "one shared implementation for
-// variable substitution and runtime resolution": the runtime-shim-directory resolution logic
-// pkg/run/engine and pkg/run/actions each used to duplicate near-verbatim.
 package download
 
 import (

@@ -1,7 +1,3 @@
-// Package download's registry.go implements ROADMAP.md v0.11's usage-tracking cache prune: one
-// file per repository, overwritten wholesale on every RecordUsage call, recording exactly what
-// that repository's just-resolved config.Config currently needs. cache prune (see Prune, added
-// alongside this in the same milestone) reads every such file back to decide what's still in use.
 package download
 
 import (

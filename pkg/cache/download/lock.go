@@ -1,7 +1,3 @@
-// Package download's lock.go implements ROADMAP.md v0.11's "concurrent installs fail fast, by
-// name": a per-install-item file lock so a second rtunk process racing to install the same item
-// never waits -- it either proceeds immediately (the recorded holder has crashed) or fails
-// immediately, naming who currently holds it.
 package download
 
 import (

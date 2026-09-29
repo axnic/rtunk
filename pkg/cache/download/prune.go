@@ -1,7 +1,3 @@
-// Package download's prune.go implements ROADMAP.md v0.11's usage-based `cache prune`: read every
-// repository's registry entry (see registry.go), drop the entries whose repository no longer
-// exists, then remove every install, shim, and plugin-source cache entry no still-existing
-// repository's current entry references.
 package download
 
 import (
