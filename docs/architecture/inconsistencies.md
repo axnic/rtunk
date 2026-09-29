@@ -168,7 +168,9 @@ process's output back to the file) as a first-class execution mode alongside in-
 
 ### 6. Declared version range selects a command variant against the fully pinned tool version
 
-**Status**: accepted — implement.
+**Status**: accepted — implement. **Implemented** (v0.10, `pkg/run/engine`'s
+`selectApplicableCommands`, called from production `buildJobs`; verified by
+`TestSelectApplicableCommands_OpenEndedRanges_FirstMatchWins` and others).
 
 **What**: rtunk resolves exactly one, fully pinned version for every enabled tool/runtime — never a
 range — so that two people (or two machines) running the same configuration always run the identical
@@ -181,22 +183,25 @@ loosen the pin. In the real catalog, this is used to give the same linter genuin
 invocations for different tool major versions (a real, common shape: more than twenty
 currently-enableable linters declare two or more same-named commands distinguished only by such a
 range — well-known examples include two major-version-specific invocations of a widely used JS
-linter, a widely used Python type checker, and a widely used Python linter/formatter). **Today, rtunk
-parses this field into the resolved configuration and never reads it again — every declared variant
-runs unconditionally**, which for a version range covering incompatible invocation syntax means at
-least one variant fails outright on every run, and for two variants that both nominally succeed means
-duplicate, conflicting findings.
+linter, a widely used Python type checker, and a widely used Python linter/formatter). **Before
+v0.10, rtunk parsed this field into the resolved configuration and never read it again — every
+declared variant ran unconditionally**, which for a version range covering incompatible invocation
+syntax meant at least one variant failed outright on every run, and for two variants that both
+nominally succeeded meant duplicate, conflicting findings.
 
 **Direction**: evaluate each command's declared version range against the already-resolved, fully
 pinned tool version at command-selection time, and run only the variant(s) whose range contains it.
 This never touches the tool pin itself (which stays exact, per above) — it only narrows which
-already-declared command variant applies to that pinned version.
+already-declared command variant applies to that pinned version. This is what `selectApplicableCommands`
+now does: the first declared variant whose range contains the resolved tool version wins, one variant
+selected per command name.
 
 **Severity**: correctness (high — affects a large, common fraction of the real catalog outright).
 
 ### 7. Declared platform restriction: Windows unsupported for now
 
-**Status**: decision — intentional divergence.
+**Status**: decision — intentional divergence. **Implemented** (v0.10, the same `pkg/run/engine`'s
+`selectApplicableCommands` pass that resolves entry 6, called from production `buildJobs`).
 
 **What**: rtunk does not support Windows as a host platform for now (untested, no Windows build). A
 command declared restricted to a specific platform — in the real catalog, this is overwhelmingly a
@@ -204,10 +209,10 @@ Windows-only variant of a command, alongside a separate, unrestricted variant of
 every other platform — should therefore be **discarded during configuration resolution** whenever it
 does not match a supported host, not attempted.
 
-**Today**: this field has no place in the resolved command shape at all — it is silently dropped
-while parsing, not merely unread. Both the platform-restricted variant and its unrestricted
-counterpart therefore run unconditionally, under the same command name, on every host. On the only
-host platforms rtunk actually supports, that means invoking a Windows-specific command line (naming a
+**Before v0.10**: this field had no place in the resolved command shape at all — it was silently
+dropped while parsing, not merely unread. Both the platform-restricted variant and its unrestricted
+counterpart therefore ran unconditionally, under the same command name, on every host. On the only
+host platforms rtunk actually supports, that meant invoking a Windows-specific command line (naming a
 binary extension or invocation shape that only exists on Windows) alongside the correct one — a
 guaranteed failure on every run for that command, for every affected linter.
 
@@ -216,8 +221,10 @@ restriction, and the real catalog confirms the consequence: well over a dozen cu
 linters declare a Windows-restricted command variant alongside an unrestricted one of the same name.
 
 **Direction**: add the platform restriction to the resolved command shape and discard, at resolution,
-any command variant whose restriction does not match a supported host — today that means discarding
-every Windows-only variant unconditionally, since no host platform rtunk runs on is Windows.
+any command variant whose restriction does not match a supported host — since no host platform rtunk
+runs on is Windows, that means discarding every Windows-only variant unconditionally.
+`selectApplicableCommands` now does exactly this: a command whose declared `Platforms` doesn't
+contain the resolved host is skipped during selection.
 
 **Severity**: correctness (high — a guaranteed per-run failure for every affected linter today).
 
