@@ -32,9 +32,10 @@ rtunk exists to offer the same orchestration experience as an auditable, fully o
 
 - **Config-compatible where practical.** rtunk aims to understand `.trunk/trunk.yaml` and honor
   `trunk-ignore` inline directives, so a repository already using trunk can adopt rtunk with
-  minimal friction. rtunk's own native config lives at `.rtunk/rtunk.yaml` (with a git-ignored
-  `.rtunk/user.yaml` local override), modeled closely on trunk's schema and semantics but not a
-  literal copy of trunk's branding or documentation text.
+  minimal friction. rtunk's own native config lives at `.rtunk/rtunk.yaml` (a git-ignored
+  `.rtunk/user.yaml` local override is design intent, not yet implemented — see
+  [docs/configuration.md](./docs/configuration.md#config-file-discovery)), modeled closely on
+  trunk's schema and semantics but not a literal copy of trunk's branding or documentation text.
 - **Consumes the community plugin ecosystem.** The part of trunk that is genuinely open and
   well-maintained is [trunk-io/plugins](https://github.com/trunk-io/plugins) — the YAML
   definitions describing every linter's runtime, commands, and output format. rtunk consumes those
@@ -78,9 +79,11 @@ rtunk is, and will remain, a 100% local tool.
   circumstances.
 - **Local, movable, controllable cache.** The cache lives in the OS-appropriate default location
   (XDG cache dir on Linux, `~/Library/Caches/rtunk` on macOS, `%LOCALAPPDATA%\rtunk\cache` on
-  Windows), overridable via `--cache-dir` flag > `RTUNK_CACHE_DIR` env var > `cache.dir` config
-  field > default, in that priority order. It is content-addressed, so it is safe to copy between
-  machines, and nothing is ever uploaded from it.
+  Windows), overridable via `--cache-dir` flag / `RTUNK_CACHE_DIR` env var (the same underlying
+  flag, kong-bound — not two independently-read sources) falling back to that default; there is no
+  config-file key for it (see
+  [docs/configuration.md](./docs/configuration.md#cache-directory)). It is content-addressed, so
+  it is safe to copy between machines, and nothing is ever uploaded from it.
 - **`rtunk-ignore` with permanent trunk compatibility.** The native inline ignore directive is
   `rtunk-ignore(linter/rule): reason`. `trunk-ignore(...)` and its `-all`/`-begin`/`-end` variants
   are accepted forever as compatible aliases, so migrating from trunk never requires rewriting

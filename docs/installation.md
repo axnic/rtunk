@@ -1,8 +1,10 @@
 # Installation
 
 `rtunk` ships no prebuilt binary yet — there is no `.goreleaser.yml`, no `Makefile`, and no GitHub
-Releases artifact to download. Every build reports `dev` for `--version` regardless of how it was
-built. The two paths below build from source; there is no third, "just download it" option today.
+Releases artifact to download. A local `go build`/`go install` with no version metadata reports
+`dev` for `--version`; a tagged, properly-built release reports its real version instead
+(`cmd/rtunk/main.go`'s `resolveVersion()`). The two paths below build from source; there is no
+third, "just download it" option today.
 
 ## Supported platforms
 
@@ -32,12 +34,12 @@ rtunk help
 ```
 
 `--version` prints `dev` — expected, not an error; rtunk has no version-stamped release build yet.
-`help` prints the command list (`check`, `fmt`, `actions`, `linters`, `plugins`, `git-hooks`,
-`init`, `deinit`, `run`, `renovate`, `logs`, and the extended `config`/`cache` commands).
+`help` prints the full command list — see [commands.md](./commands.md) for the authoritative
+reference.
 
 ## Option 2: clone and build (contributor path)
 
-Use this if you're contributing, or want the exact pinned toolchain the project develops against
+Use this if you're contributing, or want the toolchain versions the project develops against
 (this is the setup [CONTRIBUTING.md](../CONTRIBUTING.md) assumes).
 
 Prerequisites: [mise](https://mise.jdx.dev/) installed.
@@ -46,7 +48,7 @@ Prerequisites: [mise](https://mise.jdx.dev/) installed.
 git clone https://github.com/xunleii/rtunk.git
 cd rtunk
 mise trust    # if mise prompts about this repo's .mise.toml
-mise install  # installs the go and trunk versions pinned in .mise.toml
+mise install  # installs the go and trunk versions .mise.toml declares
 go build -o rtunk ./cmd/rtunk
 ```
 

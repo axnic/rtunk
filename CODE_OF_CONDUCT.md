@@ -60,9 +60,7 @@ appointed representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported by opening a GitHub issue on
-[`xunleii/rtunk`](https://github.com/xunleii/rtunk/issues) tagged for conduct
-reports, or by sending a direct message to
+reported by sending a direct message to
 [`@xunleii`](https://github.com/xunleii) on GitHub. All complaints will be
 reviewed and investigated promptly and fairly.
 

@@ -43,11 +43,14 @@ Checked 2 files with 1 linter in 0.1s
 ✖ 3 issues (1 high · 2 medium · 0 low)
 ```
 
-`rtunk init` scaffolds `.rtunk/rtunk.yaml` (or defers to an existing `.trunk/trunk.yaml` — see the
-[migration guide](docs/migration-from-trunk.md) — if the repository already has one). `rtunk
-linters enable <id>` turns a linter on. `rtunk check`, given no paths, checks whatever changed —
-here, every file in the still-commit-less repository — and prints the report above. Full command
-and flag reference: [docs/commands.md](docs/commands.md); full config key reference:
+`rtunk init` always scaffolds a fresh `.rtunk/rtunk.yaml` with no linters enabled; if the
+repository already has a `.trunk/trunk.yaml`, it warns on stderr that the new file now takes
+precedence and that `.trunk/trunk.yaml` stops being read. A repository migrating from trunk should
+generally **not** run `init` — go straight to `rtunk check` against the existing
+`.trunk/trunk.yaml`; see the [migration guide](docs/migration-from-trunk.md). `rtunk linters
+enable <id>` turns a linter on. `rtunk check`, given no paths, checks whatever changed — here,
+every file in the still-commit-less repository — and prints the report above. Full command and
+flag reference: [docs/commands.md](docs/commands.md); full config key reference:
 [docs/configuration.md](docs/configuration.md).
 
 ## How rtunk differs from trunk

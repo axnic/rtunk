@@ -5,7 +5,9 @@ what it takes, and what it defaults to. Verified against the built binary (`rtun
 `rtunk <command> --help`), not against any other document. For why the CLI is shaped this way, its
 run semantics, and implementation status, see [cli.md](./cli.md) (contributor/maintainer audience).
 
-Every command also accepts `-h`/`--help` for this same information at the terminal.
+Every command also accepts `-h`/`--help` for this same information at the terminal — except
+`check`, which is a command group: `rtunk check --help` shows only the group summary, not its
+flags; run `rtunk check run --help` for those.
 
 ## Global flags
 

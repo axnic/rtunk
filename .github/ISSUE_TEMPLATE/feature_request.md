@@ -21,5 +21,5 @@ you have one in mind.
       dashboard, or `login`/`logout`/`whoami`/cloud-account functionality.
 
 These are permanently out of scope — see
-[AGENTS.md](../../AGENTS.md#permanently-out-of-scope) — and any proposal
-touching them will be closed without further discussion.
+[AGENTS.md](https://github.com/xunleii/rtunk/blob/main/AGENTS.md#permanently-out-of-scope) — and
+any proposal touching them will be closed without further discussion.

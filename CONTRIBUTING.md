@@ -15,7 +15,7 @@ Use [docs/installation.md](docs/installation.md)'s "clone and build" path rather
 git clone https://github.com/xunleii/rtunk.git
 cd rtunk
 mise trust    # if mise prompts about this repo's .mise.toml
-mise install  # installs the go and trunk versions pinned in .mise.toml
+mise install  # installs the go and trunk versions .mise.toml declares
 go build -o rtunk ./cmd/rtunk
 ```
 

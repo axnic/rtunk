@@ -174,6 +174,21 @@ When `--cache-dir`/`RTUNK_CACHE_DIR` is set to `<dir>`, downloads live under `<d
 the plugin source cache under `<dir>/plugins` — the same two-subdirectory split as the OS default,
 just rooted differently.
 
+### Environment
+
+Beyond `RTUNK_CACHE_DIR` above, `rtunk` reads a handful of other environment variables that affect
+output rendering rather than configuration resolution (`internal/cli/shared.go:339-364`):
+
+| Variable                     | Effect                                                                                                                                                                                          |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RTUNK_LIVE_HEIGHT`          | Maximum height of the live view, in lines. Same field as `--live-height`; see [commands.md](./commands.md#rtunk-check).                                                                         |
+| `NO_COLOR`                   | Any value disables ANSI color in output, when stdout isn't otherwise forcing color. See `--ascii`/`--no-progress` in [commands.md](./commands.md#rtunk-check) for related output-shaping flags. |
+| `TERM`                       | `TERM=dumb` disables the live terminal view; output falls back to plain progress lines.                                                                                                         |
+| `LC_ALL`, `LC_CTYPE`, `LANG` | Checked in that order; the first non-empty one that doesn't contain `utf-8`/`utf8` triggers the ASCII glyph fallback in the live view — the same effect as passing `--ascii`.                   |
+
+None of these have a config-file equivalent — they are read directly from the process environment,
+not from `.rtunk/rtunk.yaml`/`.trunk/trunk.yaml`.
+
 ## Ignore-comment syntax
 
 Inline directives suppress specific findings in the file they appear in. `pkg/ignore` is the sole
