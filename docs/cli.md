@@ -5,17 +5,22 @@ semantics of `check`, `fmt` and `run`. It is authoritative over older specs unde
 `docs/superpowers/`. Terminal rendering lives in [ux.md](./ux.md); staging lives in
 [ROADMAP.md](../ROADMAP.md); project principles live in [AGENTS.md](../AGENTS.md).
 
-**Implementation status.** `v0.8` (CLI reshape) is implemented, under internal/cli: `.rtunk` over
-`.trunk` precedence and the project root rule (`findTrunkYAML` in internal/cli/findtrunk.go), file
-selection and `--from` (internal/cli/selection.go), exit codes (`cmd/rtunk/main.go`), `fmt`
-working-tree-only behavior with `--force`, `linters {list,enable,disable}`, `git-hooks sync|unsync`,
-`plugins print`, the hidden `toolbox` group, `logs list|show|clean`, `help [--all]`, and
-`cache clean|prune`. `v0.9` item 1 is implemented: `check` and `fmt` render through
-the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with `--no-progress`; this is a
-breaking change, the former `file:line severity [rule] message` lines and `N issue(s) in M file(s)`
-summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json` and ANSI color. `v0.9` item 4
-is implemented: the filtered `linters list` / `actions list` (internal/cli/list.go), a breaking
-change, the former `* name  description` format is gone. `v0.9` item 3 is implemented: the TTY live
+This file's audience is now contributors and maintainers verifying implementation status against
+design; the public, user-facing command reference lives at [docs/commands.md](./commands.md).
+
+**Implementation status.** `v0.8` (CLI reshape) is implemented, under internal/cli (now one file per
+command): `.rtunk` over `.trunk` precedence and the project root rule (`findConfig` in
+internal/cli/shared.go), file selection and `--from` (internal/cli/shared.go), exit codes
+(`cmd/rtunk/main.go`), `fmt` working-tree-only behavior with `--force`, `linters
+{list,enable,disable}`, `git-hooks sync|unsync`, `plugins print`, the hidden `toolbox` group, `logs
+list|show|clean`, `help [--all]`, and `cache clean|prune`. `v0.9` item 1 is implemented: `check` and
+`fmt` render through the plain renderer in `internal/cli/render` (see [ux.md](./ux.md)), with
+`--no-progress`; this is a breaking change, the former `file:line severity [rule] message` lines and
+`N issue(s) in M file(s)` summary are gone. `v0.9` item 2 is implemented: `--format human|sarif|json`
+and ANSI color. `v0.9` item 4 is implemented: the filtered `linters list` / `actions list`
+(internal/cli/linters_list.go, internal/cli/actions_list.go, sharing shared.go's
+buildLintersList/buildActionsList), a breaking change, the former `* name  description` format is
+gone. `v0.9` item 3 is implemented: the TTY live
 view on stderr, with `--ascii` and `--live-height` (`RTUNK_LIVE_HEIGHT`); all four `v0.9` items are
 done. Still planned: `v1.1` (`rtunk.lock`).
 
@@ -44,7 +49,7 @@ Without a path (`rtunk check`, `rtunk fmt`):
 selection is legitimately empty inside git, rtunk prints `rtunk: no files to check` (`check`) or
 `rtunk: no files to format` (`fmt`) and exits `0`; outside git with no explicit paths, rtunk exits
 `1` with an error explaining that explicit paths are required. (Implemented,
-internal/cli/selection.go.)
+internal/cli/shared.go.)
 
 With explicit path(s) (`rtunk check .`), every file under the path is processed: `git ls-files -co
 --exclude-standard` in git, everything otherwise.
@@ -63,7 +68,7 @@ not the whole repository.
 
 `config print` and `linters list` resolve the same configuration without either check, so a broken
 configuration can still be inspected in order to fix it. (Implemented, pkg/trunk/config/
-deprecations.go, internal/cli/config.go.)
+deprecations.go, internal/cli/shared.go's checkDeprecations, called from check_run.go and fmt.go.)
 
 ### Output
 
@@ -136,7 +141,7 @@ remains — it never runs a formatter. `check --format-before-check` runs every 
 first, then checks the reformatted files — the combined "format, then check" sequence `--fix` used
 to mean; `--verify-stable` now applies to `--format-before-check`'s own formatting pass, same as
 `fmt --verify-stable`. The two compose: given together, the order is format pass, checking pass,
-fix application, final checking pass. (Implemented, internal/cli/check.go.)
+fix application, final checking pass. (Implemented, internal/cli/check_run.go.)
 
 ### Hidden commands
 
@@ -209,7 +214,7 @@ The two groups are symmetric:
 - **`rtunk linters {list,enable,disable} <id>[@version]`**: list linters grouped as enabled
   (`id@version`), available for this repo (matching at least one repository file, not enabled) and,
   with `--all`, the rest; add or remove a linter in the config. `list [--all] [--format
-human|json]`. (`list` implemented, internal/cli/list.go.)
+human|json]`. (`list` implemented, internal/cli/linters_list.go.)
 - **`rtunk actions {list,enable,disable,history}`**: list actions (`list [--format human|json]`,
   groups `Enabled` and `Available (not enabled)`, no `--all`); enable or disable them; show
   the history of actions in this repo (`history <id>`).
@@ -225,7 +230,8 @@ repository file matched against the linter's `files:` criteria.
 - **`rtunk init`**: initialize a repository that has neither `.trunk` nor `.rtunk`.
 - **`rtunk logs list [<file>...]`**, **`rtunk logs show <uid>|latest [<file>...]`**,
   **`rtunk logs clean`**: inspect and clean per-run logs (see
-  `docs/superpowers/specs/2026-09-26-run-logs-design.md`). Implemented in internal/cli/logs.go.
+  `docs/superpowers/specs/2026-09-26-run-logs-design.md`). Implemented in
+  internal/cli/logs_list.go, logs_show.go, logs_clean.go.
 
 ## Renovate
 

@@ -396,8 +396,8 @@ the full field-by-field index with catalog occurrence counts.
   declares it as a bare bool, always (12 confirmed occurrences: clippy, detekt, golangci-lint x2,
   iwyu, oxipng, pinact x2, trufflehog, trunk-toolbox x3) — never a list of ids. Enabling clippy
   crashed config resolution outright (`cannot unmarshal !!bool into []string`). `Command.
-  DisableUpstream` is now `bool`, matching the real shape, but the whole-linter-suppression feature
-  (`internal/cli/check.go`'s former `suppressUpstreamEvents`/`supersededLinters`) has been removed
+DisableUpstream` is now `bool`, matching the real shape, but the whole-linter-suppression feature
+  (formerly `suppressUpstreamEvents`/`supersededLinters`) has been removed
   rather than re-guessed a second time: with no named target linter, "suppress the linter this
   command supersedes" no longer has a referent. trufflehog's own `disable_upstream: true` command
   sets its `Run` string to reference `${upstream-ref}` — suggesting the real semantic is about git

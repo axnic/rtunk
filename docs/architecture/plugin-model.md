@@ -194,21 +194,21 @@ it. Full detail, evidence, and severity for each is in
 [inconsistencies.md](./inconsistencies.md#declared-but-inert-catalog-fields); this is the field-level
 index into that.
 
-| Field                       | Declared on | Catalog occurrences | Status today                        |
-| --------------------------- | ----------- | ------------------- | ----------------------------------- |
-| `suggest_if`                | linter      | 129                 | parsed, never consulted             |
-| `run_timeout`               | linter      | 8                   | parsed, never consulted             |
-| `cache_results`             | linter      | 4                   | parsed, never consulted             |
-| `cache_results`             | command     | 71                  | not modeled (dropped while parsing) |
-| `supported_platforms`       | linter      | 9                   | parsed, never consulted             |
-| `platforms`                 | command     | 15                  | modeled, consulted (v0.10)          |
-| `version` (supported range) | command     | 20                  | parsed, consulted (v0.10)           |
-| `is_security`               | command     | 22                  | not modeled (dropped while parsing) |
-| `disable_upstream`          | command     | 13                  | not modeled (dropped while parsing) |
-| `fix_prompt` / `fix_verb`   | command     | 3 / 3               | parsed, carried through resolution (v0.10); no consumer yet |
-| `prepare_run`               | command     | 2                   | not modeled (dropped while parsing) |
+| Field                       | Declared on | Catalog occurrences | Status today                                                                                                                                                                                              |
+| --------------------------- | ----------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `suggest_if`                | linter      | 129                 | parsed, never consulted                                                                                                                                                                                   |
+| `run_timeout`               | linter      | 8                   | parsed, never consulted                                                                                                                                                                                   |
+| `cache_results`             | linter      | 4                   | parsed, never consulted                                                                                                                                                                                   |
+| `cache_results`             | command     | 71                  | not modeled (dropped while parsing)                                                                                                                                                                       |
+| `supported_platforms`       | linter      | 9                   | parsed, never consulted                                                                                                                                                                                   |
+| `platforms`                 | command     | 15                  | modeled, consulted (v0.10)                                                                                                                                                                                |
+| `version` (supported range) | command     | 20                  | parsed, consulted (v0.10)                                                                                                                                                                                 |
+| `is_security`               | command     | 22                  | not modeled (dropped while parsing)                                                                                                                                                                       |
+| `disable_upstream`          | command     | 13                  | not modeled (dropped while parsing)                                                                                                                                                                       |
+| `fix_prompt` / `fix_verb`   | command     | 3 / 3               | parsed, carried through resolution (v0.10); no consumer yet                                                                                                                                               |
+| `prepare_run`               | command     | 2                   | not modeled (dropped while parsing)                                                                                                                                                                       |
 | `stdin`                     | command     | 7                   | not modeled (dropped while parsing); its real instances all pair with `formatter: true`/no `in_place`, a shape now run unconditionally piping stdin (v0.10, entry 5) regardless of this field's own value |
-| `max_concurrency`           | command     | 4                   | not modeled (dropped while parsing) |
-| `health_checks`             | tool        | 20                  | not modeled (dropped while parsing) |
-| `extra_packages`            | tool        | 6                   | not modeled (dropped while parsing) |
-| `output_type`               | action      | 2                   | not modeled (dropped while parsing) |
+| `max_concurrency`           | command     | 4                   | not modeled (dropped while parsing)                                                                                                                                                                       |
+| `health_checks`             | tool        | 20                  | not modeled (dropped while parsing)                                                                                                                                                                       |
+| `extra_packages`            | tool        | 6                   | not modeled (dropped while parsing)                                                                                                                                                                       |
+| `output_type`               | action      | 2                   | not modeled (dropped while parsing)                                                                                                                                                                       |

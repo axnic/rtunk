@@ -55,13 +55,13 @@ selection are deliberately not logged" in [inconsistencies.md](./inconsistencies
 
 ### File selection
 
-| Context | No paths given (default) | Explicit paths given |
-| --- | --- | --- |
-| Outside a git repository | No default selection — an explicit validation error naming the requirement, not a silent no-op. | Used exactly as given; gitignore cannot be applied (no git to ask). |
-| Inside a git repository, current branch has an upstream | Every file changed between the upstream branch's merge-base and the working tree, plus untracked, non-ignored files. | Listed through git (so gitignore applies), intersected with the given paths. |
-| Inside a git repository, no upstream | Every file with a staged change, every file with an unstaged change, and every untracked, non-ignored file — everything that differs from the last commit, tracked or not, staged or not. | Listed through git (so gitignore applies), intersected with the given paths. |
+| Context                                                 | No paths given (default)                                                                                                                                                                  | Explicit paths given                                                         |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Outside a git repository                                | No default selection — an explicit validation error naming the requirement, not a silent no-op.                                                                                           | Used exactly as given; gitignore cannot be applied (no git to ask).          |
+| Inside a git repository, current branch has an upstream | Every file changed between the upstream branch's merge-base and the working tree, plus untracked, non-ignored files.                                                                      | Listed through git (so gitignore applies), intersected with the given paths. |
+| Inside a git repository, no upstream                    | Every file with a staged change, every file with an unstaged change, and every untracked, non-ignored file — everything that differs from the last commit, tracked or not, staged or not. | Listed through git (so gitignore applies), intersected with the given paths. |
 
-Implemented as of v0.10 (`internal/cli/selection.go`); see
+Implemented as of v0.10 (`internal/cli/shared.go`); see
 [inconsistencies.md](./inconsistencies.md) entries #19 and #20.
 
 ## Run flow
@@ -117,12 +117,12 @@ stream closes.
 
 ### What each variant selects
 
-| Variant | Commands selected | Output handling |
-| --- | --- | --- |
-| `check` (plain) | Checking commands only — never a formatter, never a fix command. | Findings reported; nothing written. |
-| `check --fix` | Checking commands, plus every non-formatter **fix** command a linter declares. | Findings from the checking commands; any finding carrying its own inline autofix (see below) is applied; each fix command's rewrite is applied; a second, plain-checking pass then reports whatever remains. |
-| `check --format-before-check` | Formatter commands, then checking commands. | The formatter pass writes files; the checking pass that follows reports remaining findings against the now-reformatted files. |
-| `fmt` | Formatter commands only. | Files rewritten; see fmt's own dry-run/stability modes below. |
+| Variant                       | Commands selected                                                              | Output handling                                                                                                                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `check` (plain)               | Checking commands only — never a formatter, never a fix command.               | Findings reported; nothing written.                                                                                                                                                                          |
+| `check --fix`                 | Checking commands, plus every non-formatter **fix** command a linter declares. | Findings from the checking commands; any finding carrying its own inline autofix (see below) is applied; each fix command's rewrite is applied; a second, plain-checking pass then reports whatever remains. |
+| `check --format-before-check` | Formatter commands, then checking commands.                                    | The formatter pass writes files; the checking pass that follows reports remaining findings against the now-reformatted files.                                                                                |
+| `fmt`                         | Formatter commands only.                                                       | Files rewritten; see fmt's own dry-run/stability modes below.                                                                                                                                                |
 
 `check --fix` and `check --format-before-check` are each two runs of this same pipeline in sequence
 — a writing pass, then a plain-checking pass over the result — not a different pipeline.
@@ -262,7 +262,7 @@ sequenceDiagram
     Deinit-->>User: what was removed
 ```
 
-Removing hooks always runs *before* removing the configuration directory: a repository that only
+Removing hooks always runs _before_ removing the configuration directory: a repository that only
 ever used the upstream-compatible configuration path (the system's primary drop-in use case) can
 still have an installed hook, and if hook removal fails partway, the user keeps their configuration
 rather than losing both the configuration and a working hook at once.

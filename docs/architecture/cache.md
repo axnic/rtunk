@@ -9,13 +9,13 @@ says so explicitly; everything else describes the design to build toward.
 
 ## What gets cached, and why
 
-| Layer | What | Invalidation |
-| --- | --- | --- |
+| Layer                     | What                                                                        | Invalidation                                                                                                                                 |
+| ------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Plugin source definitions | Every linter/tool/runtime/action a remote plugin source contributes, parsed | A configuration-shape version bump invalidates everything; otherwise never — keyed by a pinned location+reference, immutable by construction |
-| Plugin source checkout | The full fetched contents of a remote plugin source | Same key as above; regenerated together with the parsed cache if either goes missing or corrupt |
-| Tool/runtime installs | Extracted archive or runtime-package-manager install tree | `cache clean` (full wipe) or `cache prune` (index-driven garbage collection — see below) |
-| Executable shims | Generated wrapper scripts pointing at an install | Regenerated whenever their install is regenerated; swept alongside it by either command above |
-| Run journals | Per-invocation append-only log | An explicit "clean" command; `cache prune` also sweeps a journal belonging to a repository no longer indexed |
+| Plugin source checkout    | The full fetched contents of a remote plugin source                         | Same key as above; regenerated together with the parsed cache if either goes missing or corrupt                                              |
+| Tool/runtime installs     | Extracted archive or runtime-package-manager install tree                   | `cache clean` (full wipe) or `cache prune` (index-driven garbage collection — see below)                                                     |
+| Executable shims          | Generated wrapper scripts pointing at an install                            | Regenerated whenever their install is regenerated; swept alongside it by either command above                                                |
+| Run journals              | Per-invocation append-only log                                              | An explicit "clean" command; `cache prune` also sweeps a journal belonging to a repository no longer indexed                                 |
 
 **Today:** fetched artifact bytes are additionally persisted forever in a content-addressed blob
 store, keyed by their own hash, never invalidated. The target removes this subtree entirely — see
@@ -69,7 +69,7 @@ content-addressed store (keyed by the hash of the bytes themselves), on the theo
 different download recipes producing byte-identical artifacts could then share one stored copy, and
 that a cache hit could be re-verified against its own content later. Neither actually happens: a
 cache hit is decided purely by whether the install directory already exists, never by looking
-anything up in the blob store by hash — the hash is only known *after* the download completes, so
+anything up in the blob store by hash — the hash is only known _after_ the download completes, so
 there is no way to look up "do I already have this artifact" before fetching it. The **only** reader
 of a published blob is the extraction step immediately after that same fetch. The store therefore
 grows forever, on every cold fetch, for zero benefit over deleting the blob right after extraction.
@@ -142,7 +142,7 @@ by this design.
   mistakes for a valid cache hit.
 - **Existence, not content, is the install cache-hit signal**: whether an install location already
   holds something is the entire cold/warm decision for a tool or runtime — there is no
-  re-verification of previously fetched content on a warm hit. This is sound precisely *because*
+  re-verification of previously fetched content on a warm hit. This is sound precisely _because_
   every install location is only ever populated by that same atomic publish step, never written to
   in place — the same guarantee that lets "the destination already exists" be treated as "a
   concurrent or earlier install already finished" rather than a conflict.

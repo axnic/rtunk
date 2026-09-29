@@ -39,6 +39,7 @@ graph TD
     Engine --> Config
     Engine --> Download
     Engine --> Normalizer[Output Normalizer]
+    Engine --> IgnoreFilter[Ignore Filter]
     Engine --> RunLog
 
     Actions --> Config
@@ -64,7 +65,8 @@ The **Config Resolver** is the only component with no dependency on any other ar
 component — it is the foundation everything else builds on. The **Install Finalizer** is a tiny
 shared primitive (atomically publishing a finished install directory) used by both the download
 subsystem and the runtime behavior registry, which cannot depend on each other. The **Output
-Normalizer** is standalone, with no dependency on the rest of the system.
+Normalizer** and **Ignore Filter** are both standalone, with no dependency on the rest of the
+system.
 
 ## Domain model
 
@@ -163,6 +165,12 @@ inspect without needing any execution machinery at all.
   everywhere it's consulted, never a reason to fail a run.
 - **Output Normalizer** — the common finding shape every per-format output parser (structured
   interchange formats, per-tool native schemas, and configuration-declared patterns) converges on.
+- **Ignore Filter** — drops findings an `rtunk-ignore`/`trunk-ignore` inline comment directive
+  suppresses (same-line/next-line, whole-file `-all`, or a `-begin`/`-end` block range; a directive
+  counts only when a real comment-leader delimiter from the resolved comment-format tables precedes
+  it, so a directive-shaped string literal or code sample isn't mistaken for a real one). Depends on
+  nothing else in the system; the execution engine is its only caller, applied to a job's findings
+  the same place it applies the output normalizer's own post-parse steps.
 - **Renderer** — turns the engine's event stream and run summary into the chosen presentation
   (plain progressive text, a live terminal view, or a machine-readable document); renderers hold no
   business logic, only presentation over the same stream.
@@ -174,7 +182,9 @@ inspect without needing any execution machinery at all.
   together with the execution engine, action runner, download subsystem, git hooks manager,
   renovate annotator, and renderer. Shared entry points (resolving the project's
   configuration file, resolving which files a command should act on) exist so every command
-  builds on the same foundation rather than each re-deriving it.
+  builds on the same foundation rather than each re-deriving it, itself built on a small shared
+  git-plumbing package (repository-root resolution, tracked/untracked/changed-file listing) every
+  git-aware command uses directly instead of shelling out to `git` on its own.
 
 ## Known architectural debt
 
