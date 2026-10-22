@@ -46,7 +46,7 @@ jobs:
       # Restores/saves the mise cache; the key hashes the mise config files, including mise.lock,
       # so it changes only when a tool version changes.
       - name: 🔧 Install tools via mise
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
         with:
           cache: true
           cache_key: "mise-v1-{{platform}}-{{file_hash}}"
