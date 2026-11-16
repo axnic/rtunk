@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -150,7 +151,7 @@ func TestResolve_DanglingReference(t *testing.T) {
 // TestResolve_SourceNotFound: a `local:` plugin source pointing nowhere is a config error — unlike
 // a git source, a local source is expected to already be present, never fetched.
 func TestResolve_SourceNotFound(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "trunk.yaml")
+	path := filepath.Join(initGitRepo(t), "trunk.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("plugins:\n  sources:\n    - id: gone\n      local: ./nowhere\n"), 0o644))
 
 	_, err := config.Resolve(path, t.TempDir())
@@ -171,6 +172,19 @@ func TestResolve_LocalSource_StampsActionSourceDirAndRoot(t *testing.T) {
 	assert.Equal(t, absRepo, a.SourceRoot)
 }
 
+// TestResolve_LocalSource_ResolvedFromRepoRoot: with the config in .trunk/, `local:` is relative to
+// the repo root, not to .trunk/ (issue #62).
+func TestResolve_LocalSource_ResolvedFromRepoRoot(t *testing.T) {
+	root := initGitRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".trunk", "plugins", "myplugin"), 0o755))
+	path := filepath.Join(root, ".trunk", "trunk.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("plugins:\n  sources:\n    - id: myplugin\n      local: .trunk/plugins/myplugin\n"), 0o644))
+
+	_, err := config.Resolve(path, t.TempDir())
+	var notFoundErr *config.SourceNotFoundError
+	assert.NotErrorAs(t, err, &notFoundErr)
+}
+
 func TestResolve_ActionsDisabledList_Parsed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trunk.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("version: \"0.1\"\nactions:\n  enabled: [commitlint]\n  disabled: [trunk-announce]\n"), 0o644))
@@ -179,11 +193,19 @@ func TestResolve_ActionsDisabledList_Parsed(t *testing.T) {
 	assert.Equal(t, []string{"trunk-announce"}, cfg.Actions.Disabled)
 }
 
+// initGitRepo returns a fresh, empty git repo: `local:` plugin sources resolve from the git root.
+func initGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, exec.Command("git", "-C", dir, "init", "-q").Run())
+	return dir
+}
+
 // writeConfigDir writes files (name -> body) into a fresh dir and returns the path of its
 // trunk.yaml, for the override-file tests below.
 func writeConfigDir(t *testing.T, files map[string]string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := initGitRepo(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
 	for name, body := range files {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))

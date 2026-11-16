@@ -36,7 +36,7 @@ func nodeTarGz(t *testing.T) []byte {
 // nodejs.org URL -- see TestDownloadCmd_Targeted.
 func writeNodeFixture(t *testing.T, srv *httptest.Server) (trunkYAMLPath string) {
 	t.Helper()
-	root := t.TempDir()
+	root := initGitRepo(t)
 	pluginDir := filepath.Join(root, "pluginrepo")
 	require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, "runtimes", "node"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte("version: \"0.1\"\n"), 0o644))

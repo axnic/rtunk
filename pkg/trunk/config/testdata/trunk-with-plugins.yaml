@@ -2,7 +2,7 @@ version: "0.1"
 plugins:
   sources:
     - id: trunk
-      local: ./pluginrepo
+      local: pkg/trunk/config/testdata/pluginrepo
 runtimes:
   enabled:
     - node@22.18.0
