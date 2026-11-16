@@ -177,7 +177,7 @@ func TestDeinitCmd_RemovesInstalledGitHooks(t *testing.T) {
 plugins:
   sources:
     - id: local
-      local: ../pluginrepo
+      local: pluginrepo
 actions:
   enabled:
     - greet
@@ -215,7 +215,7 @@ func TestDeinitCmd_RemovesHookWithoutRtunkDir(t *testing.T) {
 plugins:
   sources:
     - id: local
-      local: ../pluginrepo
+      local: pluginrepo
 actions:
   enabled:
     - greet

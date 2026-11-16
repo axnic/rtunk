@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/axnic/rtunk/pkg/git"
 )
 
 // pluginCategories are the plugin repository subdirs that hold plugin.yaml files
@@ -124,7 +126,13 @@ func resolveMerged(file, cacheDir string) (cfg Config, err error) {
 	for _, src := range tf.Plugins.Sources {
 		switch {
 		case src.Local != "":
-			dir := filepath.Join(filepath.Dir(file), src.Local)
+			// Like trunk, local: is relative to the git repo root; outside git, to the project root
+			// (the parent of .trunk/.rtunk).
+			root, err := git.RepoRoot(filepath.Dir(file))
+			if err != nil {
+				root = filepath.Dir(filepath.Dir(file))
+			}
+			dir := filepath.Join(root, src.Local)
 			if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
 				return cfg, &SourceNotFoundError{SourceID: src.ID, Path: dir}
 			}

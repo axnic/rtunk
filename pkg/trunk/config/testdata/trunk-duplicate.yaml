@@ -2,7 +2,7 @@ version: "0.1"
 plugins:
   sources:
     - id: trunk
-      local: ./pluginrepo-duplicate
+      local: pkg/trunk/config/testdata/pluginrepo-duplicate
 lint:
   enabled:
     - use-foo

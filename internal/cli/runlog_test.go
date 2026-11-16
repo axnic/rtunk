@@ -137,7 +137,7 @@ func writeActionFixture(t *testing.T, runLine string) (cfgPath, repoRoot string)
 plugins:
   sources:
     - id: local
-      local: ../pluginrepo
+      local: pluginrepo
 actions:
   enabled:
     - greet
