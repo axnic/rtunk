@@ -13,18 +13,21 @@ import (
 
 // pluginRepoLocalFor returns the `local:` value the git-hooks tests below must write into a
 // trunk.yaml living in trunkDir so its plugin source resolves to the fixture plugin repo checked
-// into this project. resolve.go joins `local:` onto filepath.Dir(<trunk.yaml path>) with plain
-// filepath.Join, which does NOT special-case an absolute second argument (it's simply
-// concatenated, then cleaned) -- so an absolute path here would silently produce a bogus, always
-// nonexistent path. The tests below write their trunk.yaml into a throwaway t.TempDir() repo
-// unrelated to this project's own directory tree, so a literal "../../" (as trunkYAML's own
-// checked-in fixture uses, relative to *this* package's directory) can't reach it either; a
-// genuine relative path from trunkDir is required instead.
+// into this project. resolve.go joins `local:` onto the git repo root with plain filepath.Join,
+// which does NOT special-case an absolute second argument (it's simply concatenated, then
+// cleaned) -- so an absolute path here would silently produce a bogus, always nonexistent path. The
+// tests below write their trunk.yaml into a throwaway t.TempDir() repo unrelated to this project's
+// own directory tree, so a genuine relative path from that repo's root is required instead (both
+// ends symlink-resolved: git reports the real path, e.g. /private/var on macOS).
 func pluginRepoLocalFor(t *testing.T, trunkDir string) string {
 	t.Helper()
 	abs, err := filepath.Abs("../../pkg/trunk/config/testdata/pluginrepo")
 	require.NoError(t, err)
-	rel, err := filepath.Rel(trunkDir, abs)
+	abs, err = filepath.EvalSymlinks(abs)
+	require.NoError(t, err)
+	base, err := filepath.EvalSymlinks(filepath.Dir(trunkDir)) // the repo root, as git reports it
+	require.NoError(t, err)
+	rel, err := filepath.Rel(base, abs)
 	require.NoError(t, err)
 	return rel
 }

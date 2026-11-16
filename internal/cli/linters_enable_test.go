@@ -211,7 +211,11 @@ func writeScratchWithPlugins(t *testing.T, content string) string {
 	const head = "version: \"0.1\"\n"
 	require.True(t, strings.HasPrefix(content, head))
 	path := writeScratchTrunkYAML(t, content)
-	rel, err := filepath.Rel(filepath.Dir(path), abs) // local: paths resolve relative to the config
+	abs, err = filepath.EvalSymlinks(abs)
+	require.NoError(t, err)
+	base, err := filepath.EvalSymlinks(filepath.Dir(path)) // the scratch git repo's root, as git reports it
+	require.NoError(t, err)
+	rel, err := filepath.Rel(base, abs) // local: paths resolve relative to the git repo root
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, []byte(head+"plugins:\n  sources:\n    - id: trunk\n      local: "+rel+"\n"+strings.TrimPrefix(content, head)), 0o644))
 	return path

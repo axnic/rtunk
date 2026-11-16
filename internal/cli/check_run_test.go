@@ -101,7 +101,7 @@ func writeLinterFixture(t *testing.T, enabled []string, lintYAML string) (cfgPat
 plugins:
   sources:
     - id: local
-      local: ../pluginrepo
+      local: pluginrepo
 lint:
   enabled:
 `+enabledYAML), 0o644))

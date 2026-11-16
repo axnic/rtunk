@@ -2,7 +2,7 @@ version: "0.1"
 plugins:
   sources:
     - id: trunk
-      local: ./pluginrepo-dangling
+      local: pkg/trunk/config/testdata/pluginrepo-dangling
 lint:
   enabled:
     - orphan

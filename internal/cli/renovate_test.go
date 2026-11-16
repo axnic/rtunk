@@ -41,7 +41,7 @@ func writeToolLinterFixture(t *testing.T, enabled []string) (cfgPath, repoRoot s
 plugins:
   sources:
     - id: local
-      local: ../pluginrepo
+      local: pluginrepo
 lint:
   enabled:
 `+enabledYAML), 0o644))
@@ -198,7 +198,7 @@ func TestAnnotateDoc_LocalPluginSource_NeverAnnotated(t *testing.T) {
 	data := []byte(`plugins:
   sources:
     - id: local
-      local: ../pluginrepo
+      local: pluginrepo
 `)
 	var doc yaml.Node
 	require.NoError(t, yaml.Unmarshal(data, &doc))
